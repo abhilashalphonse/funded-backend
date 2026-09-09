@@ -4,6 +4,8 @@ import EventIngestionWorker from "./workers/event-ingestion.worker.js";
 import StateEngineWorker from "./workers/state-engine-worker.js";
 import { CommandWorker } from "./workers/command-worker.js";
 import boss from "./config/boss.js";
+import EventService from "./apis/services/event.service.js";
+import simulatorEngine from "./simulator/engine.js";
 
 const PORT = process.env.PORT || 3000;
 
@@ -20,6 +22,14 @@ async function start() {
     await ingestion.start(); 
     await stateEngine.start();
     await commandWorker.start();
+
+    simulatorEngine.on("snapshot", async (event) => {
+      try {
+        await EventService.receive(event);
+      } catch (error) {
+        console.error("Failed to queue simulator snapshot:", error);
+      }
+    });
     
 
     

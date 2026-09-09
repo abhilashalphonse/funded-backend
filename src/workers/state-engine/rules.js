@@ -1,6 +1,10 @@
 export function evaluateRules(account) {
-  const initial = account.initialDeposit || 10000;
+  const initial = account.initialDeposit;
   const rule = account.rules;
+
+  if (!initial || !rule) {
+    throw new Error(`Account ${account.accountId} is missing challenge rules or an initial deposit.`);
+  }
 
   // 🔴 FIX #3: Match the phase number to the actual phase object
   const activePhase = rule.phases.find(
@@ -12,17 +16,14 @@ export function evaluateRules(account) {
     throw new Error(`Phase ${account.currentPhase} not found in account rules.`);
   }
 
-  // 🔴 FIX #1: Calculate the actual equity thresholds for drawdowns
-  const dailyLimit = initial - (initial * (rule.dailyDrawdown / 100));
-  const maxLimit = initial - (initial * (rule.maxDrawdown / 100));
+  const dailyLossLimit = initial * (rule.dailyDrawdown / 100);
+  const maxLossLimit = initial * (rule.maxDrawdown / 100);
 
   return {
-    dailyLossBreached: account.equity <= dailyLimit,
-    maxLossBreached: account.equity <= maxLimit,
-    
-    // 🔴 FIX #2 & #3 combined: Correct profit math using the actual phase object
-    profitTargetHit: account.profit !== undefined
-      ? account.profit >= initial * (activePhase.profitTarget / 100)
-      : account.equity >= initial + (initial * (activePhase.profitTarget / 100))
+    // Baseline policy: UTC reset, equity-based daily loss, initial-balance max loss.
+    dailyLossBreached: account.projections.dailyLoss >= dailyLossLimit,
+    maxLossBreached: account.projections.totalLoss >= maxLossLimit,
+    profitTargetHit: account.projections.profit >= initial * (activePhase.profitTarget / 100),
+    minimumDaysMet: account.projections.tradingDays >= rule.minimumTradingDays
   };
 }

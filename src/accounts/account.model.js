@@ -6,6 +6,11 @@ const AccountSchema = new mongoose.Schema(
         accountId: { type: String, required: true, unique: true },
         version: { type: Number, default: 0 },
         lastSequence: { type: Number, default: 0 },
+        lastProcessedEventId: { type: String },
+        lastActiveDay: { type: String },
+        dailyResetAt: { type: Date },
+        dailyStartEquity: { type: Number, default: 0 },
+        commandPending: { type: String, default: null },
         
         // --- Configuration & Challenge Definition ---
         challengeType: { type: String, required: true },
@@ -27,7 +32,7 @@ const AccountSchema = new mongoose.Schema(
         status: {
             type: String,
             default: "NEW",
-            enum: ["NEW", "ACTIVE", "BREACHED", "LOCKED", "PASSED", "PHASE_2", "FUNDED", "CLOSED"]
+            enum: ["NEW", "ACTIVE", "BREACHED", "LOCKED", "PASSED", "PHASE_2", "FUNDED_REVIEW", "FUNDED", "CLOSED"]
         },
         enabled: { type: Boolean, default: true },
         

@@ -45,7 +45,7 @@ export default class StateEngineWorker {
             throw new Error(`Event ${eventId} not found`);
         }
 
-        await processEvent(event);
+        await processEvent(event, this.boss);
 
         console.log(
             `[STATE] processed ${event.eventId} (${event.eventType})`

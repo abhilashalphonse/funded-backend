@@ -4,7 +4,7 @@ import { resolveDecision } from "./decisions.js";
 import { CommandQueue } from "./commandQueue.js"; 
 
 
-export async function processEvent(event) {
+export async function processEvent(event, boss) {
 
     const account = await Account.findOne({
         accountId: event.aggregateId
@@ -16,9 +16,12 @@ export async function processEvent(event) {
         );
     }
 
-    if (
-        account.lastProcessedEventId === event.eventId
-    ) {
+    if (["BREACHED", "CLOSED", "FUNDED"].includes(account.status)) {
+        console.log(`[STATE] Terminal account skipped ${account.accountId}`);
+        return;
+    }
+
+    if (account.lastProcessedEventId === event.eventId) {
         console.log(
             `[STATE] Duplicate event skipped ${event.eventId}`
         );
@@ -52,12 +55,16 @@ export async function processEvent(event) {
 
     // 2. Enqueue command (New Logic)
     if (decision.command) {
-        await CommandQueue.enqueue(
-            decision.command,
-            {
-                accountId: account.accountId
-            }
-        );
+        try {
+            const commandQueue = new CommandQueue(boss);
+            await commandQueue.enqueueCommand(decision.command, account);
+            account.commandPending = null;
+        } catch (error) {
+            // Keep the state decision durable and make a failed side effect visible/retriable.
+            account.commandPending = decision.command;
+            await account.save();
+            throw error;
+        }
     }
 }
 
@@ -76,8 +83,7 @@ function applyEvent(account, event) {
     if (p.openPositions !== undefined) account.openPositions = p.openPositions;
 
     // Set up baselines for calculations
-    const startingBalance = account.startingBalance || account.initialBalance || account.balance || 0;
-    const startOfDayBalance = account.startOfDayBalance || startingBalance;
+    const initialBalance = account.initialDeposit;
 
     // --- 3. Update Highest Balance (High Water Mark) ---
     // 🔴 FIXED: Moved to projections
@@ -95,37 +101,21 @@ function applyEvent(account, event) {
 
     // --- 5. Update Profit ---
     // 🔴 FIXED: Moved to projections
-    account.projections.profit = account.balance - startingBalance;
+    account.projections.profit = account.balance - initialBalance;
 
     // --- 6. Update Daily Loss ---
     // 🔴 FIXED: Moved to projections
-    account.projections.dailyLoss = startOfDayBalance - account.equity;
+    const eventDayString = eventDate.toISOString().split('T')[0];
+    if (account.lastActiveDay !== eventDayString) {
+        account.lastActiveDay = eventDayString;
+        account.dailyResetAt = eventDate;
+        account.dailyStartEquity = account.equity;
+        account.projections.tradingDays += 1;
+    }
+    if (account.dailyStartEquity === 0) account.dailyStartEquity = account.equity;
+    account.projections.dailyLoss = Math.max(0, account.dailyStartEquity - account.equity);
 
     // --- 7. Update Total Loss ---
     // 🔴 FIXED: Moved to projections
-    account.projections.totalLoss = startingBalance - account.equity;
-
-    // --- 8. Update Trading Day ---
-    const eventDayString = eventDate.toISOString().split('T')[0]; 
-
-    if (account.lastActiveDay !== eventDayString) {
-        account.lastActiveDay = eventDayString;
-        account.tradingDays = (account.tradingDays || 0) + 1;
-        
-        // If snapshotting start-of-day balance:
-        // account.startOfDayBalance = account.balance; 
-    }
-
-    // Standard event tracking
-    account.lastUpdatedEventId = event.eventId;
-    account.lastUpdatedAt = eventDate;
+    account.projections.totalLoss = Math.max(0, initialBalance - account.equity);
 }
-
-
-async function sendCommand(command, account) {
-    await enqueueCommand(command, {
-        accountId: account.accountId,
-        status: account.status,
-    });
-
-} 

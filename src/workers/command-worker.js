@@ -1,6 +1,6 @@
 import { COMMAND_QUEUE_NAME } from "./state-engine/commandQueue.js";
-import Event from "../events/event.model.js";
-import Stream from "../events/stream.model.js";
+import Account from "../accounts/account.model.js";
+import simulatorEngine from "../simulator/engine.js";
 
 /**
  * Worker class responsible for processing downstream side effects asynchronously.
@@ -33,23 +33,10 @@ export class CommandWorker {
         try {
           console.log(`[WORKER] Processing Job ${jobId} | Command: ${command} for Account: ${accountId}`);
 
-          // 1. DETERMINISTIC IDEMPOTENCY GUARD
-          // Formulate a distinct fingerprint combining intent and the unique pg-boss tracking ID
-          const operationalFingerprint = `CMD_CONFIRM_${command}_${accountId}_${jobId}`;
-          
-          const isAlreadyProcessed = await Event.findOne({ eventId: operationalFingerprint });
-          if (isAlreadyProcessed) {
-            console.log(`[WORKER IDEMPOTENCY] Command ${command} already confirmed via event log. Skipping.`);
-            continue; // Safe early exit for re-delivered queue items
-          }
-
-          // 2. ISOLATED SIDE EFFECT EXECUTION
-          // Third-party connections (like MT5 or Mailers) are fallible. We isolate them completely.
+          // Side effects are intentionally idempotent in the simulator: locking an
+          // already locked account and provisioning an existing account are safe.
           const executionResult = await this.executeExternalSideEffect(command, accountId, metadata);
-
-          // 3. TRANSACTIONAL TRANSITION EVENT EMISSION
-          // Instead of modifying account status directly, emit a tracking event to the log.
-          await this.emitConfirmationEvent(accountId, command, operationalFingerprint, executionResult);
+          await Account.updateOne({ accountId }, { $set: { commandPending: null } });
 
           console.log(`[WORKER SUCCESS] Completed command ${command} safely for Account ${accountId}`);
 
@@ -69,17 +56,29 @@ export class CommandWorker {
   async executeExternalSideEffect(command, accountId, metadata = {}) {
     switch (command) {
       case "LOCK_ACCOUNT":
-        console.log(`[MT5 GATEWAY] Executing remote account disable sequence for account: ${accountId}`);
-        // Integration placeholder: return await mt5Gateway.lock(accountId);
-        return { success: true, timestamp: new Date(), executionType: "API_READ_ONLY_LOCK" };
+        await simulatorEngine.lockAccount(accountId);
+        await Account.updateOne({ accountId }, { $set: { enabled: false } });
+        return { success: true, timestamp: new Date(), executionType: "SIMULATOR_LOCK" };
 
       case "CREATE_PHASE_2_ACCOUNT":
-        console.log(`[MT5 GATEWAY] Provisioning new Phase 2 MetaTrader credentials for account: ${accountId}`);
-        return { 
-          success: true, 
-          mt5Login: `MT-${Math.floor(100000 + Math.random() * 900000)}`, 
-          allocatedEquity: metadata.equity || 100000 
-        };
+        const account = await Account.findOne({ accountId });
+        if (!account) throw new Error(`Account ${accountId} not found`);
+        const simulatedAccount = await simulatorEngine.provisionAccount({
+          accountId,
+          balance: account.initialDeposit,
+          leverage: account.leverage || 100
+        });
+        await Account.updateOne(
+          { accountId },
+          { $set: {
+            currentPhase: 2,
+            status: "PHASE_2",
+            enabled: true,
+            platformAccountId: String(simulatedAccount.login),
+            login: simulatedAccount.login
+          } }
+        );
+        return { success: true, mt5Login: simulatedAccount.login, allocatedEquity: account.initialDeposit };
 
       case "SEND_EMAIL_NOTIFICATION":
         console.log(`[MAILER ENGINE] Dispatching status change template digest for owner of: ${accountId}`);
@@ -91,47 +90,4 @@ export class CommandWorker {
     }
   }
 
-  /**
-   * Appends a tracking confirmation event to the immutable MongoDB Event Sourcing log.
-   */
-  async emitConfirmationEvent(accountId, baseCommand, fingerprint, executionDetails) {
-    const session = await Event.db.startSession();
-    
-    try {
-      session.startTransaction();
-
-      // Enforce sequential event-sourcing consistency
-      const stream = await Stream.findOneAndUpdate(
-        { accountId },
-        { $inc: { lastVersion: 1 } },
-        { upsert: true, session, returnDocument: "after" }
-      );
-
-      const confirmationEvent = {
-        eventId: fingerprint, // Binds the record to the queue's specific delivery identifier
-        accountId,
-        eventType: `${baseCommand}_CONFIRMED`,
-        streamVersion: stream.lastVersion,
-        payload: {
-          triggeredByCommand: baseCommand,
-          result: executionDetails
-        },
-        receivedAt: new Date()
-      };
-
-      await Event.create([confirmationEvent], { session });
-      
-      await session.commitTransaction();
-      console.log(`[WORKER EVENT] Durable event safely recorded: ${confirmationEvent.eventType}`);
-
-    } catch (error) {
-      if (session.hasActiveTransaction) {
-        const active = await session.hasActiveTransaction();
-        if (active) await session.abortTransaction();
-      }
-      throw error;
-    } finally {
-      await session.endSession();
-    }
-  }
 }

@@ -1,4 +1,8 @@
 export function resolveDecision(account, rules) {
+  if (["BREACHED", "CLOSED", "FUNDED"].includes(account.status)) {
+    return { shouldUpdate: false, newStatus: account.status, command: null };
+  }
+
   let newStatus = account.status;
   let command = null;
 
@@ -20,7 +24,7 @@ export function resolveDecision(account, rules) {
     } 
     
     else if (account.currentPhase === 2) {
-      newStatus = "PENDING_KYC"; // Or "FUNDED", depending on your strict status enums
+      newStatus = "FUNDED_REVIEW";
       // 🔴 FIX #8: Fallback to email since the worker doesn't have a FUND_ACCOUNT directive
       // Alerts the admin/trader to begin the manual live-funding and contract process.
       command = "SEND_EMAIL_NOTIFICATION"; 

@@ -1,6 +1,5 @@
 // controllers/tradeWebhook.controller.js
 
-import { randomUUID } from "crypto";
 import EventService from "../services/event.service.js";
 
 class TradeWebhookController {
@@ -9,7 +8,9 @@ class TradeWebhookController {
 
         const trade = req.body ?? {};
 
-        if (!trade.accountId || !trade.ticket) {
+        const sourceEventId = trade.eventId ?? trade.dealId ?? trade.ticket;
+
+        if (!trade.accountId || !sourceEventId) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid trade payload",
@@ -18,9 +19,11 @@ class TradeWebhookController {
         }
 
         const event = {
-            eventId: randomUUID(),
-            eventType: "TRADE_RECEIVED",
-            aggregateId: trade.accountId,
+            // The broker must send a stable identifier. Generating a UUID here
+            // would make a broker retry look like a new trade.
+            eventId: `mt5:${trade.accountId}:${trade.eventType ?? "TRADE_RECEIVED"}:${sourceEventId}`,
+            eventType: trade.eventType ?? "TRADE_RECEIVED",
+            aggregateId: String(trade.accountId),
             timestamp: new Date(),
             payload: trade
         };
