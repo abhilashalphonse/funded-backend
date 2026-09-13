@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import Payment from "../../models/payment.model.js";
+import Account from "../../accounts/account.model.js";
+import simulatorEngine from "../../simulator/engine.js";
 import { calculatePrice } from "../../pricing/pricingEngine.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
@@ -33,7 +35,16 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
 
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
   const orderId = `ACG-${randomUUID()}`;
-  const payment = await Payment.create({ orderId, email: normalizedEmail, challengeDefinition, commercialConfig, amount: pricing.finalPrice, currency: "EUR", paymentMethod, status: "CREATED" });
+  const payment = await Payment.create({
+    orderId,
+    email: normalizedEmail,
+    challengeDefinition,
+    commercialConfig,
+    amount: pricing.finalPrice,
+    currency: "EUR",
+    paymentMethod,
+    status: "CREATED",
+  });
 
   try {
     const invoice = await nowPayments("/invoice", {
@@ -70,27 +81,103 @@ function verifyIpnSignature(payload, signature) {
   return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(String(signature)));
 }
 
+function buildAccountRules(definition) {
+  const rules = definition.rules;
+  const phases = definition.step === "2step"
+    ? [
+        { phase: 1, profitTarget: Number(rules.phase1ProfitTarget) },
+        { phase: 2, profitTarget: Number(rules.phase2ProfitTarget) },
+      ]
+    : [{ phase: 1, profitTarget: Number(rules.profitTarget) }];
+
+  return {
+    dailyDrawdown: Number(rules.dailyLoss),
+    maxDrawdown: Number(rules.maxLoss),
+    minimumTradingDays: Number(rules.minTradingDays),
+    phases,
+  };
+}
+
+async function activatePaidPayment(payment) {
+  if (payment.accountId) return payment.accountId;
+
+  const definition = payment.challengeDefinition;
+  const accountId = `ACG-${randomUUID().replaceAll("-", "").slice(0, 16).toUpperCase()}`;
+  const accountSize = Number(definition.accountSize);
+  const rules = buildAccountRules(definition);
+
+  const account = await Account.create({
+    accountId,
+    challengeType: definition.step === "2step" ? "TWO_STEP" : "ONE_STEP",
+    accountSize,
+    initialDeposit: accountSize,
+    currentPhase: 1,
+    rules,
+    leverage: 100,
+    status: "ACTIVE",
+    enabled: true,
+    balance: accountSize,
+    equity: accountSize,
+    dailyStartEquity: accountSize,
+  });
+
+  try {
+    const simulated = await simulatorEngine.provisionAccount({ accountId, balance: accountSize, leverage: 100 });
+    account.login = simulated.login;
+    account.platformAccountId = String(simulated.login);
+    await account.save();
+  } catch (error) {
+    await Account.deleteOne({ _id: account._id });
+    throw error;
+  }
+
+  payment.accountId = account.accountId;
+  payment.activatedAt = new Date();
+  await payment.save();
+  return account.accountId;
+}
+
 export async function processIpn(payload, signature) {
   if (!verifyIpnSignature(payload, signature)) {
     const error = new Error("Invalid NOWPayments IPN signature.");
     error.status = 401;
     throw error;
   }
+
   const payment = await Payment.findOne({ orderId: payload.order_id });
   if (!payment) { const error = new Error("Payment order not found."); error.status = 404; throw error; }
+
+  const expectedCrypto = allowedMethods[payment.paymentMethod];
+  const expectedFiat = Number(payment.amount);
+  const receivedFiat = Number(payload.price_amount);
+  if (payload.price_currency && String(payload.price_currency).toLowerCase() !== "eur") throw new Error("Unexpected payment fiat currency.");
+  if (Number.isFinite(receivedFiat) && Math.abs(receivedFiat - expectedFiat) > 0.01) throw new Error("Payment amount mismatch.");
+  if (payload.pay_currency && String(payload.pay_currency).toLowerCase() !== expectedCrypto) throw new Error("Payment cryptocurrency mismatch.");
 
   payment.providerPaymentId = payload.payment_id ? String(payload.payment_id) : payment.providerPaymentId;
   payment.providerStatus = payload.payment_status;
   payment.paidAmount = Number(payload.actually_paid ?? payload.pay_amount ?? 0);
   payment.paidCurrency = payload.pay_currency;
-  payment.status = ({ waiting: "WAITING", confirming: "CONFIRMING", confirmed: "PAID", finished: "PAID", failed: "FAILED", expired: "EXPIRED", partially_paid: "UNDERPAID" })[payload.payment_status] || payment.status;
+
+  const nextStatus = ({
+    waiting: "WAITING",
+    confirming: "CONFIRMING",
+    confirmed: "PAID",
+    finished: "PAID",
+    failed: "FAILED",
+    expired: "EXPIRED",
+    partially_paid: "UNDERPAID",
+  })[payload.payment_status];
+  if (nextStatus) payment.status = nextStatus;
   if (payment.status === "PAID" && !payment.paidAt) payment.paidAt = new Date();
   await payment.save();
+
+  if (payment.status === "PAID") await activatePaidPayment(payment);
   return payment;
 }
 
 export async function getPaymentStatus(id) {
-  const payment = await Payment.findById(id).select("orderId status amount currency checkoutUrl providerStatus paidAmount paidCurrency paidAt");
+  const payment = await Payment.findById(id).select("orderId status amount currency checkoutUrl providerStatus paidAmount paidCurrency paidAt accountId activatedAt");
   if (!payment) { const error = new Error("Payment not found."); error.status = 404; throw error; }
   return payment;
 }
