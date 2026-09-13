@@ -32,6 +32,8 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error("A valid email is required.");
   if (!allowedMethods[paymentMethod]) throw new Error("Unsupported crypto payment method.");
+  if (!process.env.NOWPAYMENTS_IPN_URL) throw new Error("NOWPAYMENTS_IPN_URL is not configured.");
+  if (!process.env.FRONTEND_URL) throw new Error("FRONTEND_URL is not configured.");
 
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
   const orderId = `ACG-${randomUUID()}`;
@@ -72,13 +74,25 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   }
 }
 
+function recursivelySort(value) {
+  if (Array.isArray(value)) return value.map(recursivelySort);
+  if (value !== null && typeof value === "object") {
+    return Object.keys(value).sort().reduce((sorted, key) => {
+      sorted[key] = recursivelySort(value[key]);
+      return sorted;
+    }, {});
+  }
+  return value;
+}
+
 function verifyIpnSignature(payload, signature) {
   const secret = process.env.NOWPAYMENTS_IPN_SECRET;
   if (!secret || !signature) return false;
-  const sorted = Object.keys(payload).sort().reduce((acc, key) => { acc[key] = payload[key]; return acc; }, {});
-  const digest = crypto.createHmac("sha512", secret).update(JSON.stringify(sorted)).digest("hex");
-  if (digest.length !== String(signature).length) return false;
-  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(String(signature)));
+  const sortedPayload = recursivelySort(payload);
+  const digest = crypto.createHmac("sha512", secret).update(JSON.stringify(sortedPayload)).digest("hex");
+  const provided = String(signature).trim().toLowerCase();
+  if (digest.length !== provided.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(provided));
 }
 
 function buildAccountRules(definition) {
@@ -167,6 +181,7 @@ export async function processIpn(payload, signature) {
     failed: "FAILED",
     expired: "EXPIRED",
     partially_paid: "UNDERPAID",
+    refunded: "REFUNDED",
   })[payload.payment_status];
   if (nextStatus) payment.status = nextStatus;
   if (payment.status === "PAID" && !payment.paidAt) payment.paidAt = new Date();
