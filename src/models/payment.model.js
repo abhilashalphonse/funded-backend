@@ -22,6 +22,8 @@ const PaymentSchema = new mongoose.Schema(
     paidAmount: Number,
     paidCurrency: String,
     checkoutUrl: String,
+    accountId: { type: String, index: true, sparse: true },
+    activatedAt: Date,
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
     paidAt: Date,
   },
