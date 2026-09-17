@@ -1,9 +1,19 @@
 import mongoose from "mongoose";
 
+const PlatformAccountSchema = new mongoose.Schema({
+    phase: { type: Number, required: true },
+    externalRef: { type: String, required: true },
+    platformAccountId: { type: String, required: true },
+    accountCode: { type: String, default: null },
+    login: { type: String, default: null },
+    status: { type: String, default: "ACTIVE" },
+    provisionedAt: { type: Date, default: Date.now }
+}, { _id: false });
+
 const AccountSchema = new mongoose.Schema(
     {
-        // --- Identity & Meta ---
         accountId: { type: String, required: true, unique: true },
+        ownerExternalRef: { type: String, index: true },
         version: { type: Number, default: 0 },
         lastSequence: { type: Number, default: 0 },
         lastProcessedEventId: { type: String },
@@ -11,13 +21,12 @@ const AccountSchema = new mongoose.Schema(
         dailyResetAt: { type: Date },
         dailyStartEquity: { type: Number, default: 0 },
         commandPending: { type: String, default: null },
-        
-        // --- Configuration & Challenge Definition ---
+
         challengeType: { type: String, required: true },
         accountSize: { type: Number, required: true },
         initialDeposit: { type: Number, default: 0 },
         currentPhase: { type: Number, default: 1 },
-        
+
         rules: {
             dailyDrawdown: Number,
             maxDrawdown: Number,
@@ -28,22 +37,31 @@ const AccountSchema = new mongoose.Schema(
             }]
         },
 
-        // --- Current State ---
         status: {
             type: String,
             default: "NEW",
             enum: ["NEW", "ACTIVE", "BREACHED", "LOCKED", "PASSED", "PHASE_2", "FUNDED_REVIEW", "FUNDED", "CLOSED"]
         },
         enabled: { type: Boolean, default: true },
-        
-        // --- Platform Integration ---
-        platform: { type: String, default: "mt5" },
+
+        platform: { type: String, default: () => process.env.TRADING_PROVIDER || "simulator" },
         platformAccountId: { type: String, sparse: true },
+        platformAccountCode: { type: String, default: null },
+        platformLogin: { type: String, default: null },
+        platformAccounts: { type: [PlatformAccountSchema], default: [] },
+        provisioning: {
+            status: {
+                type: String,
+                enum: ["NOT_STARTED", "PENDING", "ACTIVE", "FAILED"],
+                default: "NOT_STARTED"
+            },
+            error: { type: String, default: null },
+            updatedAt: { type: Date, default: null }
+        },
         login: Number,
         group: String,
         leverage: Number,
 
-        // --- Computed Projections (Read Model) ---
         projections: {
             highestBalance: { type: Number, default: 0 },
             highestEquity: { type: Number, default: 0 },
@@ -56,7 +74,6 @@ const AccountSchema = new mongoose.Schema(
             breachedAt: { type: Date }
         },
 
-        // --- Active Metrics (Raw from Platform) ---
         balance: { type: Number, default: 0 },
         equity: { type: Number, default: 0 },
         credit: { type: Number, default: 0 },
@@ -64,8 +81,7 @@ const AccountSchema = new mongoose.Schema(
         marginFree: { type: Number, default: 0 },
         marginLevel: { type: Number, default: 0 },
         floatingProfit: { type: Number, default: 0 },
-        
-        // --- Historical/Aggregate Stats ---
+
         totalTrades: { type: Number, default: 0 },
         winningTrades: { type: Number, default: 0 },
         losingTrades: { type: Number, default: 0 }
@@ -76,7 +92,6 @@ const AccountSchema = new mongoose.Schema(
     }
 );
 
-// Indexes remain largely the same, optimized for your CQRS flow
 AccountSchema.index({ accountId: 1, version: 1 });
 AccountSchema.index({ accountId: 1, lastSequence: 1 });
 AccountSchema.index({ platform: 1, platformAccountId: 1 }, { unique: true, sparse: true });

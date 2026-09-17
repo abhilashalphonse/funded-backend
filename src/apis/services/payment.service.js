@@ -2,8 +2,9 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import Payment from "../../models/payment.model.js";
 import Account from "../../accounts/account.model.js";
-import simulatorEngine from "../../simulator/engine.js";
 import { calculatePrice } from "../../pricing/pricingEngine.js";
+import { configuredTradingProvider } from "../../connectors/trading/registry.js";
+import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
 const allowedMethods = { BTC: "btc", USDT_TRX: "usdttrc20" };
@@ -116,34 +117,35 @@ async function activatePaidPayment(payment) {
   if (payment.accountId) return payment.accountId;
 
   const definition = payment.challengeDefinition;
-  const accountId = `ACG-${randomUUID().replaceAll("-", "").slice(0, 16).toUpperCase()}`;
+  const accountId = `ACG-${String(payment._id).slice(-16).toUpperCase()}`;
   const accountSize = Number(definition.accountSize);
   const rules = buildAccountRules(definition);
+  const platform = configuredTradingProvider();
 
-  const account = await Account.create({
-    accountId,
-    challengeType: definition.step === "2step" ? "TWO_STEP" : "ONE_STEP",
-    accountSize,
-    initialDeposit: accountSize,
-    currentPhase: 1,
-    rules,
-    leverage: 100,
-    status: "ACTIVE",
-    enabled: true,
-    balance: accountSize,
-    equity: accountSize,
-    dailyStartEquity: accountSize,
-  });
-
-  try {
-    const simulated = await simulatorEngine.provisionAccount({ accountId, balance: accountSize, leverage: 100 });
-    account.login = simulated.login;
-    account.platformAccountId = String(simulated.login);
-    await account.save();
-  } catch (error) {
-    await Account.deleteOne({ _id: account._id });
-    throw error;
+  let account = await Account.findOne({ accountId });
+  if (!account) {
+    account = await Account.create({
+      accountId,
+      ownerExternalRef: payment.email,
+      challengeType: definition.step === "2step" ? "TWO_STEP" : "ONE_STEP",
+      accountSize,
+      initialDeposit: accountSize,
+      currentPhase: 1,
+      rules,
+      leverage: 100,
+      platform,
+      status: "NEW",
+      enabled: false,
+      balance: accountSize,
+      equity: accountSize,
+      dailyStartEquity: accountSize,
+    });
   }
+
+  await provisionTradingAccount(account, { phase: 1, accountType: "CHALLENGE" });
+  account.status = "ACTIVE";
+  account.enabled = true;
+  await account.save();
 
   payment.accountId = account.accountId;
   payment.activatedAt = new Date();
