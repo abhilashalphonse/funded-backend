@@ -50,6 +50,20 @@ export class CommandWorker {
         if (account.challengeType !== "TWO_STEP") {
           throw new Error(`Account ${accountId} is not a two-step challenge`);
         }
+
+        const phaseOne = account.platformAccounts.find(item => Number(item.phase) === 1);
+        if (phaseOne?.status !== "COMPLETED") {
+          await connector.disableAccount({
+            externalRef: `${account.accountId}:phase:1`,
+            platformAccountId: phaseOne?.platformAccountId || account.platformAccountId,
+            reason: "ACG_FUNDED_PHASE_1_COMPLETED",
+            liquidate: true,
+            cancelPending: true,
+          });
+          if (phaseOne) phaseOne.status = "COMPLETED";
+          await account.save();
+        }
+
         await provisionTradingAccount(account, { phase: 2, accountType: "CHALLENGE" });
         account.currentPhase = 2;
         account.status = "PHASE_2";
