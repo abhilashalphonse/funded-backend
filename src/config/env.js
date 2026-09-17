@@ -54,6 +54,8 @@ const env = Object.freeze({
 
   CORS_ORIGINS: csv("CORS_ORIGINS", "http://localhost:5173"),
   FRONTEND_URL: validUrl("FRONTEND_URL", required("FRONTEND_URL")),
+  SUPABASE_URL: validUrl("SUPABASE_URL", required("SUPABASE_URL")),
+  SUPABASE_ANON_KEY: required("SUPABASE_ANON_KEY"),
 
   TRADING_PROVIDER: tradingProvider,
   ACG_TRADER_BASE_URL: validUrl("ACG_TRADER_BASE_URL", tradingProvider === "acg-trader" ? required("ACG_TRADER_BASE_URL") : process.env.ACG_TRADER_BASE_URL),
