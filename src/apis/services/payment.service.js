@@ -29,7 +29,7 @@ async function nowPayments(path, body) {
   return data;
 }
 
-export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod }) {
+export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod, ownerExternalRef }) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error("A valid email is required.");
   if (!allowedMethods[paymentMethod]) throw new Error("Unsupported crypto payment method.");
@@ -40,6 +40,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   const orderId = `ACG-${randomUUID()}`;
   const payment = await Payment.create({
     orderId,
+    ownerExternalRef: ownerExternalRef ? String(ownerExternalRef) : undefined,
     email: normalizedEmail,
     challengeDefinition,
     commercialConfig,
@@ -126,7 +127,8 @@ async function activatePaidPayment(payment) {
   if (!account) {
     account = await Account.create({
       accountId,
-      ownerExternalRef: payment.email,
+      ownerExternalRef: payment.ownerExternalRef || payment.email,
+      accountMode: "CHALLENGE",
       challengeType: definition.step === "2step" ? "TWO_STEP" : "ONE_STEP",
       accountSize,
       initialDeposit: accountSize,
