@@ -5,6 +5,7 @@ import compression from "compression";
 import tradeWebhookRoutes from "./apis/routes/tradeWebhook.routes.js";
 import acgTraderWebhookRoutes from "./apis/routes/acgTraderWebhook.routes.js";
 import paymentRoutes from "./apis/routes/payment.routes.js";
+import customerRoutes from "./apis/routes/customer.routes.js";
 import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
 import boss from "./config/boss.js";
@@ -32,6 +33,7 @@ app.use(express.json({ limit: "128kb" }));
 app.use("/api", acgTraderWebhookRoutes);
 app.use("/api", tradeWebhookRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/customer", customerRoutes);
 if (env.ENABLE_SIMULATOR_ROUTES) app.use("/simulator", simulatorRoutes);
 
 app.get("/health", (req, res) => res.json({
@@ -40,6 +42,7 @@ app.get("/health", (req, res) => res.json({
   environment: env.NODE_ENV,
   tradingProvider: configuredTradingProvider(),
   acgTraderWebhookConfigured: Boolean(env.ACG_TRADER_WEBHOOK_SECRET),
+  customerAuthConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
   localAdminRoutesEnabled: env.ENABLE_LOCAL_ADMIN_ROUTES,
 }));
@@ -56,6 +59,7 @@ if (env.ENABLE_LOCAL_ADMIN_ROUTES) {
       const account = await Account.create({
         accountId: String(accountId),
         ownerExternalRef: String(ownerExternalRef || `local:${accountId}`),
+        accountMode: "CHALLENGE",
         challengeType: rules.phases.length > 1 ? "TWO_STEP" : "ONE_STEP",
         accountSize: Number(accountSize),
         initialDeposit: deposit,
