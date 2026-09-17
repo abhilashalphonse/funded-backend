@@ -115,44 +115,106 @@ function buildAccountRules(definition) {
 }
 
 async function activatePaidPayment(payment) {
-  if (payment.accountId) return payment.accountId;
-
-  const definition = payment.challengeDefinition;
-  const accountId = `ACG-${String(payment._id).slice(-16).toUpperCase()}`;
-  const accountSize = Number(definition.accountSize);
-  const rules = buildAccountRules(definition);
-  const platform = configuredTradingProvider();
-
-  let account = await Account.findOne({ accountId });
-  if (!account) {
-    account = await Account.create({
-      accountId,
-      ownerExternalRef: payment.ownerExternalRef || payment.email,
-      accountMode: "CHALLENGE",
-      challengeType: definition.step === "2step" ? "TWO_STEP" : "ONE_STEP",
-      accountSize,
-      initialDeposit: accountSize,
-      currentPhase: 1,
-      rules,
-      leverage: 100,
-      platform,
-      status: "NEW",
-      enabled: false,
-      balance: accountSize,
-      equity: accountSize,
-      dailyStartEquity: accountSize,
-    });
+  if (payment.accountId) {
+    if (payment.activation?.status !== "ACTIVE") {
+      await Payment.updateOne(
+        { _id: payment._id },
+        { $set: { "activation.status": "ACTIVE", "activation.error": null } },
+      );
+    }
+    return payment.accountId;
   }
 
-  await provisionTradingAccount(account, { phase: 1, accountType: "CHALLENGE" });
-  account.status = "ACTIVE";
-  account.enabled = true;
-  await account.save();
+  // Claim activation atomically so duplicate provider IPNs cannot provision twice.
+  // A stale PENDING claim may be retried after five minutes in case a worker died.
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - 5 * 60 * 1000);
+  const claimed = await Payment.findOneAndUpdate(
+    {
+      _id: payment._id,
+      accountId: { $exists: false },
+      $or: [
+        { "activation.status": { $exists: false } },
+        { "activation.status": { $in: ["NOT_STARTED", "FAILED"] } },
+        { "activation.status": "PENDING", "activation.attemptedAt": { $lt: staleBefore } },
+      ],
+    },
+    {
+      $set: {
+        "activation.status": "PENDING",
+        "activation.error": null,
+        "activation.attemptedAt": now,
+      },
+    },
+    { new: true },
+  );
 
-  payment.accountId = account.accountId;
-  payment.activatedAt = new Date();
-  await payment.save();
-  return account.accountId;
+  if (!claimed) {
+    const current = await Payment.findById(payment._id).select("accountId activation");
+    return current?.accountId || null;
+  }
+
+  try {
+    const definition = claimed.challengeDefinition;
+    const accountId = `ACG-${String(claimed._id).slice(-16).toUpperCase()}`;
+    const accountSize = Number(definition.accountSize);
+    const rules = buildAccountRules(definition);
+    const platform = configuredTradingProvider();
+
+    let account = await Account.findOne({ accountId });
+    if (!account) {
+      account = await Account.create({
+        accountId,
+        ownerExternalRef: claimed.ownerExternalRef || claimed.email,
+        accountMode: "CHALLENGE",
+        challengeType: definition.step === "2step" ? "TWO_STEP" : "ONE_STEP",
+        accountSize,
+        initialDeposit: accountSize,
+        currentPhase: 1,
+        rules,
+        leverage: 100,
+        platform,
+        status: "NEW",
+        enabled: false,
+        balance: accountSize,
+        equity: accountSize,
+        dailyStartEquity: accountSize,
+      });
+    }
+
+    if (account.provisioning?.status !== "ACTIVE" || !account.platformAccountId) {
+      await provisionTradingAccount(account, { phase: 1, accountType: "CHALLENGE" });
+    }
+
+    account.status = "ACTIVE";
+    account.enabled = true;
+    await account.save();
+
+    const activatedAt = new Date();
+    await Payment.updateOne(
+      { _id: claimed._id },
+      {
+        $set: {
+          accountId: account.accountId,
+          activatedAt,
+          "activation.status": "ACTIVE",
+          "activation.error": null,
+        },
+      },
+    );
+    return account.accountId;
+  } catch (error) {
+    await Payment.updateOne(
+      { _id: claimed._id },
+      {
+        $set: {
+          "activation.status": "FAILED",
+          "activation.error": String(error?.message || "Trading account activation failed").slice(0, 1000),
+        },
+      },
+    );
+    throw error;
+  }
 }
 
 export async function processIpn(payload, signature) {
@@ -196,7 +258,7 @@ export async function processIpn(payload, signature) {
 }
 
 export async function getPaymentStatus(id) {
-  const payment = await Payment.findById(id).select("orderId status amount currency checkoutUrl providerStatus paidAmount paidCurrency paidAt accountId activatedAt");
+  const payment = await Payment.findById(id).select("orderId status amount currency checkoutUrl providerStatus paidAmount paidCurrency paidAt accountId activatedAt activation");
   if (!payment) { const error = new Error("Payment not found."); error.status = 404; throw error; }
   return payment;
 }
