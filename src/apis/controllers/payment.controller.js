@@ -1,8 +1,14 @@
 import { createCryptoPayment, getPaymentStatus, processIpn } from "../services/payment.service.js";
 
 export async function createCrypto(req, res, next) {
-  try { res.status(201).json({ success: true, data: await createCryptoPayment(req.body ?? {}) }); }
-  catch (error) { next(error); }
+  try {
+    const payload = {
+      ...(req.body ?? {}),
+      ownerExternalRef: req.customer?.id || undefined,
+      email: req.customer?.email || req.body?.email,
+    };
+    res.status(201).json({ success: true, data: await createCryptoPayment(payload) });
+  } catch (error) { next(error); }
 }
 
 export async function ipn(req, res, next) {
