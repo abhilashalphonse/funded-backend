@@ -1,5 +1,6 @@
 import express from "express";
 import tradeWebhookRoutes from "./apis/routes/tradeWebhook.routes.js";
+import acgTraderWebhookRoutes from "./apis/routes/acgTraderWebhook.routes.js";
 import paymentRoutes from "./apis/routes/payment.routes.js";
 import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
@@ -9,7 +10,8 @@ import { configuredTradingProvider } from "./connectors/trading/registry.js";
 import { provisionTradingAccount } from "./connectors/trading/account-provisioning.js";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "128kb" }));
+app.use("/api", acgTraderWebhookRoutes);
 app.use("/api", tradeWebhookRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/simulator", simulatorRoutes);
@@ -18,6 +20,7 @@ app.get("/health", (req, res) => res.json({
   success: true,
   message: "ACG Funded API is running",
   tradingProvider: configuredTradingProvider(),
+  acgTraderWebhookConfigured: Boolean(process.env.ACG_TRADER_WEBHOOK_SECRET),
 }));
 
 // Local MVP provisioning endpoint. Keep administrator-only before production exposure.
