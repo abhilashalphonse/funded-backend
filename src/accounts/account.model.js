@@ -10,6 +10,27 @@ const PlatformAccountSchema = new mongoose.Schema({
     provisionedAt: { type: Date, default: Date.now }
 }, { _id: false });
 
+const DemoPositionSchema = new mongoose.Schema({
+    positionId: { type: String, required: true },
+    symbol: { type: String, required: true },
+    side: { type: String, enum: ["BUY", "SELL"], required: true },
+    quantity: { type: Number, required: true },
+    entryPrice: { type: Number, required: true },
+    openedAt: { type: Date, default: Date.now },
+}, { _id: false });
+
+const DemoTradeSchema = new mongoose.Schema({
+    tradeId: { type: String, required: true },
+    symbol: { type: String, required: true },
+    side: { type: String, enum: ["BUY", "SELL"], required: true },
+    quantity: { type: Number, required: true },
+    entryPrice: { type: Number, required: true },
+    exitPrice: { type: Number, required: true },
+    pnl: { type: Number, required: true },
+    openedAt: Date,
+    closedAt: { type: Date, default: Date.now },
+}, { _id: false });
+
 const AccountSchema = new mongoose.Schema(
     {
         accountId: { type: String, required: true, unique: true },
@@ -73,6 +94,11 @@ const AccountSchema = new mongoose.Schema(
             tradingDays: { type: Number, default: 0 },
             passedAt: { type: Date },
             breachedAt: { type: Date }
+        },
+
+        demoTrading: {
+            positions: { type: [DemoPositionSchema], default: [] },
+            history: { type: [DemoTradeSchema], default: [] },
         },
 
         balance: { type: Number, default: 0 },
