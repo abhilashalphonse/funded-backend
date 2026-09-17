@@ -22,6 +22,7 @@ const AccountSchema = new mongoose.Schema(
         dailyStartEquity: { type: Number, default: 0 },
         commandPending: { type: String, default: null },
 
+        accountMode: { type: String, enum: ["CHALLENGE", "DEMO"], default: "CHALLENGE", index: true },
         challengeType: { type: String, required: true },
         accountSize: { type: Number, required: true },
         initialDeposit: { type: Number, default: 0 },
@@ -96,5 +97,6 @@ AccountSchema.index({ accountId: 1, version: 1 });
 AccountSchema.index({ accountId: 1, lastSequence: 1 });
 AccountSchema.index({ platform: 1, platformAccountId: 1 }, { unique: true, sparse: true });
 AccountSchema.index({ status: 1 });
+AccountSchema.index({ ownerExternalRef: 1, accountMode: 1, createdAt: -1 });
 
 export default mongoose.model("Account", AccountSchema);
