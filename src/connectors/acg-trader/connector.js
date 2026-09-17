@@ -42,6 +42,14 @@ export class ACGTraderConnector extends TradingProviderConnector {
     return { provider: this.name, platformAccountId: String(result.account.id), raw: result.account };
   }
 
+  async pauseAccount({ platformAccountId, reason = "ACG_FUNDED_PAUSE", cancelPending = false }) {
+    return this.client.pauseAccount(required(platformAccountId, "platformAccountId"), { reason, cancelPending });
+  }
+
+  async resumeAccount({ platformAccountId, reason = "ACG_FUNDED_RESUME" }) {
+    return this.client.resumeAccount(required(platformAccountId, "platformAccountId"), { reason });
+  }
+
   async breachAccount({ platformAccountId, reason = "RISK_BREACH", action = "LIQUIDATE_AND_LOCK" }) {
     return this.client.breachAccount(required(platformAccountId, "platformAccountId"), { reason, action });
   }

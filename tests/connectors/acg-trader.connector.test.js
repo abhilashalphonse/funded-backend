@@ -12,6 +12,8 @@ class FakeClient {
     this.calls.push(["ticket", command]);
     return { ticket: "one-time-ticket", expiresAt: "2026-09-17T10:00:00.000Z" };
   }
+  async pauseAccount(accountId, options) { this.calls.push(["pause", accountId, options]); return { changed: true }; }
+  async resumeAccount(accountId, options) { this.calls.push(["resume", accountId, options]); return { changed: true }; }
   async breachAccount(accountId, options) { this.calls.push(["breach", accountId, options]); return { changed: true }; }
 }
 
@@ -52,6 +54,15 @@ test("ACG Trader connector returns provider-neutral federated session", async ()
     expiresAt: "2026-09-17T10:00:00.000Z",
     launchUrl: "https://trade.example.test",
   });
+});
+
+test("ACG Trader connector routes pause and resume to the same provider account", async () => {
+  const client = new FakeClient();
+  const connector = new ACGTraderConnector({ client });
+  await connector.pauseAccount({ platformAccountId: "66aa00112233445566778899", reason: "REVIEW", cancelPending: true });
+  await connector.resumeAccount({ platformAccountId: "66aa00112233445566778899", reason: "REVIEW_CLEARED" });
+  assert.deepEqual(client.calls[0], ["pause", "66aa00112233445566778899", { reason: "REVIEW", cancelPending: true }]);
+  assert.deepEqual(client.calls[1], ["resume", "66aa00112233445566778899", { reason: "REVIEW_CLEARED" }]);
 });
 
 test("ACG Trader connector routes breaches to the provider account", async () => {

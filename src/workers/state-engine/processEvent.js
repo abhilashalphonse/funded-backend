@@ -1,121 +1,130 @@
 import Account from "../../accounts/account.model.js";
 import { evaluateRules } from "./rules.js";
-import { resolveDecision } from "./decisions.js"; 
-import { CommandQueue } from "./commandQueue.js"; 
+import { resolveDecision } from "./decisions.js";
+import { CommandQueue } from "./commandQueue.js";
 
+const SNAPSHOT_EVENT = "ACG_TRADER_ACCOUNT_SNAPSHOT";
+const DEAL_EVENT = "ACG_TRADER_DEAL_CREATED";
+const CONTROL_EVENT = "ACG_TRADER_ACCOUNT_CONTROLLED";
+const CLOSE_DEAL_TYPES = new Set(["CLOSE", "PARTIAL_CLOSE", "REVERSE_CLOSE", "STOP_LOSS", "TAKE_PROFIT", "LIQUIDATION"]);
 
 export async function processEvent(event, boss) {
+  const account = await Account.findOne({ accountId: event.aggregateId });
+  if (!account) throw new Error(`Account ${event.aggregateId} not found`);
 
-    const account = await Account.findOne({
-        accountId: event.aggregateId
-    });
+  if (account.lastProcessedEventId === event.eventId) return;
 
-    if (!account) {
-        throw new Error(
-            `Account ${event.aggregateId} not found`
-        );
-    }
-
-    if (["BREACHED", "CLOSED", "FUNDED"].includes(account.status)) {
-        console.log(`[STATE] Terminal account skipped ${account.accountId}`);
-        return;
-    }
-
-    if (account.lastProcessedEventId === event.eventId) {
-        console.log(
-            `[STATE] Duplicate event skipped ${event.eventId}`
-        );
-        return;
-    }
-
-    applyEvent(account, event);
-
-    const rules = evaluateRules(account);
-
-    const decision = resolveDecision(
-        account,
-        rules
-    );
-
-    if (!decision.shouldUpdate) {
-        account.lastProcessedEventId = event.eventId;
-        await account.save();
-        return;
-    }
-
-    console.log(
-        `[STATE] ${account.accountId}: ${account.status} → ${decision.newStatus}`
-    );
-
-    account.status = decision.newStatus;
+  if (event.eventType === CONTROL_EVENT) {
+    applyControlEvent(account, event);
     account.lastProcessedEventId = event.eventId;
-
-    // 1. Save projection
     await account.save();
+    return;
+  }
 
-    // 2. Enqueue command (New Logic)
-    if (decision.command) {
-        try {
-            const commandQueue = new CommandQueue(boss);
-            await commandQueue.enqueueCommand(decision.command, account);
-            account.commandPending = null;
-        } catch (error) {
-            // Keep the state decision durable and make a failed side effect visible/retriable.
-            account.commandPending = decision.command;
-            await account.save();
-            throw error;
-        }
+  if (event.eventType === DEAL_EVENT) {
+    applyDealEvent(account, event);
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
+  if (event.eventType !== SNAPSHOT_EVENT) {
+    // Legacy providers still use the generic projection contract.
+    if (event.metadata?.provider === "acg-trader") {
+      account.lastProcessedEventId = event.eventId;
+      await account.save();
+      return;
     }
+  }
+
+  if (["BREACHED", "CLOSED", "FUNDED"].includes(account.status)) {
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
+  applySnapshotEvent(account, event);
+  const rules = evaluateRules(account);
+  const decision = resolveDecision(account, rules);
+
+  if (!decision.shouldUpdate) {
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
+  account.status = decision.newStatus;
+  account.lastProcessedEventId = event.eventId;
+  await account.save();
+
+  if (decision.command) {
+    try {
+      const commandQueue = new CommandQueue(boss);
+      await commandQueue.enqueueCommand(decision.command, account);
+      account.commandPending = null;
+      await account.save();
+    } catch (error) {
+      account.commandPending = decision.command;
+      await account.save();
+      throw error;
+    }
+  }
 }
 
+function applySnapshotEvent(account, event) {
+  const p = event.payload || {};
+  const eventDate = new Date(event.occurredAt || event.receivedAt || Date.now());
+  account.projections = account.projections || {};
 
-function applyEvent(account, event) {
-    const p = event.payload || {};
-    const eventDate = new Date(event.receivedAt || Date.now());
+  assignFinite(account, "balance", p.balance);
+  assignFinite(account, "equity", p.equity);
+  assignFinite(account, "margin", p.margin);
+  assignFinite(account, "marginFree", p.marginFree);
+  assignFinite(account, "marginLevel", p.marginLevel);
+  assignFinite(account, "floatingProfit", p.floatingProfit);
 
-    // Defensive check: Ensure the projections object exists
-    account.projections = account.projections || {};
+  const initialBalance = Number(account.initialDeposit || account.accountSize || 0);
+  const balance = Number(account.balance || 0);
+  const equity = Number(account.equity || 0);
 
-    // --- 1 & 2. Update Balance & Equity (and other raw payload data) ---
-    if (p.balance !== undefined) account.balance = p.balance;
-    if (p.equity !== undefined) account.equity = p.equity;
-    if (p.margin !== undefined) account.margin = p.margin;
-    if (p.openPositions !== undefined) account.openPositions = p.openPositions;
+  if (!Number.isFinite(account.projections.highestBalance) || account.projections.highestBalance === 0) account.projections.highestBalance = balance;
+  account.projections.highestBalance = Math.max(account.projections.highestBalance, balance);
+  if (!Number.isFinite(account.projections.highestEquity) || account.projections.highestEquity === 0) account.projections.highestEquity = equity;
+  account.projections.highestEquity = Math.max(account.projections.highestEquity, equity);
+  account.projections.profit = balance - initialBalance;
 
-    // Set up baselines for calculations
-    const initialBalance = account.initialDeposit;
+  const eventDayString = eventDate.toISOString().split("T")[0];
+  if (account.lastActiveDay !== eventDayString) {
+    account.lastActiveDay = eventDayString;
+    account.dailyResetAt = eventDate;
+    account.dailyStartEquity = equity;
+    account.projections.tradingDays = Number(account.projections.tradingDays || 0) + 1;
+  }
+  if (!Number.isFinite(Number(account.dailyStartEquity)) || Number(account.dailyStartEquity) === 0) account.dailyStartEquity = equity;
+  account.projections.dailyLoss = Math.max(0, Number(account.dailyStartEquity) - equity);
+  account.projections.totalLoss = Math.max(0, initialBalance - equity);
+}
 
-    // --- 3. Update Highest Balance (High Water Mark) ---
-    // 🔴 FIXED: Moved to projections
-    if (account.projections.highestBalance === undefined) {
-        account.projections.highestBalance = account.balance;
-    }
-    account.projections.highestBalance = Math.max(account.projections.highestBalance, account.balance);
+function applyDealEvent(account, event) {
+  const p = event.payload || {};
+  const type = String(p.type || "").toUpperCase();
+  if (!CLOSE_DEAL_TYPES.has(type)) return;
+  account.totalTrades = Number(account.totalTrades || 0) + 1;
+  const realized = Number(p.realizedPnl || 0) - Number(p.commission || 0);
+  if (realized > 0) account.winningTrades = Number(account.winningTrades || 0) + 1;
+  else if (realized < 0) account.losingTrades = Number(account.losingTrades || 0) + 1;
+}
 
-    // --- 4. Update Highest Equity (High Water Mark) ---
-    // Applying the same safe initialization to equity
-    if (account.projections.highestEquity === undefined) {
-        account.projections.highestEquity = account.equity;
-    }
-    account.projections.highestEquity = Math.max(account.projections.highestEquity, account.equity);
+function applyControlEvent(account, event) {
+  const platformAccountId = String(event.payload?.platformAccountId || "");
+  const status = String(event.payload?.status || "");
+  if (!platformAccountId || !status) return;
+  const record = account.platformAccounts?.find(item => String(item.platformAccountId) === platformAccountId);
+  if (record) record.status = status;
+}
 
-    // --- 5. Update Profit ---
-    // 🔴 FIXED: Moved to projections
-    account.projections.profit = account.balance - initialBalance;
-
-    // --- 6. Update Daily Loss ---
-    // 🔴 FIXED: Moved to projections
-    const eventDayString = eventDate.toISOString().split('T')[0];
-    if (account.lastActiveDay !== eventDayString) {
-        account.lastActiveDay = eventDayString;
-        account.dailyResetAt = eventDate;
-        account.dailyStartEquity = account.equity;
-        account.projections.tradingDays += 1;
-    }
-    if (account.dailyStartEquity === 0) account.dailyStartEquity = account.equity;
-    account.projections.dailyLoss = Math.max(0, account.dailyStartEquity - account.equity);
-
-    // --- 7. Update Total Loss ---
-    // 🔴 FIXED: Moved to projections
-    account.projections.totalLoss = Math.max(0, initialBalance - account.equity);
+function assignFinite(target, field, value) {
+  if (value === undefined || value === null) return;
+  const number = Number(value);
+  if (Number.isFinite(number)) target[field] = number;
 }
