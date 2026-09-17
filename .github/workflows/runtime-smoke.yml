@@ -1,0 +1,73 @@
+name: Runtime Smoke Check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: acgfunded
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d acgfunded"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Start backend and wait for health
+        env:
+          NODE_ENV: development
+          PORT: 3000
+          MONGODB_URI: mongodb://127.0.0.1:27017/acg-funded-smoke
+          POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/acgfunded
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DATABASE: acgfunded
+          TRADING_PROVIDER: simulator
+          ENABLE_SIMULATOR_ROUTES: "true"
+          ENABLE_LOCAL_ADMIN_ROUTES: "false"
+        run: |
+          node src/server.js > /tmp/funded-backend.log 2>&1 &
+          echo $! > /tmp/funded-backend.pid
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3000/health > /tmp/health.json; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/funded-backend.pid)" 2>/dev/null; then
+              echo "Backend process exited before becoming healthy"
+              cat /tmp/funded-backend.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Backend did not become healthy"
+          cat /tmp/funded-backend.log
+          exit 1
+      - name: Print backend log
+        if: always()
+        run: cat /tmp/funded-backend.log 2>/dev/null || true
