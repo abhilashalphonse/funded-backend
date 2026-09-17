@@ -7,6 +7,7 @@ import {
   listCustomerAccounts,
   placeDemoOrder,
 } from "../services/customer.service.js";
+import { createCustomerTradingLaunch } from "../services/tradingLaunch.service.js";
 
 const router = express.Router();
 
@@ -22,6 +23,13 @@ router.get("/workspace", async (req, res, next) => {
 router.get("/accounts", async (req, res, next) => {
   try {
     const data = await listCustomerAccounts(req.customer);
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/accounts/:accountId/trading-launch", async (req, res, next) => {
+  try {
+    const data = await createCustomerTradingLaunch(req.customer, req.params.accountId);
     res.json({ success: true, data });
   } catch (error) { next(error); }
 });
