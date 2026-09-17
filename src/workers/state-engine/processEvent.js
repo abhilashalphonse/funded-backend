@@ -43,6 +43,13 @@ export async function processEvent(event, boss) {
     return;
   }
 
+  if (event.eventType === SNAPSHOT_EVENT && !isAuthoritativeTraderSnapshot(event)) {
+    applySnapshotMetrics(account, event);
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
   applySnapshotEvent(account, event);
   const rules = evaluateRules(account);
   const decision = resolveDecision(account, rules);
@@ -71,17 +78,28 @@ export async function processEvent(event, boss) {
   }
 }
 
-function applySnapshotEvent(account, event) {
-  const p = event.payload || {};
-  const eventDate = new Date(event.occurredAt || event.receivedAt || Date.now());
-  account.projections = account.projections || {};
+export function isAuthoritativeTraderSnapshot(event) {
+  if (event?.eventType !== SNAPSHOT_EVENT) return true;
+  const payload = event.payload || {};
+  return payload.complete === true && String(payload.valuationStatus || "").toUpperCase() === "LIVE";
+}
 
+function applySnapshotMetrics(account, event) {
+  const p = event.payload || {};
   assignFinite(account, "balance", p.balance);
   assignFinite(account, "equity", p.equity);
   assignFinite(account, "margin", p.margin);
   assignFinite(account, "marginFree", p.marginFree);
   assignFinite(account, "marginLevel", p.marginLevel);
   assignFinite(account, "floatingProfit", p.floatingProfit);
+}
+
+function applySnapshotEvent(account, event) {
+  const p = event.payload || {};
+  const eventDate = new Date(event.occurredAt || event.receivedAt || Date.now());
+  account.projections = account.projections || {};
+
+  applySnapshotMetrics(account, event);
 
   const initialBalance = Number(account.initialDeposit || account.accountSize || 0);
   const balance = Number(account.balance || 0);
