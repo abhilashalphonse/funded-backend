@@ -25,6 +25,16 @@ const PaymentSchema = new mongoose.Schema(
     checkoutUrl: String,
     accountId: { type: String, index: true, sparse: true },
     activatedAt: Date,
+    activation: {
+      status: {
+        type: String,
+        enum: ["NOT_STARTED", "PENDING", "ACTIVE", "FAILED"],
+        default: "NOT_STARTED",
+        index: true,
+      },
+      error: { type: String, default: null },
+      attemptedAt: { type: Date, default: null },
+    },
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
     paidAt: Date,
   },
