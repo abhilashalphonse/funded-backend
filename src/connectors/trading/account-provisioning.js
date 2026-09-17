@@ -37,7 +37,7 @@ export async function provisionTradingAccount(account, { phase = account.current
     };
 
     const existingIndex = account.platformAccounts.findIndex(item => Number(item.phase) === Number(phase));
-    if (existingIndex >= 0) account.platformAccounts[existingIndex] = record;
+    if (existingIndex >= 0) account.platformAccounts.splice(existingIndex, 1, record);
     else account.platformAccounts.push(record);
 
     account.platformAccountId = record.platformAccountId;
