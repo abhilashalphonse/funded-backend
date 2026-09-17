@@ -117,7 +117,7 @@ async function activatePaidPayment(payment) {
   if (payment.accountId) return payment.accountId;
 
   const definition = payment.challengeDefinition;
-  const accountId = `ACG-${randomUUID().replaceAll("-", "").slice(0, 16).toUpperCase()}`;
+  const accountId = `ACG-${String(payment._id).slice(-16).toUpperCase()}`;
   const accountSize = Number(definition.accountSize);
   const rules = buildAccountRules(definition);
   const platform = configuredTradingProvider();
