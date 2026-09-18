@@ -13,7 +13,6 @@ export default class EventIngestionWorker {
         const job = jobs[0];
 
         try {
-            console.log("🔥 INCOMING EVENT RECEIVED");
             await this.ingest(job.data);
         } catch (err) {
             console.error("❌ INGEST FAILED:", err);
@@ -28,7 +27,6 @@ export default class EventIngestionWorker {
    
    
     async ingest(event) {
-        console.log("✅ Validation passed");
         this.validate(event);
         
         
@@ -38,9 +36,7 @@ export default class EventIngestionWorker {
 
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) { 
             // Use Event's db connection since Account is no longer imported here
-            console.log("✅ Starting Mongo session");
             const session = await Event.db.startSession();
-            console.log("✅ Session started");
 
             try {
                 session.startTransaction();
@@ -50,10 +46,8 @@ export default class EventIngestionWorker {
                     eventId: event.eventId
                 }).session(session);
 
-                console.log("Duplicate exists?", !!exists);
 
                 if (exists) {
-                    console.log("⚠️ Duplicate event, skipping");
                     await session.abortTransaction();
                     return;
                 }
@@ -62,7 +56,6 @@ export default class EventIngestionWorker {
 
                 // 2. Stream Versioning (Event Sourcing)
 
-                console.log("➡️ Updating stream...");
 
                 const stream = await Stream.findOneAndUpdate(
                     { accountId: event.aggregateId },
@@ -74,7 +67,6 @@ export default class EventIngestionWorker {
                     }
                 );
 
-                console.log("✅ Stream updated:");
                 
                 
 
@@ -90,25 +82,21 @@ export default class EventIngestionWorker {
                     metadata: event.metadata ?? {}
                 };
 
-                console.log("➡️ Creating event...");
 
                 await Event.create([fullEvent], { session });
 
-                console.log("✅ Event created");
                 // Note: updateAccount() has been entirely removed.
                 // The DB transaction is solely for ensuring the event is saved safely.
 
                 await session.commitTransaction();
 
                 // 4. Handoff to the Queue (State Engine takes over from here)
-                console.log("➡️ Queueing state event..."); 
 
                 await this.boss.send(
                     "state-events",
                     { eventId: event.eventId }
                 );
 
-                console.log("✅ State event queued");
 
                 return; // SUCCESS → exit retry loop
 
