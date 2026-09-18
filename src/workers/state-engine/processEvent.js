@@ -12,7 +12,13 @@ export async function processEvent(event, boss) {
   const account = await Account.findOne({ accountId: event.aggregateId });
   if (!account) throw new Error(`Account ${event.aggregateId} not found`);
 
-  if (account.lastProcessedEventId === event.eventId) return;
+  if (account.lastProcessedEventId === event.eventId) {
+    if (account.commandPending) {
+      const commandQueue = new CommandQueue(boss);
+      await commandQueue.enqueueCommand(account.commandPending, account);
+    }
+    return;
+  }
 
   if (event.eventType === CONTROL_EVENT) {
     applyControlEvent(account, event);
