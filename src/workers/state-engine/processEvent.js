@@ -13,7 +13,7 @@ export async function processEvent(event, boss) {
   if (!account) throw new Error(`Account ${event.aggregateId} not found`);
 
   if (account.lastProcessedEventId === event.eventId) {
-    if (account.commandPending) {
+    if (shouldReplayPendingCommand(account, event)) {
       const commandQueue = new CommandQueue(boss);
       await commandQueue.enqueueCommand(account.commandPending, account);
     }
@@ -165,4 +165,9 @@ function assignFinite(target, field, value) {
   if (value === undefined || value === null) return;
   const number = Number(value);
   if (Number.isFinite(number)) target[field] = number;
+}
+
+
+export function shouldReplayPendingCommand(account, event) {
+  return Boolean(account?.commandPending && account?.lastProcessedEventId === event?.eventId);
 }
