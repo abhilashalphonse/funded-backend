@@ -39,6 +39,8 @@ const AccountSchema = new mongoose.Schema(
         lastSequence: { type: Number, default: 0 },
         lastProcessedEventId: { type: String },
         lastActiveDay: { type: String },
+        lastTradingDay: { type: String },
+        riskDayKey: { type: String },
         dailyResetAt: { type: Date },
         dailyStartEquity: { type: Number, default: 0 },
         commandPending: { type: String, default: null },
