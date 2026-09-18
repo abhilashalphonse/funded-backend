@@ -41,6 +41,8 @@ export function serializeCustomerAccount(account) {
     totalTrades: account.totalTrades,
     winningTrades: account.winningTrades,
     losingTrades: account.losingTrades,
+    lastPlatformSnapshotAt: account.lastPlatformSnapshotAt,
+    lastPlatformSnapshotSequence: account.lastPlatformSnapshotSequence,
     demoTrading: account.accountMode === "DEMO" ? {
       positions: demoPositions(account),
       history: demoHistory(account).slice(-100).reverse(),
