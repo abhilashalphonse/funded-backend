@@ -16,7 +16,10 @@ export default class EventIngestionWorker {
    async start() {
    await this.boss.work(
     "incoming-events",
-    async (job) => {
+    async (jobOrJobs) => {
+        const job = Array.isArray(jobOrJobs) ? jobOrJobs[0] : jobOrJobs;
+        if (!job?.data) throw new Error("incoming-events worker received an invalid pg-boss job payload");
+
         try {
             await this.ingest(job.data);
         } catch (err) {
