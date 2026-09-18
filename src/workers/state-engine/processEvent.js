@@ -8,13 +8,12 @@ const DEAL_EVENT = "ACG_TRADER_DEAL_CREATED";
 const CONTROL_EVENT = "ACG_TRADER_ACCOUNT_CONTROLLED";
 const CLOSE_DEAL_TYPES = new Set(["CLOSE", "PARTIAL_CLOSE", "REVERSE_CLOSE", "STOP_LOSS", "TAKE_PROFIT", "LIQUIDATION"]);
 
-export async function processEvent(event, boss) {
-  const account = await Account.findOne({ accountId: event.aggregateId });
+export async function processEvent(event, boss, { accountModel = Account } = {}) {
+  const account = await accountModel.findOne({ accountId: event.aggregateId });
   if (!account) {
     // Events can legitimately outlive a Funded account after local resets,
-    // deletions, or account lifecycle cleanup. Retrying such jobs can never
-    // succeed and can starve current account projections behind stale work.
-    console.warn(`[STATE] Ignoring event ${event.eventId} for missing account ${event.aggregateId}`);
+    // deletions, or lifecycle cleanup. Retrying can never succeed and can
+    // starve current projections behind stale work.
     return;
   }
 
