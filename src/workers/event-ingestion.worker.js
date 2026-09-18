@@ -48,7 +48,16 @@ export default class EventIngestionWorker {
 
 
                 if (exists) {
+                    // The immutable event may already have been committed while the
+                    // previous state-engine queue handoff failed. Re-enqueueing is
+                    // required so a persisted Trader snapshot can never remain
+                    // permanently unapplied. processEvent is idempotent for the
+                    // current event and snapshot ordering rejects stale valuations.
                     await session.abortTransaction();
+                    await this.boss.send(
+                        "state-events",
+                        { eventId: event.eventId }
+                    );
                     return;
                 }
 
