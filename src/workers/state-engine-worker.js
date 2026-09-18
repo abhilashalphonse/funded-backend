@@ -12,9 +12,7 @@ export default class StateEngineWorker {
 
         await this.boss.work(
             "state-events",
-            async (jobs) => {
-                const job = jobs[0];
-
+            async (job) => {
                 await this.handle(job);
             }
         );
