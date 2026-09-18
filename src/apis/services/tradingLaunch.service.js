@@ -27,11 +27,17 @@ export async function createCustomerTradingLaunch(customer, accountId) {
     throw error;
   }
 
-  const platformAccountIds = (account.platformAccounts || [])
-    .filter(item => item.status === "ACTIVE")
-    .map(item => String(item.platformAccountId))
-    .filter(Boolean);
-  if (platformAccountIds.length === 0 && account.platformAccountId) platformAccountIds.push(String(account.platformAccountId));
+  const currentPhase = Number(account.currentPhase || 1);
+  const currentPlatformAccount = (account.platformAccounts || []).find(
+    item => Number(item.phase) === currentPhase && item.status === "ACTIVE"
+  );
+
+  const platformAccountIds = [];
+  if (currentPlatformAccount?.platformAccountId) {
+    platformAccountIds.push(String(currentPlatformAccount.platformAccountId));
+  } else if (account.platformAccountId) {
+    platformAccountIds.push(String(account.platformAccountId));
+  }
   if (platformAccountIds.length === 0) {
     const error = new Error("The trading platform account has not finished provisioning.");
     error.status = 409;
