@@ -35,6 +35,7 @@ const AccountSchema = new mongoose.Schema(
     {
         accountId: { type: String, required: true, unique: true },
         ownerExternalRef: { type: String, index: true },
+        customerId: { type: String, index: true, sparse: true },
         version: { type: Number, default: 0 },
         lastSequence: { type: Number, default: 0 },
         lastProcessedEventId: { type: String },
@@ -134,5 +135,6 @@ AccountSchema.index(
 );
 AccountSchema.index({ status: 1 });
 AccountSchema.index({ ownerExternalRef: 1, accountMode: 1, createdAt: -1 });
+AccountSchema.index({ customerId: 1, accountMode: 1, createdAt: -1 });
 
 export default mongoose.model("Account", AccountSchema);
