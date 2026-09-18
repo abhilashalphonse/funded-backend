@@ -12,7 +12,9 @@ export default class StateEngineWorker {
 
         await this.boss.work(
             "state-events",
-            async (job) => {
+            async (jobOrJobs) => {
+                const job = Array.isArray(jobOrJobs) ? jobOrJobs[0] : jobOrJobs;
+                if (!job?.data) throw new Error("state-events worker received an invalid pg-boss job payload");
                 await this.handle(job);
             }
         );
