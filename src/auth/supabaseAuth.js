@@ -1,4 +1,5 @@
 import env from "../config/env.js";
+import { getCustomerOwnershipIds, resolveAuthenticatedCustomer } from "../customers/customer.service.js";
 
 function bearerToken(req) {
   const header = String(req.headers.authorization || "").trim();
@@ -22,10 +23,19 @@ async function resolveCustomer(token) {
   const user = await response.json().catch(() => null);
   if (!response.ok || !user?.id) return null;
 
-  return {
+  const authCustomer = {
     id: String(user.id),
     email: String(user.email || "").trim().toLowerCase(),
     metadata: user.user_metadata || {},
+  };
+
+  const fundedCustomer = await resolveAuthenticatedCustomer(authCustomer);
+  const customerIds = await getCustomerOwnershipIds(fundedCustomer);
+
+  return {
+    ...authCustomer,
+    customerId: fundedCustomer.customerId,
+    customerIds,
   };
 }
 
