@@ -8,6 +8,7 @@ import {
   placeDemoOrder,
 } from "../services/customer.service.js";
 import { createCustomerTradingLaunch } from "../services/tradingLaunch.service.js";
+import { getTradingReadiness } from "../services/tradingReadiness.service.js";
 
 const router = express.Router();
 
@@ -24,6 +25,13 @@ router.get("/accounts", async (req, res, next) => {
   try {
     const data = await listCustomerAccounts(req.customer);
     res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.get("/trial-readiness", async (_req, res, next) => {
+  try {
+    const data = await getTradingReadiness();
+    res.status(data.ready ? 200 : 503).json({ success: data.ready, data, message: data.error || undefined });
   } catch (error) { next(error); }
 });
 
