@@ -1,0 +1,39 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: acg-mongo
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - acg_mongo_data:/data/db
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --eval \"try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }\" | grep 1"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    image: postgres:16
+    container_name: acg-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: acg_funded
+    ports:
+      - "5432:5432"
+    volumes:
+      - acg_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d acg_funded"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  acg_mongo_data:
+  acg_postgres_data:
