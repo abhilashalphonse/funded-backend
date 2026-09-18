@@ -1,5 +1,6 @@
 export function resolveDecision(account, rules) {
-  if (["BREACHED", "CLOSED", "FUNDED"].includes(account.status)) {
+  // Transitional/final states do not emit duplicate commands on every snapshot.
+  if (["BREACHED", "PASSED", "FUNDED_REVIEW", "CLOSED", "FUNDED"].includes(account.status)) {
     return { shouldUpdate: false, newStatus: account.status, command: null };
   }
 
@@ -15,7 +16,7 @@ export function resolveDecision(account, rules) {
       command = "CREATE_PHASE_2_ACCOUNT";
     } else {
       newStatus = "FUNDED_REVIEW";
-      command = "SEND_EMAIL_NOTIFICATION";
+      command = "ENTER_FUNDED_REVIEW";
     }
   }
 
