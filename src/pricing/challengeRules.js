@@ -17,7 +17,7 @@ export const RULE_BOUNDS = {
   minTradingDays: { min: 3, max: 5, increment: 1 },
 };
 
-export const PROFIT_SPLIT_OPTIONS = [80, 90, 100];
+export const PROFIT_SPLIT_OPTIONS = [60, 80, 90];
 export const PAYOUT_FREQUENCY_OPTIONS = ["Monthly", "Biweekly", "Weekly", "On Demand"];
 
 export const BASE_PRICE_CURVES = {
@@ -50,7 +50,7 @@ export const ADJUSTMENT_TABLES = {
   },
 };
 
-export const PROFIT_SPLIT_ADJUSTMENTS = { 80: 0, 90: .12, 100: .27 };
+export const PROFIT_SPLIT_ADJUSTMENTS = { 60: -.12, 80: 0, 90: .12 };
 export const PAYOUT_ADJUSTMENTS = { Monthly: -.05, Biweekly: 0, Weekly: .10, "On Demand": .22 };
 export const NEWS_TRADING_ADJUSTMENT = .07;
 export const WEEKEND_HOLDING_ADJUSTMENT = .05;
