@@ -65,9 +65,36 @@ export class CommandWorker {
         }
 
         await provisionTradingAccount(account, { phase: 2, accountType: "CHALLENGE" });
+
+        // Phase 2 is a fresh evaluation. Do not carry Phase 1 progress,
+        // trading days, drawdown state, or trade statistics forward.
+        const startingBalance = Number(account.initialDeposit || account.accountSize || 0);
         account.currentPhase = 2;
         account.status = "PHASE_2";
         account.enabled = true;
+        account.balance = startingBalance;
+        account.equity = startingBalance;
+        account.margin = 0;
+        account.marginFree = startingBalance;
+        account.marginLevel = 0;
+        account.floatingProfit = 0;
+        account.dailyStartEquity = startingBalance;
+        account.dailyResetAt = new Date();
+        account.riskDayKey = null;
+        account.lastActiveDay = null;
+        account.lastTradingDay = null;
+        account.totalTrades = 0;
+        account.winningTrades = 0;
+        account.losingTrades = 0;
+        account.projections = {
+          highestBalance: startingBalance,
+          highestEquity: startingBalance,
+          profit: 0,
+          dailyLoss: 0,
+          totalLoss: 0,
+          dailyStartBalance: startingBalance,
+          tradingDays: 0,
+        };
         await account.save();
         return {
           success: true,
@@ -77,9 +104,22 @@ export class CommandWorker {
         };
       }
 
-      case "SEND_EMAIL_NOTIFICATION":
-        console.log(`[MAILER ENGINE] Dispatching status change template digest for owner of: ${accountId}`);
-        return { success: true, dispatchedAt: new Date() };
+      case "ENTER_FUNDED_REVIEW": {
+        await connector.disableAccount({
+          externalRef: `${account.accountId}:phase:${account.currentPhase || 1}`,
+          platformAccountId: account.platformAccountId,
+          reason: "ACG_FUNDED_EVALUATION_COMPLETED",
+          liquidate: true,
+          cancelPending: true,
+        });
+        account.enabled = false;
+        account.status = "FUNDED_REVIEW";
+        const activeRecord = account.platformAccounts.find(item => Number(item.phase) === Number(account.currentPhase || 1));
+        if (activeRecord) activeRecord.status = "COMPLETED";
+        await account.save();
+        console.log(`[LIFECYCLE] Account ${accountId} entered funded review`);
+        return { success: true, provider: account.platform, timestamp: new Date() };
+      }
 
       default:
         throw new Error(`[WORKER CRITICAL] Unrecognized execution directive: "${command}"`);
