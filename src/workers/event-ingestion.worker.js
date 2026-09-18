@@ -16,9 +16,7 @@ export default class EventIngestionWorker {
    async start() {
    await this.boss.work(
     "incoming-events",
-    async (jobs) => {
-        const job = jobs[0];
-
+    async (job) => {
         try {
             await this.ingest(job.data);
         } catch (err) {
