@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import Account from "../../accounts/account.model.js";
 import simulatorEngine from "../../simulator/engine.js";
+import { configuredTradingProvider } from "../../connectors/trading/registry.js";
+import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
 
 function ownerQuery(customer) {
   const values = [customer.id, customer.email].filter(Boolean);
@@ -72,50 +74,63 @@ export async function getCustomerWorkspace(customer) {
   };
 }
 
-export async function ensureDemoAccount(customer) {
-  let account = await Account.findOne({ ...ownerQuery(customer), accountMode: "DEMO" }).sort({ createdAt: -1 });
-  if (account) return serializeCustomerAccount(account);
+export async function ensureDemoAccount(customer, input = {}) {
+  const active = await Account.findOne({
+    ...ownerQuery(customer),
+    accountMode: "DEMO",
+    status: { $in: ["NEW", "ACTIVE", "PHASE_2"] },
+    enabled: true,
+  }).sort({ createdAt: -1 });
 
-  const suffix = customer.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 14).toUpperCase();
-  const accountId = `DEMO-${suffix || Date.now()}`;
-  const accountSize = 100000;
-  const simulated = await simulatorEngine.provisionAccount({ accountId, balance: accountSize, leverage: 100 });
+  if (active) {
+    const error = new Error("You already have an active free trial. Finish or close it before starting another.");
+    error.status = 409;
+    throw error;
+  }
 
-  account = await Account.create({
+  const definition = input?.challengeDefinition || {};
+  const rulesInput = definition.rules || {};
+  const step = definition.step === "1step" ? "1step" : "2step";
+  const accountSize = Number(definition.accountSize || 100000);
+
+  if (!Number.isFinite(accountSize) || accountSize <= 0) {
+    const error = new Error("A valid trial account size is required.");
+    error.status = 400;
+    throw error;
+  }
+
+  const phases = step === "2step"
+    ? [
+        { phase: 1, profitTarget: Number(rulesInput.phase1ProfitTarget ?? 8) },
+        { phase: 2, profitTarget: Number(rulesInput.phase2ProfitTarget ?? 5) },
+      ]
+    : [{ phase: 1, profitTarget: Number(rulesInput.profitTarget ?? 10) }];
+
+  const accountId = `TRIAL-${randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
+  const platform = configuredTradingProvider();
+
+  const account = await Account.create({
     accountId,
     ownerExternalRef: customer.id,
     accountMode: "DEMO",
-    challengeType: "DEMO",
+    challengeType: step === "2step" ? "TWO_STEP" : "ONE_STEP",
     accountSize,
     initialDeposit: accountSize,
-    currentPhase: 0,
+    currentPhase: 1,
     rules: {
-      dailyDrawdown: 5,
-      maxDrawdown: 10,
-      minimumTradingDays: 0,
-      phases: [],
+      dailyDrawdown: Number(rulesInput.dailyLoss ?? 5),
+      maxDrawdown: Number(rulesInput.maxLoss ?? 10),
+      minimumTradingDays: Number(rulesInput.minTradingDays ?? 0),
+      phases,
     },
     leverage: 100,
-    platform: "simulator",
-    platformAccountId: String(simulated.login),
-    platformAccountCode: String(simulated.login),
-    platformLogin: String(simulated.login),
-    platformAccounts: [{
-      phase: 0,
-      externalRef: accountId,
-      platformAccountId: String(simulated.login),
-      accountCode: String(simulated.login),
-      login: String(simulated.login),
-      status: "ACTIVE",
-    }],
-    provisioning: { status: "ACTIVE", error: null, updatedAt: new Date() },
-    status: "ACTIVE",
-    enabled: true,
+    platform,
+    status: "NEW",
+    enabled: false,
     balance: accountSize,
     equity: accountSize,
     dailyStartEquity: accountSize,
     marginFree: accountSize,
-    demoTrading: { positions: [], history: [] },
     projections: {
       highestBalance: accountSize,
       highestEquity: accountSize,
@@ -127,7 +142,18 @@ export async function ensureDemoAccount(customer) {
     },
   });
 
-  return serializeCustomerAccount(account);
+  try {
+    await provisionTradingAccount(account, { phase: 1, accountType: "DEMO" });
+    account.status = "ACTIVE";
+    account.enabled = true;
+    await account.save();
+    return serializeCustomerAccount(account);
+  } catch (error) {
+    account.status = "CLOSED";
+    account.enabled = false;
+    await account.save().catch(() => {});
+    throw error;
+  }
 }
 
 async function ownedDemoAccount(customer, accountId) {
