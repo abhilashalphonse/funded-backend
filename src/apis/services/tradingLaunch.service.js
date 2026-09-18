@@ -17,7 +17,7 @@ export async function createCustomerTradingLaunch(customer, accountId) {
     error.status = 404;
     throw error;
   }
-  if (!["ACTIVE", "PHASE_2", "FUNDED_REVIEW", "FUNDED"].includes(account.status) || !account.enabled) {
+  if (!["ACTIVE", "PHASE_2", "FUNDED"].includes(account.status) || !account.enabled) {
     const error = new Error("This trading account is not currently available for trading.");
     error.status = 409;
     throw error;
