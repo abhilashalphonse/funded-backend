@@ -132,6 +132,7 @@ export async function resolveAuthenticatedCustomer(authCustomer, deps = {}) {
   if (byEmail) byEmail = await canonicalCustomer(byEmail, customerModel);
 
   let resolved;
+  let identityChanged = false;
 
   if (byAuth) {
     resolved = byAuth;
@@ -143,10 +144,12 @@ export async function resolveAuthenticatedCustomer(authCustomer, deps = {}) {
         throw error;
       }
       resolved = await mergeGuestInto(byAuth, byEmail, deps);
+      identityChanged = true;
     }
 
     if (resolved.primaryEmail !== primaryEmail && !(resolved.emailAliases || []).includes(primaryEmail)) {
       resolved.emailAliases = [...new Set([...(resolved.emailAliases || []), primaryEmail])];
+      identityChanged = true;
     }
   } else if (byEmail) {
     if (byEmail.supabaseUserId && byEmail.supabaseUserId !== supabaseUserId) {
@@ -158,20 +161,36 @@ export async function resolveAuthenticatedCustomer(authCustomer, deps = {}) {
     byEmail.supabaseUserId = supabaseUserId;
     byEmail.authLinkedAt = byEmail.authLinkedAt || new Date();
     resolved = byEmail;
+    identityChanged = true;
   } else {
     resolved = await createCustomer({
       supabaseUserId,
       primaryEmail,
       authLinkedAt: new Date(),
+      lastAuthenticatedAt: new Date(),
       status: "ACTIVE",
     }, customerModel);
+    identityChanged = true;
   }
 
-  resolved.lastAuthenticatedAt = new Date();
-  if (!resolved.authLinkedAt) resolved.authLinkedAt = new Date();
-  await resolved.save();
+  const now = new Date();
+  const lastAuthenticatedAt = resolved.lastAuthenticatedAt ? new Date(resolved.lastAuthenticatedAt).getTime() : 0;
+  const refreshAuthTimestamp = !lastAuthenticatedAt || now.getTime() - lastAuthenticatedAt >= 15 * 60 * 1000;
 
-  await claimLegacyOwnership(resolved, { id: supabaseUserId, email: primaryEmail }, deps);
+  if (!resolved.authLinkedAt) {
+    resolved.authLinkedAt = now;
+    identityChanged = true;
+  }
+  if (refreshAuthTimestamp) {
+    resolved.lastAuthenticatedAt = now;
+    identityChanged = true;
+  }
+
+  if (identityChanged) {
+    await resolved.save();
+    await claimLegacyOwnership(resolved, { id: supabaseUserId, email: primaryEmail }, deps);
+  }
+
   return resolved;
 }
 
