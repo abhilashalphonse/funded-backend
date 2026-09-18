@@ -9,6 +9,7 @@ import {
 } from "../services/customer.service.js";
 import { createCustomerTradingLaunch } from "../services/tradingLaunch.service.js";
 import { getTradingReadiness } from "../services/tradingReadiness.service.js";
+import { recordAnalyticsEvent } from "../services/analytics.service.js";
 
 const router = express.Router();
 
@@ -38,6 +39,14 @@ router.get("/trial-readiness", async (_req, res, next) => {
 router.post("/accounts/:accountId/trading-launch", async (req, res, next) => {
   try {
     const data = await createCustomerTradingLaunch(req.customer, req.params.accountId);
+    await recordAnalyticsEvent({
+      event: "trader_opened",
+      sessionId: req.get("x-acg-session-id") || `user:${req.customer.id}`,
+      customer: req.customer,
+      accountId: data.accountId,
+      source: "server",
+      properties: { platform: "acg-trader" },
+    }).catch(() => {});
     res.json({ success: true, data });
   } catch (error) { next(error); }
 });
@@ -45,6 +54,17 @@ router.post("/accounts/:accountId/trading-launch", async (req, res, next) => {
 router.post("/demo-account", async (req, res, next) => {
   try {
     const data = await ensureDemoAccount(req.customer, req.body || {});
+    await recordAnalyticsEvent({
+      event: "trial_created",
+      sessionId: req.get("x-acg-session-id") || `user:${req.customer.id}`,
+      customer: req.customer,
+      accountId: data.accountId,
+      source: "server",
+      properties: {
+        accountSize: data.accountSize,
+        challengeType: data.challengeType,
+      },
+    }).catch(() => {});
     res.status(201).json({ success: true, data });
   } catch (error) { next(error); }
 });
