@@ -15,7 +15,7 @@ export default class EventIngestionWorker {
     }
 
     async start() {
-        await this.boss.work("incoming-events", async (jobOrJobs) => {
+        await this.boss.work("incoming-events", { batchSize: 50, newJobCheckInterval: 100 }, async (jobOrJobs) => {
             const jobs = Array.isArray(jobOrJobs) ? jobOrJobs : [jobOrJobs];
 
             for (const job of jobs) {
