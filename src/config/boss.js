@@ -11,7 +11,13 @@ if (typeof PgBoss !== "function") {
 }
 
 const boss = new PgBoss({
-  connectionString: env.POSTGRES_URL
+  connectionString: env.POSTGRES_URL,
+  max: env.POSTGRES_POOL_MAX,
+  connectionTimeoutMillis: env.POSTGRES_CONNECTION_TIMEOUT_MS,
+  application_name: "acg-funded-pgboss",
+  // Polling is sufficient for these queues and is compatible with pooled
+  // Postgres endpoints that do not provide session-pinned LISTEN/NOTIFY.
+  useListenNotify: false,
 });
 
 boss.on("error", (error) => {
