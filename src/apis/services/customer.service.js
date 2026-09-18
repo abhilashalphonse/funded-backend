@@ -6,8 +6,14 @@ import { provisionTradingAccount } from "../../connectors/trading/account-provis
 import { requireTradingReadiness } from "./tradingReadiness.service.js";
 
 function ownerQuery(customer) {
-  const values = [customer.id, customer.email].filter(Boolean);
-  return { ownerExternalRef: { $in: values } };
+  const customerIds = [...new Set([customer.customerId, ...(customer.customerIds || [])].filter(Boolean))];
+  const legacyRefs = [...new Set([customer.id, customer.email, ...customerIds].filter(Boolean))];
+  return {
+    $or: [
+      { customerId: { $in: customerIds } },
+      { ownerExternalRef: { $in: legacyRefs } },
+    ],
+  };
 }
 
 function demoPositions(account) {
@@ -66,6 +72,7 @@ export async function getCustomerWorkspace(customer) {
   return {
     customer: {
       id: customer.id,
+      customerId: customer.customerId,
       email: customer.email,
       metadata: customer.metadata || {},
     },
@@ -116,7 +123,8 @@ export async function ensureDemoAccount(customer, input = {}) {
 
   const account = await Account.create({
     accountId,
-    ownerExternalRef: customer.id,
+    ownerExternalRef: customer.customerId,
+    customerId: customer.customerId,
     accountMode: "DEMO",
     challengeType: step === "2step" ? "TWO_STEP" : "ONE_STEP",
     accountSize,
