@@ -61,20 +61,18 @@ export async function processEvent(event, boss) {
   }
 
   account.status = decision.newStatus;
+  if (decision.command) {
+    // Stop new dashboard launches immediately while the platform-side command
+    // is pending. The command worker clears commandPending only after success.
+    account.enabled = false;
+    account.commandPending = decision.command;
+  }
   account.lastProcessedEventId = event.eventId;
   await account.save();
 
   if (decision.command) {
-    try {
-      const commandQueue = new CommandQueue(boss);
-      await commandQueue.enqueueCommand(decision.command, account);
-      account.commandPending = null;
-      await account.save();
-    } catch (error) {
-      account.commandPending = decision.command;
-      await account.save();
-      throw error;
-    }
+    const commandQueue = new CommandQueue(boss);
+    await commandQueue.enqueueCommand(decision.command, account);
   }
 }
 
@@ -111,14 +109,20 @@ function applySnapshotEvent(account, event) {
   account.projections.highestEquity = Math.max(account.projections.highestEquity, equity);
   account.projections.profit = balance - initialBalance;
 
-  const eventDayString = eventDate.toISOString().split("T")[0];
-  if (account.lastActiveDay !== eventDayString) {
-    account.lastActiveDay = eventDayString;
+  const riskDayKey = String(p.riskDayKey || eventDate.toISOString().split("T")[0]);
+  const authoritativeDailyStartEquity = Number(p.dailyStartEquity);
+
+  if (account.riskDayKey !== riskDayKey) {
+    account.riskDayKey = riskDayKey;
     account.dailyResetAt = eventDate;
-    account.dailyStartEquity = equity;
-    account.projections.tradingDays = Number(account.projections.tradingDays || 0) + 1;
   }
-  if (!Number.isFinite(Number(account.dailyStartEquity)) || Number(account.dailyStartEquity) === 0) account.dailyStartEquity = equity;
+
+  if (Number.isFinite(authoritativeDailyStartEquity) && authoritativeDailyStartEquity > 0) {
+    account.dailyStartEquity = authoritativeDailyStartEquity;
+  } else if (!Number.isFinite(Number(account.dailyStartEquity)) || Number(account.dailyStartEquity) === 0) {
+    account.dailyStartEquity = initialBalance;
+  }
+
   account.projections.dailyLoss = Math.max(0, Number(account.dailyStartEquity) - equity);
   account.projections.totalLoss = Math.max(0, initialBalance - equity);
 }
@@ -126,6 +130,16 @@ function applySnapshotEvent(account, event) {
 function applyDealEvent(account, event) {
   const p = event.payload || {};
   const type = String(p.type || "").toUpperCase();
+  const executedAt = new Date(p.executedAt || event.occurredAt || event.receivedAt || Date.now());
+  const tradingDay = Number.isNaN(executedAt.getTime()) ? null : executedAt.toISOString().slice(0, 10);
+
+  if (tradingDay && account.lastTradingDay !== tradingDay) {
+    account.lastTradingDay = tradingDay;
+    account.lastActiveDay = tradingDay;
+    account.projections = account.projections || {};
+    account.projections.tradingDays = Number(account.projections.tradingDays || 0) + 1;
+  }
+
   if (!CLOSE_DEAL_TYPES.has(type)) return;
   account.totalTrades = Number(account.totalTrades || 0) + 1;
   const realized = Number(p.realizedPnl || 0) - Number(p.commission || 0);
