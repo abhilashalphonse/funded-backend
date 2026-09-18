@@ -9,7 +9,6 @@ export async function createCustomerTradingLaunch(customer, accountId) {
   const account = await Account.findOne({
     accountId: String(accountId),
     ownerExternalRef: { $in: ownerRefs(customer) },
-    accountMode: { $ne: "DEMO" },
   });
 
   if (!account) {
