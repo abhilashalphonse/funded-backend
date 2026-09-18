@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   isAuthoritativeTraderSnapshot,
   isOlderThanLastAuthoritativeSnapshot,
+  snapshotSequence,
   snapshotTime,
 } from "../../src/workers/state-engine/processEvent.js";
 
@@ -50,4 +51,42 @@ test("snapshot time prefers the platform occurrence time", () => {
     receivedAt: new Date("2026-09-18T10:01:00.000Z"),
   };
   assert.equal(snapshotTime(event).toISOString(), "2026-09-18T10:00:00.000Z");
+});
+
+
+test("same-millisecond Trader valuations use sequence as a tie-breaker", () => {
+  const account = {
+    lastPlatformSnapshotAt: new Date("2026-09-18T10:00:10.123Z"),
+    lastPlatformSnapshotSequence: 42,
+  };
+  const olderSequence = {
+    occurredAt: new Date("2026-09-18T10:00:10.123Z"),
+    payload: { valuationSequence: 41 },
+  };
+  const sameSequence = {
+    occurredAt: new Date("2026-09-18T10:00:10.123Z"),
+    payload: { valuationSequence: 42 },
+  };
+  const newerSequence = {
+    occurredAt: new Date("2026-09-18T10:00:10.123Z"),
+    payload: { valuationSequence: 43 },
+  };
+
+  assert.equal(isOlderThanLastAuthoritativeSnapshot(account, olderSequence), true);
+  assert.equal(isOlderThanLastAuthoritativeSnapshot(account, sameSequence), true);
+  assert.equal(isOlderThanLastAuthoritativeSnapshot(account, newerSequence), false);
+});
+
+test("newer timestamp wins even when Trader sequence resets after restart", () => {
+  const account = {
+    lastPlatformSnapshotAt: new Date("2026-09-18T10:00:10.123Z"),
+    lastPlatformSnapshotSequence: 900,
+  };
+  const afterRestart = {
+    occurredAt: new Date("2026-09-18T10:00:11.000Z"),
+    payload: { valuationSequence: 1 },
+  };
+
+  assert.equal(snapshotSequence(afterRestart), 1);
+  assert.equal(isOlderThanLastAuthoritativeSnapshot(account, afterRestart), false);
 });
