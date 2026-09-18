@@ -6,6 +6,8 @@ export async function createCrypto(req, res, next) {
       ...(req.body ?? {}),
       ownerExternalRef: req.customer?.id || undefined,
       email: req.customer?.email || req.body?.email,
+      analyticsSessionId: req.get("x-acg-session-id") || req.body?.analyticsSessionId,
+      attribution: req.body?.attribution || {},
     };
     res.status(201).json({ success: true, data: await createCryptoPayment(payload) });
   } catch (error) { next(error); }
