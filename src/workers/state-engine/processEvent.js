@@ -50,13 +50,24 @@ export async function processEvent(event, boss) {
   }
 
   if (event.eventType === SNAPSHOT_EVENT && !isAuthoritativeTraderSnapshot(event)) {
-    applySnapshotMetrics(account, event);
+    // Non-authoritative valuations must never overwrite the Funded dashboard.
+    // They may be useful operationally, but risk/account projections only
+    // follow complete LIVE ACG Trader valuations.
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
+  if (event.eventType === SNAPSHOT_EVENT && isOlderThanLastAuthoritativeSnapshot(account, event)) {
     account.lastProcessedEventId = event.eventId;
     await account.save();
     return;
   }
 
   applySnapshotEvent(account, event);
+  if (event.eventType === SNAPSHOT_EVENT) {
+    account.lastPlatformSnapshotAt = snapshotTime(event);
+  }
   const rules = evaluateRules(account);
   const decision = resolveDecision(account, rules);
 
@@ -86,6 +97,17 @@ export function isAuthoritativeTraderSnapshot(event) {
   if (event?.eventType !== SNAPSHOT_EVENT) return true;
   const payload = event.payload || {};
   return payload.complete === true && String(payload.valuationStatus || "").toUpperCase() === "LIVE";
+}
+
+export function snapshotTime(event) {
+  const value = event?.occurredAt || event?.receivedAt || event?.timestamp;
+  const date = new Date(value || 0);
+  return Number.isNaN(date.getTime()) ? new Date(0) : date;
+}
+
+export function isOlderThanLastAuthoritativeSnapshot(account, event) {
+  if (!account?.lastPlatformSnapshotAt) return false;
+  return snapshotTime(event).getTime() < new Date(account.lastPlatformSnapshotAt).getTime();
 }
 
 function applySnapshotMetrics(account, event) {
