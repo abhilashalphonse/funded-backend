@@ -53,7 +53,7 @@ export async function recordAnalyticsEvent({
   return AnalyticsEvent.create({
     event,
     sessionId: normalizedSessionId,
-    ownerExternalRef: cleanString(customer?.id || properties?.ownerExternalRef, 128),
+    ownerExternalRef: cleanString(customer?.customerId || customer?.id || properties?.ownerExternalRef, 128),
     email: cleanString(customer?.email || email, 320)?.toLowerCase(),
     accountId: cleanString(accountId, 128),
     paymentId: cleanString(paymentId, 128),
