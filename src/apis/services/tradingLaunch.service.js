@@ -1,14 +1,21 @@
 import Account from "../../accounts/account.model.js";
 import { getTradingConnector } from "../../connectors/trading/registry.js";
 
-function ownerRefs(customer) {
-  return [customer.id, customer.email].filter(Boolean);
+function ownershipQuery(customer) {
+  const customerIds = [...new Set([customer.customerId, ...(customer.customerIds || [])].filter(Boolean))];
+  const legacyRefs = [...new Set([customer.id, customer.email, ...customerIds].filter(Boolean))];
+  return {
+    $or: [
+      { customerId: { $in: customerIds } },
+      { ownerExternalRef: { $in: legacyRefs } },
+    ],
+  };
 }
 
 export async function createCustomerTradingLaunch(customer, accountId) {
   const account = await Account.findOne({
     accountId: String(accountId),
-    ownerExternalRef: { $in: ownerRefs(customer) },
+    ...ownershipQuery(customer),
   });
 
   if (!account) {
