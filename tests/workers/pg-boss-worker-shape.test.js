@@ -26,9 +26,16 @@ test("event ingestion worker accepts single-job and array callback shapes", asyn
   assert.ok(registration);
 
   await registration.handler({ id: "job-1", data: { eventId: "evt-1" } });
-  await registration.handler([{ id: "job-2", data: { eventId: "evt-2" } }]);
+  await registration.handler([
+    { id: "job-2", data: { eventId: "evt-2" } },
+    { id: "job-3", data: { eventId: "evt-3" } },
+  ]);
 
-  assert.deepEqual(received, [{ eventId: "evt-1" }, { eventId: "evt-2" }]);
+  assert.deepEqual(received, [
+    { eventId: "evt-1" },
+    { eventId: "evt-2" },
+    { eventId: "evt-3" },
+  ]);
 });
 
 test("state engine worker accepts single-job and array callback shapes", async () => {
@@ -41,11 +48,11 @@ test("state engine worker accepts single-job and array callback shapes", async (
   const registration = boss.registrations.find(item => item.name === "state-events");
   assert.ok(registration);
 
-  const first = { id: "job-3", data: { eventId: "evt-3" } };
-  const second = { id: "job-4", data: { eventId: "evt-4" } };
+  const first = { id: "job-4", data: { eventId: "evt-4" } };
+  const second = { id: "job-5", data: { eventId: "evt-5" } };
+  const third = { id: "job-6", data: { eventId: "evt-6" } };
   await registration.handler(first);
-  await registration.handler([second]);
+  await registration.handler([second, third]);
 
-  assert.equal(received[0], first);
-  assert.equal(received[1], second);
+  assert.deepEqual(received, [first, second, third]);
 });
