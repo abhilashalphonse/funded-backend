@@ -36,7 +36,7 @@ router.post("/accounts/:accountId/trading-launch", async (req, res, next) => {
 
 router.post("/demo-account", async (req, res, next) => {
   try {
-    const data = await ensureDemoAccount(req.customer);
+    const data = await ensureDemoAccount(req.customer, req.body || {});
     res.status(201).json({ success: true, data });
   } catch (error) { next(error); }
 });
