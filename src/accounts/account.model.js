@@ -123,7 +123,13 @@ const AccountSchema = new mongoose.Schema(
 
 AccountSchema.index({ accountId: 1, version: 1 });
 AccountSchema.index({ accountId: 1, lastSequence: 1 });
-AccountSchema.index({ platform: 1, platformAccountId: 1 }, { unique: true, sparse: true });
+AccountSchema.index(
+    { platform: 1, platformAccountId: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { platformAccountId: { $type: "string" } }
+    }
+);
 AccountSchema.index({ status: 1 });
 AccountSchema.index({ ownerExternalRef: 1, accountMode: 1, createdAt: -1 });
 
