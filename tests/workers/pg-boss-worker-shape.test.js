@@ -15,31 +15,37 @@ function fakeBoss() {
   };
 }
 
-test("event ingestion worker accepts the pg-boss single-job callback shape", async () => {
+test("event ingestion worker accepts single-job and array callback shapes", async () => {
   const boss = fakeBoss();
   const worker = new EventIngestionWorker(boss);
-  let received = null;
-  worker.ingest = async event => { received = event; };
+  const received = [];
+  worker.ingest = async event => { received.push(event); };
 
   await worker.start();
   const registration = boss.registrations.find(item => item.name === "incoming-events");
   assert.ok(registration);
-  await registration.handler({ id: "job-1", data: { eventId: "evt-1" } });
 
-  assert.deepEqual(received, { eventId: "evt-1" });
+  await registration.handler({ id: "job-1", data: { eventId: "evt-1" } });
+  await registration.handler([{ id: "job-2", data: { eventId: "evt-2" } }]);
+
+  assert.deepEqual(received, [{ eventId: "evt-1" }, { eventId: "evt-2" }]);
 });
 
-test("state engine worker accepts the pg-boss single-job callback shape", async () => {
+test("state engine worker accepts single-job and array callback shapes", async () => {
   const boss = fakeBoss();
   const worker = new StateEngineWorker(boss);
-  let received = null;
-  worker.handle = async job => { received = job; };
+  const received = [];
+  worker.handle = async job => { received.push(job); };
 
   await worker.start();
   const registration = boss.registrations.find(item => item.name === "state-events");
   assert.ok(registration);
-  const job = { id: "job-2", data: { eventId: "evt-2" } };
-  await registration.handler(job);
 
-  assert.equal(received, job);
+  const first = { id: "job-3", data: { eventId: "evt-3" } };
+  const second = { id: "job-4", data: { eventId: "evt-4" } };
+  await registration.handler(first);
+  await registration.handler([second]);
+
+  assert.equal(received[0], first);
+  assert.equal(received[1], second);
 });
