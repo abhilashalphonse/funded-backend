@@ -41,8 +41,7 @@ export async function getTradingReadiness() {
     checks.traderReady = publicHealth?.status === "ready";
     checks.tradingRuntimeReady =
       publicHealth?.trading?.enabled === true &&
-      publicHealth?.trading?.started === true &&
-      publicHealth?.trading?.state === "READY";
+      publicHealth?.checks?.tradingRuntimeReady === true;
     checks.marketLive =
       publicHealth?.market?.enabled === true &&
       publicHealth?.market?.state === "LIVE";
