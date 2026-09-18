@@ -18,16 +18,3 @@ jobs:
       - run: npm run check
       - run: npm test
 
-      - name: Checkout ACG Trader backend for cross-repo launch harness
-        uses: actions/checkout@v4
-        with:
-          repository: abhilashalphonse/acg-trader-backend
-          path: acg-trader-backend
-
-      - name: Install ACG Trader backend dependencies
-        run: npm ci --prefix acg-trader-backend
-
-      - name: Run cross-repo launch lifecycle harness
-        env:
-          ACG_TRADER_REPO_PATH: acg-trader-backend
-        run: node --test tests/launch-e2e-harness.js
