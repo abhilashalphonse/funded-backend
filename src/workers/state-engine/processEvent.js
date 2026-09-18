@@ -67,6 +67,8 @@ export async function processEvent(event, boss) {
   applySnapshotEvent(account, event);
   if (event.eventType === SNAPSHOT_EVENT) {
     account.lastPlatformSnapshotAt = snapshotTime(event);
+    const sequence = snapshotSequence(event);
+    if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
   }
   const rules = evaluateRules(account);
   const decision = resolveDecision(account, rules);
@@ -105,9 +107,27 @@ export function snapshotTime(event) {
   return Number.isNaN(date.getTime()) ? new Date(0) : date;
 }
 
+export function snapshotSequence(event) {
+  const value = Number(event?.payload?.valuationSequence);
+  return Number.isFinite(value) ? value : null;
+}
+
 export function isOlderThanLastAuthoritativeSnapshot(account, event) {
   if (!account?.lastPlatformSnapshotAt) return false;
-  return snapshotTime(event).getTime() < new Date(account.lastPlatformSnapshotAt).getTime();
+
+  const incomingTime = snapshotTime(event).getTime();
+  const currentTime = new Date(account.lastPlatformSnapshotAt).getTime();
+
+  if (incomingTime < currentTime) return true;
+  if (incomingTime > currentTime) return false;
+
+  // Same-millisecond valuations can be emitted around one execution.
+  // Use Trader's in-process monotonic valuation sequence only as a tie-breaker.
+  // Timestamp remains primary so a Trader restart (sequence resets) is safe.
+  const incomingSequence = snapshotSequence(event);
+  const currentSequence = Number(account.lastPlatformSnapshotSequence);
+  if (incomingSequence === null || !Number.isFinite(currentSequence)) return false;
+  return incomingSequence <= currentSequence;
 }
 
 function applySnapshotMetrics(account, event) {
