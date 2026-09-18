@@ -5,6 +5,7 @@ import {
   isOlderThanLastAuthoritativeSnapshot,
   snapshotSequence,
   snapshotTime,
+  processEvent,
 } from "../../src/workers/state-engine/processEvent.js";
 
 const base = {
@@ -89,4 +90,30 @@ test("newer timestamp wins even when Trader sequence resets after restart", () =
 
   assert.equal(snapshotSequence(afterRestart), 1);
   assert.equal(isOlderThanLastAuthoritativeSnapshot(account, afterRestart), false);
+});
+
+
+test("missing Funded account is a terminal no-op for stale state events", async () => {
+  let calls = 0;
+  const accountModel = {
+    async findOne() {
+      calls += 1;
+      return null;
+    },
+  };
+
+  await assert.doesNotReject(() =>
+    processEvent(
+      {
+        eventId: "acg-trader:stale-event",
+        aggregateId: "TRIAL-DELETED",
+        eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+        payload: { complete: true, valuationStatus: "LIVE" },
+      },
+      null,
+      { accountModel },
+    )
+  );
+
+  assert.equal(calls, 1);
 });
