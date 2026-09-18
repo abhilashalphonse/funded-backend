@@ -6,6 +6,7 @@ import { calculatePrice } from "../../pricing/pricingEngine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
+import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customers/customer.service.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
 const allowedMethods = { BTC: "btc", USDT_TRX: "usdttrc20" };
@@ -30,9 +31,12 @@ async function nowPayments(path, body) {
   return data;
 }
 
-export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod, ownerExternalRef, analyticsSessionId, attribution = {} }) {
-  const normalizedEmail = String(email || "").trim().toLowerCase();
-  if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error("A valid email is required.");
+export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod, customer = null, analyticsSessionId, attribution = {} }) {
+  const normalizedEmail = normalizeCustomerEmail(email);
+  const fundedCustomer = customer?.customerId
+    ? { customerId: customer.customerId }
+    : await getOrCreateGuestCustomer(normalizedEmail);
+  const stableCustomerId = String(fundedCustomer.customerId);
   if (!allowedMethods[paymentMethod]) throw new Error("Unsupported crypto payment method.");
   if (!process.env.NOWPAYMENTS_IPN_URL) throw new Error("NOWPAYMENTS_IPN_URL is not configured.");
   if (!process.env.FRONTEND_URL) throw new Error("FRONTEND_URL is not configured.");
@@ -41,7 +45,8 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   const orderId = `ACG-${randomUUID()}`;
   const payment = await Payment.create({
     orderId,
-    ownerExternalRef: ownerExternalRef ? String(ownerExternalRef) : undefined,
+    ownerExternalRef: stableCustomerId,
+    customerId: stableCustomerId,
     email: normalizedEmail,
     challengeDefinition,
     commercialConfig,
@@ -188,7 +193,8 @@ async function activatePaidPayment(payment) {
     if (!account) {
       account = await Account.create({
         accountId,
-        ownerExternalRef: claimed.ownerExternalRef || claimed.email,
+        ownerExternalRef: claimed.ownerExternalRef || claimed.customerId || claimed.email,
+        customerId: claimed.customerId || undefined,
         accountMode: "CHALLENGE",
         challengeType: definition.step === "2step" ? "TWO_STEP" : "ONE_STEP",
         accountSize,
