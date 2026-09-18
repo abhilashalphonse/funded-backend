@@ -14,4 +14,13 @@ const boss = new PgBoss({
   connectionString: env.POSTGRES_URL
 });
 
+boss.on("error", (error) => {
+  console.error("[pg-boss] runtime error:", {
+    message: error?.message,
+    code: error?.code,
+    syscall: error?.syscall,
+    hostname: error?.hostname,
+  });
+});
+
 export default boss;
