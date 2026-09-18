@@ -21,6 +21,29 @@ export class ACGTraderClient {
   closeAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/close`, { method: "POST", body: options }); }
   createFederationTicket(command) { return this.request("/v1/internal/auth/federation/tickets", { method: "POST", body: command }); }
   createNativeCredential(accountId, command = {}) { return this.request(`/v1/internal/auth/accounts/${encodeURIComponent(accountId)}/credentials`, { method: "POST", body: command }); }
+  operationsHealth() { return this.request("/v1/internal/operations/health"); }
+  healthReady() { return this.publicRequest("/health/ready"); }
+
+  async publicRequest(path) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetch(`${this.baseUrl}${path}`, { signal: controller.signal });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw responseError(response, payload);
+      return payload;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        const timeout = new Error(`ACG Trader request timed out after ${this.timeoutMs}ms.`);
+        timeout.code = "TRADING_PROVIDER_TIMEOUT";
+        timeout.provider = "acg-trader";
+        throw timeout;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   async request(path, { method = "GET", body } = {}) {
     const controller = new AbortController();
