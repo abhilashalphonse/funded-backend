@@ -2,6 +2,7 @@ import Account from "../../accounts/account.model.js";
 import { evaluateRules } from "./rules.js";
 import { resolveDecision } from "./decisions.js";
 import { CommandQueue } from "./commandQueue.js";
+import { recordAnalyticsEventOnce } from "../../apis/services/analytics.service.js";
 
 const SNAPSHOT_EVENT = "ACG_TRADER_ACCOUNT_SNAPSHOT";
 const DEAL_EVENT = "ACG_TRADER_DEAL_CREATED";
@@ -36,6 +37,17 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
     applyDealEvent(account, event);
     account.lastProcessedEventId = event.eventId;
     await account.save();
+    await recordAnalyticsEventOnce({
+      event: "first_trade",
+      sessionId: `account:${account.accountId}`,
+      accountId: account.accountId,
+      source: "server",
+      properties: {
+        ownerExternalRef: account.ownerExternalRef,
+        accountMode: account.accountMode,
+        challengeType: account.challengeType,
+      },
+    }, { accountId: account.accountId }).catch(() => {});
     return;
   }
 
@@ -93,6 +105,34 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
   }
   account.lastProcessedEventId = event.eventId;
   await account.save();
+
+  if (account.accountMode === "DEMO" && decision.newStatus === "PASSED") {
+    await recordAnalyticsEventOnce({
+      event: "trial_passed",
+      sessionId: `account:${account.accountId}`,
+      accountId: account.accountId,
+      source: "server",
+      properties: {
+        ownerExternalRef: account.ownerExternalRef,
+        accountSize: account.accountSize,
+        challengeType: account.challengeType,
+      },
+    }, { accountId: account.accountId }).catch(() => {});
+  }
+
+  if (account.accountMode === "DEMO" && decision.newStatus === "BREACHED") {
+    await recordAnalyticsEventOnce({
+      event: "trial_failed",
+      sessionId: `account:${account.accountId}`,
+      accountId: account.accountId,
+      source: "server",
+      properties: {
+        ownerExternalRef: account.ownerExternalRef,
+        accountSize: account.accountSize,
+        challengeType: account.challengeType,
+      },
+    }, { accountId: account.accountId }).catch(() => {});
+  }
 
   if (decision.command) {
     const commandQueue = new CommandQueue(boss);
