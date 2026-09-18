@@ -93,6 +93,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
         paymentMethod,
         accountSize: challengeDefinition.accountSize,
         step: challengeDefinition.step,
+        profitSplit: commercialConfig?.profitSplit,
       },
     }, { paymentId: String(payment._id) }).catch(() => {});
     return { paymentId: payment._id, orderId, amount: pricing.finalPrice, currency: "EUR", checkoutUrl: payment.checkoutUrl };
@@ -314,6 +315,7 @@ export async function processIpn(payload, signature) {
           currency: payment.currency,
           accountSize: payment.challengeDefinition?.accountSize,
           step: payment.challengeDefinition?.step,
+          profitSplit: payment.commercialConfig?.profitSplit,
         },
       }, { paymentId: String(payment._id), accountId }).catch(() => {});
     }
