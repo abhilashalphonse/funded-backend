@@ -21,6 +21,17 @@ test("one-step completion goes directly to funded review", () => {
   assert.deepEqual(resolveDecision({ status: "ACTIVE", currentPhase: 1, challengeType: "ONE_STEP" }, passedRules), {
     shouldUpdate: true,
     newStatus: "FUNDED_REVIEW",
-    command: "SEND_EMAIL_NOTIFICATION",
+    command: "ENTER_FUNDED_REVIEW",
   });
+});
+
+
+test("transitional and review states do not emit duplicate commands", () => {
+  for (const status of ["PASSED", "FUNDED_REVIEW", "BREACHED"]) {
+    assert.deepEqual(resolveDecision({ status, currentPhase: 1, challengeType: "TWO_STEP" }, passedRules), {
+      shouldUpdate: false,
+      newStatus: status,
+      command: null,
+    });
+  }
 });
