@@ -31,6 +31,7 @@ export function serializeCustomerAccount(account) {
     accountMode: account.accountMode || "CHALLENGE",
     challengeType: account.challengeType,
     accountSize: account.accountSize,
+    commercialTerms: account.commercialTerms,
     currentPhase: account.currentPhase,
     status: account.status,
     enabled: account.enabled,
