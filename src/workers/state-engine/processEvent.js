@@ -10,7 +10,13 @@ const CLOSE_DEAL_TYPES = new Set(["CLOSE", "PARTIAL_CLOSE", "REVERSE_CLOSE", "ST
 
 export async function processEvent(event, boss) {
   const account = await Account.findOne({ accountId: event.aggregateId });
-  if (!account) throw new Error(`Account ${event.aggregateId} not found`);
+  if (!account) {
+    // Events can legitimately outlive a Funded account after local resets,
+    // deletions, or account lifecycle cleanup. Retrying such jobs can never
+    // succeed and can starve current account projections behind stale work.
+    console.warn(`[STATE] Ignoring event ${event.eventId} for missing account ${event.aggregateId}`);
+    return;
+  }
 
   if (account.lastProcessedEventId === event.eventId) {
     if (shouldReplayPendingCommand(account, event)) {
