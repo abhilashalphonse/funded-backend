@@ -3,87 +3,63 @@ import Stream from "../events/stream.model.js";
 import { v5 as uuidv5 } from "uuid";
 
 const STATE_JOB_NAMESPACE = uuidv5.URL;
+const MAX_RETRIES = 5;
 
 export function stateJobId(eventId) {
     return uuidv5(String(eventId), STATE_JOB_NAMESPACE);
 }
 
-export default class EventIngestionWorker {   
+export default class EventIngestionWorker {
     constructor(boss) {
         this.boss = boss;
     }
 
-   async start() {
-   await this.boss.work(
-    "incoming-events",
-    async (jobOrJobs) => {
-        const job = Array.isArray(jobOrJobs) ? jobOrJobs[0] : jobOrJobs;
-        if (!job?.data) throw new Error("incoming-events worker received an invalid pg-boss job payload");
+    async start() {
+        await this.boss.work("incoming-events", async (jobOrJobs) => {
+            const jobs = Array.isArray(jobOrJobs) ? jobOrJobs : [jobOrJobs];
 
-        try {
-            await this.ingest(job.data);
-        } catch (err) {
-            console.error("❌ INGEST FAILED:", err);
-            throw err; // Let PgBoss handle retries
-        }
-    }
-);
-
-    console.log("EventIngestionWorker started");      
-}
-
-   
-   
-    async ingest(event) {
-        this.validate(event);
-        
-        
-       
-
-        const MAX_RETRIES = 3;
-
-        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) { 
-            // Use Event's db connection since Account is no longer imported here
-            const session = await Event.db.startSession();
-
-            try {
-                session.startTransaction();
-
-                // 1. Idempotency Guard
-                const exists = await Event.findOne({
-                    eventId: event.eventId
-                }).session(session);
-
-
-                if (exists) {
-                    // The immutable event may already have committed while the
-                    // queue handoff failed. Re-send the same deterministic pg-boss
-                    // job id; pg-boss conflict-safe insertion prevents a second
-                    // logical state job for the same event.
-                    await session.abortTransaction();
-                    await this.enqueueStateEvent(event.eventId);
-                    return;
+            for (const job of jobs) {
+                if (!job?.data) {
+                    throw new Error("incoming-events worker received an invalid pg-boss job payload");
                 }
 
-                
+                try {
+                    await this.ingest(job.data);
+                } catch (err) {
+                    console.error("❌ INGEST FAILED:", err);
+                    throw err;
+                }
+            }
+        });
 
-                // 2. Stream Versioning (Event Sourcing)
+        console.log("EventIngestionWorker started");
+    }
 
+    async ingest(event) {
+        this.validate(event);
 
+        const existing = await Event.findOne({ eventId: event.eventId }).lean();
+        if (existing) {
+            await this.enqueueStateEvent(event.eventId);
+            return;
+        }
+
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                // Stream version allocation is an atomic single-document write.
+                // Keeping it outside a multi-document transaction avoids the
+                // write-conflict hotspot created by high-frequency valuations
+                // for the same trading account.
                 const stream = await Stream.findOneAndUpdate(
                     { accountId: event.aggregateId },
                     { $inc: { lastVersion: 1 } },
                     {
                         upsert: true,
-                        session,
-                        returnDocument: "after"
+                        new: true,
+                        setDefaultsOnInsert: true,
                     }
                 );
 
-                
-                
-
-                // 3. Assemble and Persist the Immutable Event
                 const fullEvent = {
                     eventId: event.eventId,
                     aggregateId: event.aggregateId,
@@ -92,46 +68,27 @@ export default class EventIngestionWorker {
                     occurredAt: event.timestamp ?? new Date(),
                     receivedAt: new Date(),
                     payload: event.payload,
-                    metadata: event.metadata ?? {}
+                    metadata: event.metadata ?? {},
                 };
 
-
-                await Event.create([fullEvent], { session });
-
-                // Note: updateAccount() has been entirely removed.
-                // The DB transaction is solely for ensuring the event is saved safely.
-
-                await session.commitTransaction();
-
-                // 4. Handoff to the Queue (State Engine takes over from here)
+                try {
+                    await Event.create(fullEvent);
+                } catch (error) {
+                    if (isDuplicateEventId(error)) {
+                        await this.enqueueStateEvent(event.eventId);
+                        return;
+                    }
+                    throw error;
+                }
 
                 await this.enqueueStateEvent(event.eventId);
-
-
-                return; // SUCCESS → exit retry loop
-
+                return;
             } catch (err) {
-                // Ensure we only abort if a transaction is still active
-                if (session.inTransaction()) {
-                    await session.abortTransaction();
+                if (isRetryableMongoError(err) && attempt < MAX_RETRIES) {
+                    await delay(attempt * 25);
+                    continue;
                 }
-
-                const isTransientError =
-                    err.message.includes("WriteConflict") ||
-                    err.message.includes("TransientTransactionError") ||
-                    err.message.includes("Please retry");
-
-                if (isTransientError && attempt < MAX_RETRIES) {
-                    continue; // Retry on transient MongoDB errors
-                }
-
-                // If it's a hard error or we ran out of retries, bubble it up
                 throw err;
-
-            } finally {
-                // 5. Fix Session Leak: This guarantees the session closes 
-                // whether the function returns early on success, aborts on duplicate, or throws an error.
-                await session.endSession();
             }
         }
     }
@@ -144,26 +101,34 @@ export default class EventIngestionWorker {
                 id: stateJobId(eventId),
                 retryLimit: 5,
                 retryDelay: 1,
-                retryBackoff: true
+                retryBackoff: true,
             }
         );
     }
 
     validate(event) {
-        if (!event.eventId) {
-            throw new Error("eventId missing");
-        }
-
-        if (!event.eventType) {
-            throw new Error("eventType missing");
-        }
-
-        if (!event.aggregateId) {
-            throw new Error("aggregateId missing");
-        }
-
-        if (!event.payload) {
-            throw new Error("payload missing");
-        }
+        if (!event?.eventId) throw new Error("eventId missing");
+        if (!event?.eventType) throw new Error("eventType missing");
+        if (!event?.aggregateId) throw new Error("aggregateId missing");
+        if (!event?.payload) throw new Error("payload missing");
     }
-} 
+}
+
+function isRetryableMongoError(error) {
+    return error?.code === 112
+        || error?.codeName === "WriteConflict"
+        || error?.errorLabels?.includes?.("TransientTransactionError")
+        || String(error?.message || "").includes("WriteConflict")
+        || String(error?.message || "").includes("Please retry");
+}
+
+function isDuplicateEventId(error) {
+    if (error?.code !== 11000) return false;
+    const pattern = error?.keyPattern || {};
+    if (pattern.eventId) return true;
+    return String(error?.message || "").includes("eventId_1");
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
