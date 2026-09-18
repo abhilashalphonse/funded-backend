@@ -51,6 +51,17 @@ export class CommandWorker {
           throw new Error(`Account ${accountId} is not a two-step challenge`);
         }
 
+        const existingPhaseTwo = account.platformAccounts.find(item => Number(item.phase) === 2);
+        if (Number(account.currentPhase) === 2 && account.status === "PHASE_2" && existingPhaseTwo?.status === "ACTIVE") {
+          return {
+            success: true,
+            provider: account.platform,
+            platformAccountId: existingPhaseTwo.platformAccountId,
+            allocatedEquity: account.initialDeposit,
+            idempotentReplay: true,
+          };
+        }
+
         const phaseOne = account.platformAccounts.find(item => Number(item.phase) === 1);
         if (phaseOne?.status !== "COMPLETED") {
           await connector.disableAccount({
