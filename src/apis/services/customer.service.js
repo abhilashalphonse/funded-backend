@@ -3,6 +3,7 @@ import Account from "../../accounts/account.model.js";
 import simulatorEngine from "../../simulator/engine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
+import { requireTradingReadiness } from "./tradingReadiness.service.js";
 
 function ownerQuery(customer) {
   const values = [customer.id, customer.email].filter(Boolean);
@@ -75,6 +76,8 @@ export async function getCustomerWorkspace(customer) {
 }
 
 export async function ensureDemoAccount(customer, input = {}) {
+  await requireTradingReadiness();
+
   const active = await Account.findOne({
     ...ownerQuery(customer),
     accountMode: "DEMO",
