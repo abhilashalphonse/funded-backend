@@ -15,10 +15,6 @@ export default class StateEngineWorker {
             async (jobs) => {
                 const job = jobs[0];
 
-                console.log(
-                    "STATE EVENT RECEIVED"
-                );
-
                 await this.handle(job);
             }
         );
@@ -27,11 +23,7 @@ export default class StateEngineWorker {
     }
 
     async handle(job) {
-        console.log("Processing state job:");
-
         const { eventId } = job.data;
-
-        console.log("Looking up event:", eventId);
 
         if (!eventId) {
             throw new Error("eventId missing");
@@ -39,17 +31,12 @@ export default class StateEngineWorker {
 
         const event = await Event.findOne({ eventId });
 
-        console.log("Mongo event:");
-
         if (!event) {
             throw new Error(`Event ${eventId} not found`);
         }
 
         await processEvent(event, this.boss);
 
-        console.log(
-            `[STATE] processed ${event.eventId} (${event.eventType})`
-        );
     }
 
 }
