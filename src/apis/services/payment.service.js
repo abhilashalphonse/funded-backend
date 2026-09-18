@@ -200,6 +200,12 @@ async function activatePaidPayment(payment) {
         accountSize,
         initialDeposit: accountSize,
         currentPhase: 1,
+        commercialTerms: {
+          profitSplit: Number(claimed.commercialConfig?.profitSplit ?? 80),
+          payoutFrequency: claimed.commercialConfig?.payoutFrequency || "Biweekly",
+          newsTrading: Boolean(claimed.commercialConfig?.newsTrading),
+          weekendHolding: Boolean(claimed.commercialConfig?.weekendHolding),
+        },
         rules,
         leverage: 100,
         platform,
