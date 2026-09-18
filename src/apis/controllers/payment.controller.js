@@ -4,11 +4,13 @@ export async function createCrypto(req, res, next) {
   try {
     const payload = {
       ...(req.body ?? {}),
-      ownerExternalRef: req.customer?.id || undefined,
+      customer: req.customer || null,
       email: req.customer?.email || req.body?.email,
       analyticsSessionId: req.get("x-acg-session-id") || req.body?.analyticsSessionId,
       attribution: req.body?.attribution || {},
     };
+    delete payload.ownerExternalRef;
+    delete payload.customerId;
     res.status(201).json({ success: true, data: await createCryptoPayment(payload) });
   } catch (error) { next(error); }
 }
