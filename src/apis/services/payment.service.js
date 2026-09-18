@@ -5,6 +5,7 @@ import Account from "../../accounts/account.model.js";
 import { calculatePrice } from "../../pricing/pricingEngine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
+import { recordAnalyticsEventOnce } from "./analytics.service.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
 const allowedMethods = { BTC: "btc", USDT_TRX: "usdttrc20" };
@@ -29,7 +30,7 @@ async function nowPayments(path, body) {
   return data;
 }
 
-export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod, ownerExternalRef }) {
+export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod, ownerExternalRef, analyticsSessionId, attribution = {} }) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) throw new Error("A valid email is required.");
   if (!allowedMethods[paymentMethod]) throw new Error("Unsupported crypto payment method.");
@@ -48,6 +49,10 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     currency: "EUR",
     paymentMethod,
     status: "CREATED",
+    metadata: {
+      analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
+      attribution,
+    },
   });
 
   try {
@@ -65,8 +70,26 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     payment.providerInvoiceId = String(invoice.id ?? invoice.invoice_id ?? "");
     payment.checkoutUrl = invoice.invoice_url || invoice.payment_url || invoice.pay_address;
     payment.status = "WAITING";
-    payment.metadata = { pricing };
+    payment.metadata = {
+      ...(payment.metadata || {}),
+      pricing,
+    };
     await payment.save();
+    await recordAnalyticsEventOnce({
+      event: "payment_started",
+      sessionId: analyticsSessionId || `payment:${payment._id}`,
+      email: normalizedEmail,
+      paymentId: String(payment._id),
+      source: "server",
+      attribution,
+      properties: {
+        amount: pricing.finalPrice,
+        currency: "EUR",
+        paymentMethod,
+        accountSize: challengeDefinition.accountSize,
+        step: challengeDefinition.step,
+      },
+    }, { paymentId: String(payment._id) }).catch(() => {});
     return { paymentId: payment._id, orderId, amount: pricing.finalPrice, currency: "EUR", checkoutUrl: payment.checkoutUrl };
   } catch (error) {
     payment.status = "FAILED";
@@ -253,7 +276,36 @@ export async function processIpn(payload, signature) {
   if (payment.status === "PAID" && !payment.paidAt) payment.paidAt = new Date();
   await payment.save();
 
-  if (payment.status === "PAID") await activatePaidPayment(payment);
+  if (payment.status === "PAID") {
+    await recordAnalyticsEventOnce({
+      event: "payment_completed",
+      sessionId: payment.metadata?.analyticsSessionId || `payment:${payment._id}`,
+      email: payment.email,
+      paymentId: String(payment._id),
+      source: "server",
+      attribution: payment.metadata?.attribution || {},
+      properties: { amount: payment.amount, currency: payment.currency },
+    }, { paymentId: String(payment._id) }).catch(() => {});
+
+    const accountId = await activatePaidPayment(payment);
+    if (accountId) {
+      await recordAnalyticsEventOnce({
+        event: "challenge_activated",
+        sessionId: payment.metadata?.analyticsSessionId || `payment:${payment._id}`,
+        email: payment.email,
+        paymentId: String(payment._id),
+        accountId,
+        source: "server",
+        attribution: payment.metadata?.attribution || {},
+        properties: {
+          amount: payment.amount,
+          currency: payment.currency,
+          accountSize: payment.challengeDefinition?.accountSize,
+          step: payment.challengeDefinition?.step,
+        },
+      }, { paymentId: String(payment._id), accountId }).catch(() => {});
+    }
+  }
   return payment;
 }
 
