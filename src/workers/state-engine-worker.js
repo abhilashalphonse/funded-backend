@@ -12,6 +12,7 @@ export default class StateEngineWorker {
 
         await this.boss.work(
             "state-events",
+            { batchSize: 50, newJobCheckInterval: 100 },
             async (jobOrJobs) => {
                 const jobs = Array.isArray(jobOrJobs) ? jobOrJobs : [jobOrJobs];
                 for (const job of jobs) {
