@@ -4,6 +4,7 @@ const PaymentSchema = new mongoose.Schema(
   {
     orderId: { type: String, required: true, unique: true, index: true },
     ownerExternalRef: { type: String, index: true, sparse: true },
+    customerId: { type: String, index: true, sparse: true },
     email: { type: String, required: true, lowercase: true, trim: true, index: true },
     challengeDefinition: { type: mongoose.Schema.Types.Mixed, required: true },
     commercialConfig: { type: mongoose.Schema.Types.Mixed, required: true },
