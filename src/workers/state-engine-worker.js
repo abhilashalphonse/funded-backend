@@ -13,9 +13,11 @@ export default class StateEngineWorker {
         await this.boss.work(
             "state-events",
             async (jobOrJobs) => {
-                const job = Array.isArray(jobOrJobs) ? jobOrJobs[0] : jobOrJobs;
-                if (!job?.data) throw new Error("state-events worker received an invalid pg-boss job payload");
-                await this.handle(job);
+                const jobs = Array.isArray(jobOrJobs) ? jobOrJobs : [jobOrJobs];
+                for (const job of jobs) {
+                    if (!job?.data) throw new Error("state-events worker received an invalid pg-boss job payload");
+                    await this.handle(job);
+                }
             }
         );
 
