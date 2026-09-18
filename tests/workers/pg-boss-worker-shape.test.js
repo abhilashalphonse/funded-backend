@@ -24,6 +24,7 @@ test("event ingestion worker accepts single-job and array callback shapes", asyn
   await worker.start();
   const registration = boss.registrations.find(item => item.name === "incoming-events");
   assert.ok(registration);
+  assert.deepEqual(registration.options, { batchSize: 50, newJobCheckInterval: 100 });
 
   await registration.handler({ id: "job-1", data: { eventId: "evt-1" } });
   await registration.handler([
@@ -47,6 +48,7 @@ test("state engine worker accepts single-job and array callback shapes", async (
   await worker.start();
   const registration = boss.registrations.find(item => item.name === "state-events");
   assert.ok(registration);
+  assert.deepEqual(registration.options, { batchSize: 50, newJobCheckInterval: 100 });
 
   const first = { id: "job-4", data: { eventId: "evt-4" } };
   const second = { id: "job-5", data: { eventId: "evt-5" } };
