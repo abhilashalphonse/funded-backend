@@ -116,3 +116,16 @@ export async function getFunnelSummary({ days = 30 } = {}) {
   const byEvent = Object.fromEntries(rows.map(row => [row.event, row]));
   return { from, to: new Date(), days: safeDays, byEvent };
 }
+
+
+export async function recordAnalyticsEventOnce(args, dedupe = {}) {
+  const filter = {
+    event: args.event,
+    ...(dedupe.paymentId ? { paymentId: String(dedupe.paymentId) } : {}),
+    ...(dedupe.accountId ? { accountId: String(dedupe.accountId) } : {}),
+    ...(dedupe.sessionId ? { sessionId: String(dedupe.sessionId) } : {}),
+  };
+  const existing = await AnalyticsEvent.findOne(filter).select("_id").lean();
+  if (existing) return existing;
+  return recordAnalyticsEvent(args);
+}
