@@ -55,10 +55,10 @@ const AccountSchema = new mongoose.Schema(
         currentPhase: { type: Number, default: 1 },
 
         commercialTerms: {
-            profitSplit: { type: Number, default: 80 },
-            payoutFrequency: { type: String, default: "Biweekly" },
-            newsTrading: { type: Boolean, default: false },
-            weekendHolding: { type: Boolean, default: false }
+            profitSplit: Number,
+            payoutFrequency: String,
+            newsTrading: Boolean,
+            weekendHolding: Boolean
         },
 
         rules: {
