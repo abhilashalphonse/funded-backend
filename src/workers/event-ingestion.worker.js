@@ -1,5 +1,12 @@
 import Event from "../events/event.model.js";
 import Stream from "../events/stream.model.js";
+import { v5 as uuidv5 } from "uuid";
+
+const STATE_JOB_NAMESPACE = uuidv5.URL;
+
+export function stateJobId(eventId) {
+    return uuidv5(String(eventId), STATE_JOB_NAMESPACE);
+}
 
 export default class EventIngestionWorker {   
     constructor(boss) {
@@ -48,16 +55,12 @@ export default class EventIngestionWorker {
 
 
                 if (exists) {
-                    // The immutable event may already have been committed while the
-                    // previous state-engine queue handoff failed. Re-enqueueing is
-                    // required so a persisted Trader snapshot can never remain
-                    // permanently unapplied. processEvent is idempotent for the
-                    // current event and snapshot ordering rejects stale valuations.
+                    // The immutable event may already have committed while the
+                    // queue handoff failed. Re-send the same deterministic pg-boss
+                    // job id; pg-boss conflict-safe insertion prevents a second
+                    // logical state job for the same event.
                     await session.abortTransaction();
-                    await this.boss.send(
-                        "state-events",
-                        { eventId: event.eventId }
-                    );
+                    await this.enqueueStateEvent(event.eventId);
                     return;
                 }
 
@@ -101,10 +104,7 @@ export default class EventIngestionWorker {
 
                 // 4. Handoff to the Queue (State Engine takes over from here)
 
-                await this.boss.send(
-                    "state-events",
-                    { eventId: event.eventId }
-                );
+                await this.enqueueStateEvent(event.eventId);
 
 
                 return; // SUCCESS → exit retry loop
@@ -133,6 +133,19 @@ export default class EventIngestionWorker {
                 await session.endSession();
             }
         }
+    }
+
+    async enqueueStateEvent(eventId) {
+        return this.boss.send(
+            "state-events",
+            { eventId },
+            {
+                id: stateJobId(eventId),
+                retryLimit: 5,
+                retryDelay: 1,
+                retryBackoff: true
+            }
+        );
     }
 
     validate(event) {
