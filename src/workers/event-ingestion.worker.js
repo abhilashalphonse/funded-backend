@@ -105,8 +105,7 @@ export default class EventIngestionWorker {
 
                 await this.boss.send(
                     "state-events",
-                    { eventId: event.eventId },
-                    { id: event.eventId }
+                    { eventId: event.eventId }
                 );
 
                 console.log("✅ State event queued");
