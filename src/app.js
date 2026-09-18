@@ -6,6 +6,7 @@ import tradeWebhookRoutes from "./apis/routes/tradeWebhook.routes.js";
 import acgTraderWebhookRoutes from "./apis/routes/acgTraderWebhook.routes.js";
 import paymentRoutes from "./apis/routes/payment.routes.js";
 import customerRoutes from "./apis/routes/customer.routes.js";
+import analyticsRoutes from "./apis/routes/analytics.routes.js";
 import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
 import boss from "./config/boss.js";
@@ -34,6 +35,7 @@ app.use("/api", acgTraderWebhookRoutes);
 app.use("/api", tradeWebhookRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/customer", customerRoutes);
+app.use("/api/analytics", analyticsRoutes);
 if (env.ENABLE_SIMULATOR_ROUTES) app.use("/simulator", simulatorRoutes);
 
 app.get("/health", (req, res) => res.json({
