@@ -40,8 +40,12 @@ export async function getTradingReadiness() {
     checks.traderReachable = true;
     checks.traderReady = publicHealth?.status === "ready";
     checks.tradingRuntimeReady =
-      publicHealth?.trading?.enabled === true &&
-      publicHealth?.checks?.tradingRuntimeReady === true;
+      publicHealth?.checks?.tradingRuntimeReady === true ||
+      (
+        publicHealth?.trading?.enabled === true &&
+        publicHealth?.trading?.started === true &&
+        publicHealth?.trading?.state === "READY"
+      );
     checks.marketLive =
       publicHealth?.market?.enabled === true &&
       publicHealth?.market?.state === "LIVE";
@@ -59,8 +63,11 @@ export async function getTradingReadiness() {
       const operationsHealth = await client.operationsHealth();
       details.operationsHealth = operationsHealth;
       checks.servicePrincipalAuthenticated = true;
-      if (operationsHealth?.trading?.state && operationsHealth.trading.state !== "READY") {
-        checks.tradingRuntimeReady = false;
+      if (operationsHealth?.trading) {
+        checks.tradingRuntimeReady =
+          operationsHealth.trading.enabled === true &&
+          operationsHealth.trading.started === true &&
+          operationsHealth.trading.state === "READY";
       }
       const relay = operationsHealth?.trading?.platformEvents;
       if (relay) {
