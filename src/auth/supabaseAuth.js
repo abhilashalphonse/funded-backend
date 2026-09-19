@@ -52,6 +52,31 @@ export async function requireCustomer(req, res, next) {
   }
 }
 
+export async function requireAdmin(req, res, next) {
+  try {
+    const token = bearerToken(req);
+    if (!token) return res.status(401).json({ success: false, message: "Authentication required." });
+    const customer = await resolveCustomer(token);
+    if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session." });
+
+    const email = String(customer.email || "").trim().toLowerCase();
+    if (!email || !env.ADMIN_EMAILS.includes(email)) {
+      return res.status(403).json({ success: false, message: "Admin access is not enabled for this account." });
+    }
+
+    req.customer = customer;
+    req.admin = {
+      email,
+      customerId: customer.customerId,
+      authUserId: customer.id,
+      role: "SUPER_ADMIN",
+    };
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function optionalCustomer(req, res, next) {
   try {
     const token = bearerToken(req);
