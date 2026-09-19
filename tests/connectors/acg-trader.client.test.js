@@ -42,3 +42,48 @@ test("ACG Trader client preserves remote error code and request id", async () =>
     error => error.code === "ACCOUNT_PROVISIONING_CONFLICT" && error.requestId === "req-1" && error.status === 409,
   );
 });
+
+
+test("ACG Trader federation launch retries one transient 502", async () => {
+  let calls = 0;
+  const client = new ACGTraderClient({
+    baseUrl: "http://localhost:4000",
+    clientId: "funded-backend",
+    apiKey: "secret-key",
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return response(502, {});
+      return response(201, { ticket: "ticket-1", expiresAt: "2026-09-19T03:00:00.000Z" });
+    },
+  });
+
+  const result = await client.createFederationTicket({
+    ownerExternalRef: "user-1",
+    accountIds: ["66aa00112233445566778899"],
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(result.ticket, "ticket-1");
+});
+
+test("ACG Trader federation launch does not retry application 4xx", async () => {
+  let calls = 0;
+  const client = new ACGTraderClient({
+    baseUrl: "http://localhost:4000",
+    clientId: "funded-backend",
+    apiKey: "secret-key",
+    fetchImpl: async () => {
+      calls += 1;
+      return response(403, { error: { code: "ACCOUNT_GRANT_FORBIDDEN", message: "forbidden" } });
+    },
+  });
+
+  await assert.rejects(
+    () => client.createFederationTicket({
+      ownerExternalRef: "user-1",
+      accountIds: ["66aa00112233445566778899"],
+    }),
+    error => error.code === "ACCOUNT_GRANT_FORBIDDEN",
+  );
+  assert.equal(calls, 1);
+});
