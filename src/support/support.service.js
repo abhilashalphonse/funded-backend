@@ -207,14 +207,24 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
 
   const context = await supportContext(customer);
   const knowledgeBase = await retrieveApprovedKnowledge(text, conversation.category, 4);
-  const ruleEscalation = mustEscalate(text);
+  const humanReviewRecommended = mustEscalate(text);
+
+  // Clear legacy automatic escalations. A conversation should enter the human
+  // queue only when the customer explicitly requests a person.
+  if (
+    conversation.status === "ESCALATED"
+    && ["SENSITIVE_REQUEST", "AI_UNCERTAIN"].includes(conversation.handoffReason)
+  ) {
+    conversation.status = "OPEN";
+    conversation.handoffReason = null;
+  }
 
   let answer;
-  let escalated = ruleEscalation;
+  let escalated = false;
   let source = "ai";
 
-  if (ruleEscalation) {
-    answer = "This request needs a support specialist because it involves a sensitive account, payment, payout, security, ownership, or policy decision. I’ve flagged the conversation for human review. Please do not send passwords, recovery codes, private keys, or seed phrases.";
+  if (humanReviewRecommended) {
+    answer = "I can explain what is known from your account and our approved support information, but this type of request may require a support specialist to make a decision. I won’t send it for human review unless you choose “Talk to a person.” Please do not send passwords, recovery codes, private keys, or seed phrases.";
     source = "fallback";
   } else {
     try {
@@ -230,13 +240,12 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
     }
 
     if (!answer) {
-      answer = "I can’t reliably answer that automatically right now. I’ve flagged this conversation so support can review it without you repeating the details.";
-      escalated = true;
+      answer = "I can’t reliably answer that automatically right now. Please try again shortly. If you want a person to review it, choose “Talk to a person.”";
       source = "fallback";
     } else if (answer.startsWith("[[ESCALATE]]")) {
-      escalated = true;
       answer = answer.replace(/^\[\[ESCALATE\]\]\s*/i, "").trim()
         || "This needs a support specialist to review.";
+      answer = `${answer} I won’t send it for human review unless you choose “Talk to a person.”`;
     }
   }
 
@@ -248,11 +257,6 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
     knowledgeArticleSlugs: knowledgeBase.map(article => article.slug),
     createdAt: new Date(),
   });
-
-  if (escalated) {
-    conversation.status = "ESCALATED";
-    conversation.handoffReason = ruleEscalation ? "SENSITIVE_REQUEST" : "AI_UNCERTAIN";
-  }
 
   await conversation.save();
 
