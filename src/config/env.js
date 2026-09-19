@@ -58,6 +58,7 @@ const env = Object.freeze({
   FRONTEND_URL: validUrl("FRONTEND_URL", required("FRONTEND_URL")),
   SUPABASE_URL: validUrl("SUPABASE_URL", required("SUPABASE_URL")),
   SUPABASE_ANON_KEY: required("SUPABASE_ANON_KEY"),
+  ADMIN_EMAILS: csv("ADMIN_EMAILS").map(value => value.toLowerCase()),
 
   // AI support. Optional so deployments remain healthy while the key is being provisioned;
   // the support service fails closed to human escalation when it is absent.
