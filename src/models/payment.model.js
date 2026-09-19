@@ -52,4 +52,33 @@ PaymentSchema.index(
   },
 );
 
-export default mongoose.model("Payment", PaymentSchema);
+const Payment = mongoose.model("Payment", PaymentSchema);
+
+export async function ensurePaymentProviderIndex() {
+  const indexName = "provider_1_providerPaymentId_1";
+  const indexes = await Payment.collection.indexes();
+  const existing = indexes.find((index) => index.name === indexName);
+
+  const hasExpectedPartialFilter =
+    existing?.unique === true &&
+    existing?.partialFilterExpression?.providerPaymentId?.$type === "string";
+
+  if (existing && !hasExpectedPartialFilter) {
+    await Payment.collection.dropIndex(indexName);
+  }
+
+  if (!existing || !hasExpectedPartialFilter) {
+    await Payment.collection.createIndex(
+      { provider: 1, providerPaymentId: 1 },
+      {
+        name: indexName,
+        unique: true,
+        partialFilterExpression: {
+          providerPaymentId: { $type: "string" },
+        },
+      },
+    );
+  }
+}
+
+export default Payment;
