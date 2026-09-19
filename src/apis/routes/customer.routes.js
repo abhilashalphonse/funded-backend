@@ -10,6 +10,7 @@ import {
 import { createCustomerTradingLaunch } from "../services/tradingLaunch.service.js";
 import { getTradingReadiness } from "../services/tradingReadiness.service.js";
 import { recordAnalyticsEvent } from "../services/analytics.service.js";
+import { completeAcademyLesson, getAcademyProgress, viewAcademyLesson } from "../services/academy.service.js";
 
 const router = express.Router();
 
@@ -25,6 +26,29 @@ router.get("/workspace", async (req, res, next) => {
 router.get("/accounts", async (req, res, next) => {
   try {
     const data = await listCustomerAccounts(req.customer);
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.get("/academy/progress", async (req, res, next) => {
+  try {
+    const data = await getAcademyProgress(req.customer);
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/academy/lessons/:lessonId/view", async (req, res, next) => {
+  try {
+    const data = await viewAcademyLesson(req.customer, req.params.lessonId);
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/academy/lessons/:lessonId/complete", async (req, res, next) => {
+  try {
+    const data = await completeAcademyLesson(req.customer, req.params.lessonId, {
+      score: req.body?.score ?? null,
+    });
     res.json({ success: true, data });
   } catch (error) { next(error); }
 });
