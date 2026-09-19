@@ -8,6 +8,7 @@ import paymentRoutes from "./apis/routes/payment.routes.js";
 import customerRoutes from "./apis/routes/customer.routes.js";
 import analyticsRoutes from "./apis/routes/analytics.routes.js";
 import supportRoutes from "./apis/routes/support.routes.js";
+import adminRoutes from "./apis/routes/admin.routes.js";
 import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
 import boss from "./config/boss.js";
@@ -38,6 +39,7 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/support", supportRoutes);
+app.use("/api/admin", adminRoutes);
 if (env.ENABLE_SIMULATOR_ROUTES) app.use("/simulator", simulatorRoutes);
 
 app.get("/health", (req, res) => res.json({
@@ -47,6 +49,7 @@ app.get("/health", (req, res) => res.json({
   tradingProvider: configuredTradingProvider(),
   acgTraderWebhookConfigured: Boolean(env.ACG_TRADER_WEBHOOK_SECRET),
   customerAuthConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
+  adminAccessConfigured: env.ADMIN_EMAILS.length > 0,
   supportAiConfigured: Boolean(env.OPENAI_API_KEY),
   supportModel: env.OPENAI_SUPPORT_MODEL,
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
