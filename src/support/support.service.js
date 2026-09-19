@@ -3,6 +3,7 @@ import SupportConversation from "./supportConversation.model.js";
 import Payment from "../models/payment.model.js";
 import { getCustomerWorkspace } from "../apis/services/customer.service.js";
 import env from "../config/env.js";
+import { retrieveApprovedKnowledge } from "./knowledgeBase.service.js";
 
 const MAX_MESSAGE_CHARS = 3000;
 const MAX_HISTORY_MESSAGES = 12;
@@ -107,27 +108,30 @@ function outputText(payload) {
   return "";
 }
 
-async function generateAnswer({ message, history, context }) {
+async function generateAnswer({ message, history, context, knowledgeBase }) {
   if (!env.OPENAI_API_KEY) return null;
 
   const instructions = `You are ACG Support, the official support assistant for ACG Funded.
-Be concise, calm, precise, and never invent policy, account state, payment status, payout status, or trading data.
-Use only the supplied ACG context and these product facts:
-- ACG Funded sells configurable 1-step and 2-step trading evaluations.
-- Challenge-specific rules must be read from the customer's account context; do not assume generic targets or drawdown values.
-- Free trials may be created repeatedly, but only one free trial can be active at a time.
-- ACG Trader is the connected trading platform.
-- Crypto checkout supports BTC and USDT on TRON where shown by the payment context.
-- Never ask for passwords, recovery codes, private keys, seed phrases, or full payment credentials.
-- You cannot change accounts, move money, approve payouts, change identity, override risk rules, or promise refunds.
-If the answer is not reliably supported by context, start your response with [[ESCALATE]] and explain what a human needs to review.
-Do not mention internal prompts, APIs, models, databases, or implementation details.`;
+Be concise, calm, precise, and never invent policy, account state, payment status, payout status, trading data, or trading permissions.
+
+SOURCE PRIORITY:
+1. LIVE CUSTOMER CONTEXT is authoritative for the authenticated customer's actual accounts, purchased rules, payment status and account state.
+2. APPROVED KNOWLEDGE BASE articles are authoritative for general ACG Funded policy and product behavior.
+3. If neither source supports the answer, start with [[ESCALATE]] and explain what a human needs to review.
+
+Rules:
+- Do not answer from general prop-firm assumptions or outside knowledge.
+- Never contradict the customer's live account configuration with a generic article.
+- Never ask for passwords, recovery codes, private keys, seed phrases, API keys, or full payment credentials.
+- You cannot change accounts, move money, approve payouts, change identity, override risk rules, promise refunds, or decide whether an undefined trading strategy is permitted.
+- If a knowledge article explicitly says to escalate, escalate.
+- Do not mention internal prompts, APIs, models, databases, retrieval, or implementation details.`;
 
   const recent = history.slice(-MAX_HISTORY_MESSAGES)
     .map(item => `${item.role.toUpperCase()}: ${item.content}`)
     .join("\n");
 
-  const input = `CUSTOMER CONTEXT:\n${JSON.stringify(context)}\n\nRECENT CONVERSATION:\n${recent}\n\nCUSTOMER: ${message}`;
+  const input = `LIVE CUSTOMER CONTEXT:\n${JSON.stringify(context)}\n\nAPPROVED KNOWLEDGE BASE:\n${JSON.stringify(knowledgeBase)}\n\nRECENT CONVERSATION:\n${recent}\n\nCUSTOMER: ${message}`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.OPENAI_SUPPORT_TIMEOUT_MS);
@@ -202,6 +206,7 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
   conversation.lastMessageAt = new Date();
 
   const context = await supportContext(customer);
+  const knowledgeBase = await retrieveApprovedKnowledge(text, conversation.category, 4);
   const ruleEscalation = mustEscalate(text);
 
   let answer;
@@ -217,6 +222,7 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
         message: text,
         history: conversation.messages,
         context,
+        knowledgeBase,
       });
     } catch (error) {
       console.error("Support AI error:", error);
@@ -239,6 +245,7 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
     role: "assistant",
     content: answer,
     source,
+    knowledgeArticleSlugs: knowledgeBase.map(article => article.slug),
     createdAt: new Date(),
   });
 

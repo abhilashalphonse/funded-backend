@@ -5,6 +5,7 @@ const MessageSchema = new mongoose.Schema({
   role: { type: String, enum: ["user", "assistant", "system"], required: true },
   content: { type: String, required: true },
   source: { type: String, enum: ["customer", "ai", "fallback", "human"], required: true },
+  knowledgeArticleSlugs: { type: [String], default: undefined },
   createdAt: { type: Date, default: Date.now },
 }, { _id: false });
 
