@@ -55,6 +55,7 @@ const env = Object.freeze({
   POSTGRES_CONNECTION_TIMEOUT_MS: positiveInt("POSTGRES_CONNECTION_TIMEOUT_MS", 30000),
 
   CORS_ORIGINS: csv("CORS_ORIGINS", "http://localhost:5173"),
+  ADMIN_EMAILS: csv("ADMIN_EMAILS").map(value => value.toLowerCase()),
   FRONTEND_URL: validUrl("FRONTEND_URL", required("FRONTEND_URL")),
   SUPABASE_URL: validUrl("SUPABASE_URL", required("SUPABASE_URL")),
   SUPABASE_ANON_KEY: required("SUPABASE_ANON_KEY"),
