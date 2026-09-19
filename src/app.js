@@ -8,7 +8,6 @@ import paymentRoutes from "./apis/routes/payment.routes.js";
 import customerRoutes from "./apis/routes/customer.routes.js";
 import analyticsRoutes from "./apis/routes/analytics.routes.js";
 import supportRoutes from "./apis/routes/support.routes.js";
-import adminRoutes from "./admin/admin.routes.js";
 import adminRoutes from "./apis/routes/admin.routes.js";
 import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
@@ -40,7 +39,6 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/support", supportRoutes);
-app.use("/api/admin", adminRoutes);
 app.use("/api/admin", adminRoutes);
 if (env.ENABLE_SIMULATOR_ROUTES) app.use("/simulator", simulatorRoutes);
 
