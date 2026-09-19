@@ -252,14 +252,15 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
         knowledgeBase,
       });
     } catch (error) {
-      console.error("Support AI error", {
-        message: error?.message,
+      console.error(JSON.stringify({
+        event: "support_ai_error",
+        message: error?.message || "Unknown support AI error",
         upstreamStatus: error?.upstreamStatus || null,
         upstreamCode: error?.upstreamCode || null,
         upstreamType: error?.upstreamType || null,
         model: env.OPENAI_SUPPORT_MODEL,
         apiKeyConfigured: Boolean(env.OPENAI_API_KEY),
-      });
+      }));
       answer = null;
     }
 
