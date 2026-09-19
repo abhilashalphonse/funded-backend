@@ -11,6 +11,7 @@ import { createCustomerTradingLaunch } from "../services/tradingLaunch.service.j
 import { getTradingReadiness } from "../services/tradingReadiness.service.js";
 import { recordAnalyticsEvent } from "../services/analytics.service.js";
 import { completeAcademyLesson, getAcademyProgress, viewAcademyLesson } from "../services/academy.service.js";
+import { getCustomerNewsCalendar } from "../services/newsCalendar.service.js";
 
 const router = express.Router();
 
@@ -48,6 +49,18 @@ router.post("/academy/lessons/:lessonId/complete", async (req, res, next) => {
   try {
     const data = await completeAcademyLesson(req.customer, req.params.lessonId, {
       score: req.body?.score ?? null,
+    });
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.get("/news-calendar", async (req, res, next) => {
+  try {
+    const data = await getCustomerNewsCalendar(req.customer, {
+      from: req.query.from,
+      to: req.query.to,
+      currencies: req.query.currencies,
+      accountId: req.query.accountId,
     });
     res.json({ success: true, data });
   } catch (error) { next(error); }
