@@ -326,6 +326,16 @@ router.get("/audit", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+router.get("/admin-users", async (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      rows: env.ADMIN_EMAILS.map(email => ({ email, role: "SUPER_ADMIN", source: "ADMIN_EMAILS", current: email === req.admin.email })),
+      note: "Admin identities are currently controlled by the ADMIN_EMAILS deployment allowlist.",
+    },
+  });
+});
+
 router.get("/system", async (_req, res) => {
   res.json({
     success: true,
