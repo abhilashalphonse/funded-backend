@@ -7,6 +7,11 @@ import AdminAuditEvent from "../../models/adminAuditEvent.model.js";
 import { requireAdmin } from "../../auth/supabaseAuth.js";
 import { getFunnelSummary } from "../services/analytics.service.js";
 import env from "../../config/env.js";
+import boss from "../../config/boss.js";
+import { getCustomerOwnershipIds } from "../../customers/customer.service.js";
+import { getTradingConnector } from "../../connectors/trading/registry.js";
+import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
+import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -34,6 +39,49 @@ async function writeAudit(req, event) {
     ip: req.ip || null,
     ...event,
   });
+}
+
+const TRADABLE_ACCOUNT_STATUSES = new Set(["ACTIVE", "PHASE_2", "FUNDED"]);
+
+function platformRecord(account) {
+  return (account.platformAccounts || []).find(item =>
+    String(item.platformAccountId || "") === String(account.platformAccountId || "")
+  ) || null;
+}
+
+async function pauseForCustomerBlock(account, reason) {
+  if (!account.platformAccountId) return;
+  const connector = getTradingConnector(account.platform);
+  await connector.pauseAccount({
+    externalRef: account.accountId,
+    platformAccountId: account.platformAccountId,
+    reason,
+    cancelPending: true,
+  });
+  const record = platformRecord(account);
+  if (record) record.status = "PAUSED";
+  account.enabled = false;
+  account.customerAccessBlocked = true;
+  await account.save();
+}
+
+async function resumeAfterCustomerBlock(account, reason) {
+  if (!account.platformAccountId) {
+    account.customerAccessBlocked = false;
+    await account.save();
+    return;
+  }
+  const connector = getTradingConnector(account.platform);
+  await connector.resumeAccount({
+    externalRef: account.accountId,
+    platformAccountId: account.platformAccountId,
+    reason,
+  });
+  const record = platformRecord(account);
+  if (record) record.status = "ACTIVE";
+  account.enabled = TRADABLE_ACCOUNT_STATUSES.has(account.status);
+  account.customerAccessBlocked = false;
+  await account.save();
 }
 
 router.get("/me", (req, res) => {
@@ -193,10 +241,61 @@ router.post("/users/:customerId/status", async (req, res, next) => {
     const customer = await Customer.findOne({ customerId: req.params.customerId });
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found." });
     if (customer.status === "MERGED") return res.status(409).json({ success: false, message: "Merged customer records cannot be modified." });
+
     const before = { status: customer.status };
+    const ownershipIds = await getCustomerOwnershipIds(customer);
     customer.status = status;
     await customer.save();
-    await writeAudit(req, { action: "CUSTOMER_STATUS_CHANGED", entityType: "CUSTOMER", entityId: customer.customerId, reason, before, after: { status } });
+
+    const platformErrors = [];
+    if (status === "BLOCKED") {
+      const accounts = await Account.find({
+        customerId: { $in: ownershipIds },
+        status: { $in: [...TRADABLE_ACCOUNT_STATUSES] },
+        enabled: true,
+        customerAccessBlocked: { $ne: true },
+      });
+      for (const account of accounts) {
+        try {
+          await pauseForCustomerBlock(account, "ACG_FUNDED_CUSTOMER_BLOCKED");
+        } catch (error) {
+          platformErrors.push({ accountId: account.accountId, message: String(error?.message || error) });
+        }
+      }
+    } else {
+      const accounts = await Account.find({
+        customerId: { $in: ownershipIds },
+        customerAccessBlocked: true,
+      });
+      for (const account of accounts) {
+        try {
+          await resumeAfterCustomerBlock(account, "ACG_FUNDED_CUSTOMER_REACTIVATED");
+        } catch (error) {
+          platformErrors.push({ accountId: account.accountId, message: String(error?.message || error) });
+        }
+      }
+    }
+
+    await writeAudit(req, {
+      action: "CUSTOMER_STATUS_CHANGED",
+      entityType: "CUSTOMER",
+      entityId: customer.customerId,
+      reason,
+      before,
+      after: { status, platformErrors },
+    });
+
+    if (platformErrors.length) {
+      return res.status(502).json({
+        success: false,
+        message: status === "BLOCKED"
+          ? "Customer was blocked, but one or more trading accounts could not be paused. Retry the block action after ACG Trader recovers."
+          : "Customer was reactivated, but one or more trading accounts could not be resumed.",
+        code: "TRADING_PLATFORM_CONTROL_PARTIAL_FAILURE",
+        data: { customer, platformErrors },
+      });
+    }
+
     res.json({ success: true, data: customer });
   } catch (error) { next(error); }
 });
@@ -240,19 +339,70 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
   try {
     const action = String(req.body?.action || "").toUpperCase();
     const reason = String(req.body?.reason || "").trim();
-    if (!["LOCK", "UNLOCK", "CLOSE"].includes(action)) return res.status(400).json({ success: false, message: "Unsupported challenge action." });
+    if (!["LOCK", "UNLOCK", "CLOSE", "APPROVE_FUNDED"].includes(action)) return res.status(400).json({ success: false, message: "Unsupported challenge action." });
     if (!reason) return res.status(400).json({ success: false, message: "A reason is required." });
     const account = await Account.findOne({ accountId: req.params.accountId });
     if (!account) return res.status(404).json({ success: false, message: "Challenge not found." });
-    const before = { status: account.status, enabled: account.enabled };
-    if (action === "LOCK") { account.status = "LOCKED"; account.enabled = false; }
+    const before = { status: account.status, enabled: account.enabled, platformAccountId: account.platformAccountId };
+    const connector = getTradingConnector(account.platform);
+
+    if (action === "LOCK") {
+      if (!TRADABLE_ACCOUNT_STATUSES.has(account.status)) {
+        return res.status(409).json({ success: false, message: "Only active, Phase 2, or funded accounts can be manually locked." });
+      }
+      if (!account.platformAccountId) return res.status(409).json({ success: false, message: "Trading platform account is not provisioned." });
+      await connector.pauseAccount({ externalRef: account.accountId, platformAccountId: account.platformAccountId, reason: `ACG_FUNDED_ADMIN_LOCK: ${reason}`, cancelPending: true });
+      const record = platformRecord(account);
+      if (record) record.status = "PAUSED";
+      account.statusBeforeLock = account.status;
+      account.status = "LOCKED";
+      account.enabled = false;
+    }
+
     if (action === "UNLOCK") {
       if (account.status !== "LOCKED") return res.status(409).json({ success: false, message: "Only locked accounts can be unlocked." });
-      account.status = "ACTIVE"; account.enabled = true;
+      const customer = account.customerId ? await Customer.findOne({ customerId: account.customerId }).lean() : null;
+      if (customer?.status === "BLOCKED") return res.status(409).json({ success: false, message: "Reactivate the customer before unlocking this trading account." });
+      if (!account.platformAccountId) return res.status(409).json({ success: false, message: "Trading platform account is not provisioned." });
+      await connector.resumeAccount({ externalRef: account.accountId, platformAccountId: account.platformAccountId, reason: `ACG_FUNDED_ADMIN_UNLOCK: ${reason}` });
+      const record = platformRecord(account);
+      if (record) record.status = "ACTIVE";
+      account.status = TRADABLE_ACCOUNT_STATUSES.has(account.statusBeforeLock) ? account.statusBeforeLock : "ACTIVE";
+      account.statusBeforeLock = null;
+      account.enabled = true;
     }
-    if (action === "CLOSE") { account.status = "CLOSED"; account.enabled = false; }
+
+    if (action === "CLOSE") {
+      if (account.status === "CLOSED") return res.status(409).json({ success: false, message: "Account is already closed." });
+      if (account.platformAccountId) {
+        await connector.closeAccount({ externalRef: account.accountId, platformAccountId: account.platformAccountId, reason: `ACG_FUNDED_ADMIN_CLOSE: ${reason}`, liquidate: true });
+        const record = platformRecord(account);
+        if (record) record.status = "CLOSED";
+      }
+      account.status = "CLOSED";
+      account.statusBeforeLock = null;
+      account.enabled = false;
+    }
+
+    if (action === "APPROVE_FUNDED") {
+      if (account.status !== "FUNDED_REVIEW") return res.status(409).json({ success: false, message: "Only accounts in funded review can be approved." });
+      const customer = account.customerId ? await Customer.findOne({ customerId: account.customerId }).lean() : null;
+      if (customer?.status === "BLOCKED") return res.status(409).json({ success: false, message: "Blocked customers cannot be approved for a funded account." });
+      await provisionTradingAccount(account, { phase: Number(account.currentPhase || 1), accountType: "FUNDED" });
+      account.status = "FUNDED";
+      account.enabled = true;
+      account.fundedApprovedAt = new Date();
+    }
+
     await account.save();
-    await writeAudit(req, { action: "CHALLENGE_" + action, entityType: "ACCOUNT", entityId: account.accountId, reason, before, after: { status: account.status, enabled: account.enabled } });
+    await writeAudit(req, {
+      action: "CHALLENGE_" + action,
+      entityType: "ACCOUNT",
+      entityId: account.accountId,
+      reason,
+      before,
+      after: { status: account.status, enabled: account.enabled, platformAccountId: account.platformAccountId, fundedApprovedAt: account.fundedApprovedAt || null },
+    });
     res.json({ success: true, data: account });
   } catch (error) { next(error); }
 });
@@ -279,6 +429,32 @@ async function listPayments(req, res, next) {
 
 router.get("/orders", listPayments);
 router.get("/payments", listPayments);
+
+router.post("/payments/:paymentId/retry-activation", async (req, res, next) => {
+  try {
+    const reason = String(req.body?.reason || "").trim();
+    if (!reason) return res.status(400).json({ success: false, message: "A reason is required." });
+    const payment = await Payment.findById(req.params.paymentId);
+    if (!payment) return res.status(404).json({ success: false, message: "Payment not found." });
+    if (payment.status !== "PAID") return res.status(409).json({ success: false, message: "Only paid payments can retry account activation." });
+    if (payment.accountId || payment.activation?.status === "ACTIVE") return res.status(409).json({ success: false, message: "This payment is already activated." });
+    if (payment.activation?.status === "PENDING") {
+      const attemptedAt = payment.activation?.attemptedAt ? new Date(payment.activation.attemptedAt).getTime() : Date.now();
+      if (Date.now() - attemptedAt < 5 * 60 * 1000) return res.status(409).json({ success: false, message: "Activation is still in progress. Retry only if it remains pending for more than five minutes." });
+    }
+    await Payment.updateOne({ _id: payment._id }, { $set: { "activation.status": "FAILED", "activation.error": "Manual retry requested by admin." } });
+    const jobId = await enqueuePaymentActivation(boss, payment._id);
+    await writeAudit(req, {
+      action: "PAYMENT_ACTIVATION_RETRY",
+      entityType: "PAYMENT",
+      entityId: String(payment._id),
+      reason,
+      before: { activation: payment.activation },
+      after: { queued: true, jobId },
+    });
+    res.status(202).json({ success: true, data: { paymentId: payment._id, jobId } });
+  } catch (error) { next(error); }
+});
 
 router.get("/support", async (req, res, next) => {
   try {

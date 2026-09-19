@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 const PlatformAccountSchema = new mongoose.Schema({
     phase: { type: Number, required: true },
+    accountType: { type: String, enum: ["DEMO", "CHALLENGE", "FUNDED"], default: "CHALLENGE" },
     externalRef: { type: String, required: true },
     platformAccountId: { type: String, required: true },
     accountCode: { type: String, default: null },
@@ -77,6 +78,9 @@ const AccountSchema = new mongoose.Schema(
             enum: ["NEW", "ACTIVE", "BREACHED", "LOCKED", "PASSED", "PHASE_2", "FUNDED_REVIEW", "FUNDED", "CLOSED"]
         },
         enabled: { type: Boolean, default: true },
+        customerAccessBlocked: { type: Boolean, default: false },
+        statusBeforeLock: { type: String, default: null },
+        fundedApprovedAt: { type: Date, default: null },
 
         platform: { type: String, default: () => process.env.TRADING_PROVIDER || "simulator" },
         platformAccountId: { type: String, sparse: true },

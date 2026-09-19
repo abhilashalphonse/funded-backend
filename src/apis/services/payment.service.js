@@ -7,6 +7,8 @@ import { configuredTradingProvider } from "../../connectors/trading/registry.js"
 import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
 import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customers/customer.service.js";
+import boss from "../../config/boss.js";
+import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
 const allowedMethods = { BTC: "btc", USDT_TRX: "usdttrc20" };
@@ -34,8 +36,14 @@ async function nowPayments(path, body) {
 export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod, customer = null, analyticsSessionId, attribution = {} }) {
   const normalizedEmail = normalizeCustomerEmail(email);
   const fundedCustomer = customer?.customerId
-    ? { customerId: customer.customerId }
+    ? { customerId: customer.customerId, status: customer.status }
     : await getOrCreateGuestCustomer(normalizedEmail);
+  if (String(fundedCustomer.status || "").toUpperCase() === "BLOCKED") {
+    const error = new Error("This customer account is blocked.");
+    error.status = 403;
+    error.code = "CUSTOMER_BLOCKED";
+    throw error;
+  }
   const stableCustomerId = String(fundedCustomer.customerId);
   if (!allowedMethods[paymentMethod]) throw new Error("Unsupported crypto payment method.");
   if (!process.env.NOWPAYMENTS_IPN_URL) throw new Error("NOWPAYMENTS_IPN_URL is not configured.");
@@ -143,7 +151,7 @@ function buildAccountRules(definition) {
   };
 }
 
-async function activatePaidPayment(payment) {
+export async function activatePaidPayment(payment) {
   if (payment.accountId) {
     if (payment.activation?.status !== "ACTIVE") {
       await Payment.updateOne(
@@ -300,25 +308,7 @@ export async function processIpn(payload, signature) {
       properties: { amount: payment.amount, currency: payment.currency },
     }, { paymentId: String(payment._id) }).catch(() => {});
 
-    const accountId = await activatePaidPayment(payment);
-    if (accountId) {
-      await recordAnalyticsEventOnce({
-        event: "challenge_activated",
-        sessionId: payment.metadata?.analyticsSessionId || `payment:${payment._id}`,
-        email: payment.email,
-        paymentId: String(payment._id),
-        accountId,
-        source: "server",
-        attribution: payment.metadata?.attribution || {},
-        properties: {
-          amount: payment.amount,
-          currency: payment.currency,
-          accountSize: payment.challengeDefinition?.accountSize,
-          step: payment.challengeDefinition?.step,
-          profitSplit: payment.commercialConfig?.profitSplit,
-        },
-      }, { paymentId: String(payment._id), accountId }).catch(() => {});
-    }
+    await enqueuePaymentActivation(boss, payment._id);
   }
   return payment;
 }

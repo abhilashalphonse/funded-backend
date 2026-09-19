@@ -36,6 +36,7 @@ async function resolveCustomer(token) {
     ...authCustomer,
     customerId: fundedCustomer.customerId,
     customerIds,
+    status: fundedCustomer.status,
   };
 }
 
@@ -45,6 +46,9 @@ export async function requireCustomer(req, res, next) {
     if (!token) return res.status(401).json({ success: false, message: "Authentication required." });
     const customer = await resolveCustomer(token);
     if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session." });
+    if (String(customer.status || "").toUpperCase() === "BLOCKED") {
+      return res.status(403).json({ success: false, message: "This customer account is blocked.", code: "CUSTOMER_BLOCKED" });
+    }
     req.customer = customer;
     next();
   } catch (error) {
@@ -83,6 +87,9 @@ export async function optionalCustomer(req, res, next) {
     if (!token) return next();
     const customer = await resolveCustomer(token);
     if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session." });
+    if (String(customer.status || "").toUpperCase() === "BLOCKED") {
+      return res.status(403).json({ success: false, message: "This customer account is blocked.", code: "CUSTOMER_BLOCKED" });
+    }
     req.customer = customer;
     next();
   } catch (error) {

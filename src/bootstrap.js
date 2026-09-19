@@ -16,6 +16,7 @@ export async function bootstrap() {
   await boss.createQueue("incoming-events");
   await boss.createQueue("state-events");
   await boss.createQueue("account-commands");
+  await boss.createQueue("payment-activation");
 
   await pool.query("SELECT 1");
 }

@@ -177,3 +177,15 @@ test("10 new UTC-day baseline is evaluated independently from prior-day loss", (
   assert.equal(rules.dailyLossBreached, false);
   assert.equal(rules.maxLossBreached, false);
 });
+
+test("11 manually locked account remains terminal even if target conditions are met", () => {
+  const a = account({
+    status: "LOCKED",
+    projections: { profit: 12000, dailyLoss: 0, totalLoss: 0, tradingDays: 5 },
+  });
+  assert.deepEqual(resolveDecision(a, evaluateRules(a)), {
+    shouldUpdate: false,
+    newStatus: "LOCKED",
+    command: null,
+  });
+});

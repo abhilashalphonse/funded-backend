@@ -17,7 +17,7 @@ import {
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
-const roundCurrency = (v) => Math.round((v + Number.EPSILON) * 100) / 100;
+const roundCurrency = (v) => Math.round(v);
 
 function adjustment(table, field, value) {
   if (!table || !Object.prototype.hasOwnProperty.call(table, value) || !Number.isFinite(table[value])) {

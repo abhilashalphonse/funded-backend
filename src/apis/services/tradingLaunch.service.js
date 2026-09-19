@@ -35,9 +35,16 @@ export async function createCustomerTradingLaunch(customer, accountId) {
   }
 
   const currentPhase = Number(account.currentPhase || 1);
-  const currentPlatformAccount = (account.platformAccounts || []).find(
-    item => Number(item.phase) === currentPhase && item.status === "ACTIVE"
-  );
+  const currentPlatformAccount = account.status === "FUNDED"
+    ? (account.platformAccounts || []).find(
+        item => String(item.accountType || "").toUpperCase() === "FUNDED" && item.status === "ACTIVE"
+      )
+    : (account.platformAccounts || []).find(
+        item =>
+          Number(item.phase) === currentPhase
+          && String(item.accountType || "CHALLENGE").toUpperCase() !== "FUNDED"
+          && item.status === "ACTIVE"
+      );
 
   const platformAccountIds = [];
   if (currentPlatformAccount?.platformAccountId) {

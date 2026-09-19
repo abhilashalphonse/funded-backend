@@ -60,7 +60,7 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
     }
   }
 
-  if (["BREACHED", "CLOSED", "FUNDED"].includes(account.status)) {
+  if (["BREACHED", "LOCKED", "CLOSED", "FUNDED"].includes(account.status)) {
     account.lastProcessedEventId = event.eventId;
     await account.save();
     return;

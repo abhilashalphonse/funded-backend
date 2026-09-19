@@ -3,8 +3,11 @@ import { getTradingConnector } from "./registry.js";
 export async function provisionTradingAccount(account, { phase = account.currentPhase || 1, accountType = "CHALLENGE" } = {}) {
   const provider = account.platform;
   const connector = getTradingConnector(provider);
-  const externalRef = `${account.accountId}:phase:${phase}`;
-  const riskPolicy = buildRiskPolicy(account, phase);
+  const normalizedAccountType = String(accountType || "CHALLENGE").toUpperCase();
+  const externalRef = normalizedAccountType === "FUNDED"
+    ? `${account.accountId}:funded:${phase}`
+    : `${account.accountId}:phase:${phase}`;
+  const riskPolicy = buildRiskPolicy(account, phase, { includeProfitTarget: normalizedAccountType !== "FUNDED" });
 
   account.provisioning = { status: "PENDING", error: null, updatedAt: new Date() };
   await account.save();
@@ -13,7 +16,7 @@ export async function provisionTradingAccount(account, { phase = account.current
     const result = await connector.provisionAccount({
       externalRef,
       ownerExternalRef: account.ownerExternalRef,
-      accountType,
+      accountType: normalizedAccountType,
       currency: "USD",
       leverage: account.leverage || 100,
       initialBalance: account.initialDeposit || account.accountSize,
@@ -23,11 +26,13 @@ export async function provisionTradingAccount(account, { phase = account.current
         fundedAccountId: account.accountId,
         phase: Number(phase),
         challengeType: account.challengeType,
+        accountType: normalizedAccountType,
       },
     });
 
     const record = {
       phase: Number(phase),
+      accountType: normalizedAccountType,
       externalRef,
       platformAccountId: String(result.platformAccountId),
       accountCode: result.accountCode || null,
@@ -36,7 +41,10 @@ export async function provisionTradingAccount(account, { phase = account.current
       provisionedAt: new Date(),
     };
 
-    const existingIndex = account.platformAccounts.findIndex(item => Number(item.phase) === Number(phase));
+    const existingIndex = account.platformAccounts.findIndex(item =>
+      Number(item.phase) === Number(phase)
+      && String(item.accountType || "CHALLENGE").toUpperCase() === normalizedAccountType
+    );
     if (existingIndex >= 0) account.platformAccounts.splice(existingIndex, 1, record);
     else account.platformAccounts.push(record);
 
@@ -58,13 +66,13 @@ export async function provisionTradingAccount(account, { phase = account.current
   }
 }
 
-export function buildRiskPolicy(account, phase = account.currentPhase || 1) {
+export function buildRiskPolicy(account, phase = account.currentPhase || 1, { includeProfitTarget = true } = {}) {
   const balance = Number(account.initialDeposit || account.accountSize || 0);
   const phaseRule = account.rules?.phases?.find(item => Number(item.phase) === Number(phase));
   return {
     dailyLoss: { limit: percentAmount(balance, account.rules?.dailyDrawdown), reference: "DAILY_START_EQUITY" },
     maxLoss: { limit: percentAmount(balance, account.rules?.maxDrawdown), reference: "INITIAL_BALANCE" },
-    profitTarget: percentAmount(balance, phaseRule?.profitTarget),
+    ...(includeProfitTarget ? { profitTarget: percentAmount(balance, phaseRule?.profitTarget) } : {}),
     breachAction: "LIQUIDATE_AND_LOCK",
   };
 }

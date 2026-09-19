@@ -47,3 +47,17 @@ test("lower profit split costs less and higher profit split costs more", () => {
   assert.ok(price60 < price80);
   assert.ok(price80 < price90);
 });
+
+test("backend final price uses the same whole-euro rounding contract as checkout", () => {
+  const oneStep = {
+    step: "1step",
+    accountSize: 50000,
+    rules: {
+      profitTarget: 10,
+      dailyLoss: 3,
+      maxLoss: 6,
+      minTradingDays: 3,
+    },
+  };
+  assert.equal(calculatePrice(oneStep, commercial(90)).finalPrice, 301);
+});
