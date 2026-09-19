@@ -42,6 +42,14 @@ const PaymentSchema = new mongoose.Schema(
   { timestamps: true, versionKey: false }
 );
 
-PaymentSchema.index({ provider: 1, providerPaymentId: 1 }, { unique: true, sparse: true });
+PaymentSchema.index(
+  { provider: 1, providerPaymentId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      providerPaymentId: { $type: "string" },
+    },
+  },
+);
 
 export default mongoose.model("Payment", PaymentSchema);
