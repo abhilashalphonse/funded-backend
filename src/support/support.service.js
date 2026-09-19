@@ -152,11 +152,28 @@ Rules:
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      const error = new Error(`Support AI request failed with HTTP ${response.status}.`);
+      const upstream = payload?.error || {};
+      const error = new Error(
+        `Support AI request failed with HTTP ${response.status}`
+        + (upstream?.code ? ` [${upstream.code}]` : "")
+        + (upstream?.type ? ` ${upstream.type}` : "")
+        + (upstream?.message ? `: ${upstream.message}` : "."),
+      );
       error.status = 502;
+      error.upstreamStatus = response.status;
+      error.upstreamCode = upstream?.code || null;
+      error.upstreamType = upstream?.type || null;
       throw error;
     }
-    return outputText(payload);
+
+    const answer = outputText(payload);
+    if (!answer) {
+      const error = new Error("Support AI returned HTTP 200 but no output text.");
+      error.status = 502;
+      error.upstreamStatus = 200;
+      throw error;
+    }
+    return answer;
   } finally {
     clearTimeout(timeout);
   }
@@ -235,7 +252,14 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
         knowledgeBase,
       });
     } catch (error) {
-      console.error("Support AI error:", error);
+      console.error("Support AI error", {
+        message: error?.message,
+        upstreamStatus: error?.upstreamStatus || null,
+        upstreamCode: error?.upstreamCode || null,
+        upstreamType: error?.upstreamType || null,
+        model: env.OPENAI_SUPPORT_MODEL,
+        apiKeyConfigured: Boolean(env.OPENAI_API_KEY),
+      });
       answer = null;
     }
 
