@@ -380,3 +380,53 @@ export async function getOperationsStatus() {
 
   return { failedProvisioning, staleAccounts, failedPayments, generatedAt: new Date() };
 }
+
+
+export async function setAccountState({ accountId, action, reason, admin, req }) {
+  const allowed = new Set(["LOCK", "UNLOCK", "CLOSE"]);
+  if (!allowed.has(action)) {
+    const error = new Error("Unsupported challenge action.");
+    error.status = 400;
+    throw error;
+  }
+  if (!reason?.trim()) {
+    const error = new Error("A reason is required.");
+    error.status = 400;
+    throw error;
+  }
+
+  const account = await Account.findOne({ accountId });
+  if (!account) {
+    const error = new Error("Challenge account not found.");
+    error.status = 404;
+    throw error;
+  }
+
+  const before = { status: account.status, enabled: account.enabled };
+  if (action === "LOCK") {
+    account.status = "LOCKED";
+    account.enabled = false;
+  } else if (action === "UNLOCK") {
+    account.status = account.currentPhase === 2 ? "PHASE_2" : "ACTIVE";
+    account.enabled = true;
+  } else if (action === "CLOSE") {
+    account.status = "CLOSED";
+    account.enabled = false;
+  }
+  await account.save();
+
+  await AdminAudit.create({
+    adminUserId: admin.userId,
+    adminEmail: admin.email,
+    action: `CHALLENGE_${action}`,
+    entityType: "ACCOUNT",
+    entityId: accountId,
+    reason: reason.trim(),
+    before,
+    after: { status: account.status, enabled: account.enabled },
+    requestId: req.get("x-request-id") || null,
+    ip: req.ip || null,
+  });
+
+  return publicAccount(account.toObject());
+}
