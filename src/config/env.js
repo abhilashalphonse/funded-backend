@@ -59,6 +59,12 @@ const env = Object.freeze({
   SUPABASE_URL: validUrl("SUPABASE_URL", required("SUPABASE_URL")),
   SUPABASE_ANON_KEY: required("SUPABASE_ANON_KEY"),
 
+  // AI support. Optional so deployments remain healthy while the key is being provisioned;
+  // the support service fails closed to human escalation when it is absent.
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  OPENAI_SUPPORT_MODEL: String(process.env.OPENAI_SUPPORT_MODEL || "gpt-5.6-luna").trim(),
+  OPENAI_SUPPORT_TIMEOUT_MS: positiveInt("OPENAI_SUPPORT_TIMEOUT_MS", 12000),
+
   TRADING_PROVIDER: tradingProvider,
   ACG_TRADER_BASE_URL: validUrl("ACG_TRADER_BASE_URL", tradingProvider === "acg-trader" ? required("ACG_TRADER_BASE_URL") : process.env.ACG_TRADER_BASE_URL),
   ACG_TRADER_CLIENT_ID: tradingProvider === "acg-trader" ? required("ACG_TRADER_CLIENT_ID") : process.env.ACG_TRADER_CLIENT_ID,
