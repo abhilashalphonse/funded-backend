@@ -19,10 +19,20 @@ export class ACGTraderClient {
   breachAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/breach`, { method: "POST", body: options }); }
   disableAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/disable`, { method: "POST", body: options }); }
   closeAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/close`, { method: "POST", body: options }); }
-  createFederationTicket(command) { return this.request("/v1/internal/auth/federation/tickets", { method: "POST", body: command }); }
+  createFederationTicket(command) { return this.requestWithTransientRetry("/v1/internal/auth/federation/tickets", { method: "POST", body: command }); }
   createNativeCredential(accountId, command = {}) { return this.request(`/v1/internal/auth/accounts/${encodeURIComponent(accountId)}/credentials`, { method: "POST", body: command }); }
   operationsHealth() { return this.request("/v1/internal/operations/health"); }
   healthReady() { return this.publicRequest("/health/ready"); }
+
+  async requestWithTransientRetry(path, options = {}) {
+    try {
+      return await this.request(path, options);
+    } catch (error) {
+      if (!isTransientProviderError(error)) throw error;
+      await delay(250);
+      return this.request(path, options);
+    }
+  }
 
   async publicRequest(path) {
     const controller = new AbortController();
@@ -92,4 +102,16 @@ function responseError(response, payload) {
   error.requestId = remote.requestId;
   error.provider = "acg-trader";
   return error;
+}
+
+
+function isTransientProviderError(error) {
+  if (!error) return false;
+  if ([502, 503, 504].includes(Number(error.status))) return true;
+  return ["ECONNRESET", "ECONNREFUSED", "EPIPE", "ENOTFOUND", "EAI_AGAIN"].includes(error.code)
+    || error instanceof TypeError;
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
