@@ -7,7 +7,7 @@ export async function enqueueTradingCredentialEmail(boss, credentialSecretId, op
 
   return boss.send(
     TRADING_CREDENTIAL_EMAIL_QUEUE,
-    { credentialSecretId: id, queuedAt: new Date().toISOString() },
+    { credentialSecretId: id, force: Boolean(options.force), queuedAt: new Date().toISOString() },
     {
       retryLimit: options.retryLimit ?? 10,
       retryBackoff: true,
