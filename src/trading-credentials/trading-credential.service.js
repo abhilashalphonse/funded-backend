@@ -102,12 +102,12 @@ async function resolveDeliveryEmail(account, explicitEmail = null) {
   return null;
 }
 
-export async function ensureTradingCredential(account, { email = null, rotate = false, queueEmail = true } = {}) {
+export async function ensureTradingCredential(account, { email = null, rotate = false, queueEmail = true, platformAccountId: platformAccountIdOverride = null } = {}) {
   if (!account || account.platform !== "acg-trader") return { skipped: true, reason: "provider" };
   if (!tradingCredentialsConfigured()) return { skipped: true, reason: "not-configured" };
 
   const platform = currentPlatformAccount(account);
-  const platformAccountId = String(platform?.platformAccountId || account.platformAccountId || "").trim();
+  const platformAccountId = String(platformAccountIdOverride || platform?.platformAccountId || account.platformAccountId || "").trim();
   if (!platformAccountId) return { skipped: true, reason: "platform-account-missing" };
 
   const existing = await TradingCredentialSecret.findOne({ platformAccountId });
@@ -172,7 +172,8 @@ export async function ensureTradingCredential(account, { email = null, rotate = 
   if (rotate) record.rotatedAt = new Date();
   await record.save();
 
-  platform && (platform.login = String(result.login));
+  const matchingPlatformRecord = (account.platformAccounts || []).find(item => String(item.platformAccountId || "") === platformAccountId);
+  if (matchingPlatformRecord) matchingPlatformRecord.login = String(result.login);
   account.platformLogin = String(result.login);
   if (/^\d+$/.test(String(result.login))) account.login = Number(result.login);
   await account.save();
