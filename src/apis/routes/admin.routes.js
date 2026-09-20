@@ -390,7 +390,7 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
       const customer = account.customerId ? await Customer.findOne({ customerId: account.customerId }).lean() : null;
       if (customer?.status === "BLOCKED") return res.status(409).json({ success: false, message: "Blocked customers cannot be approved for a funded account." });
       await provisionTradingAccount(account, { phase: Number(account.currentPhase || 1), accountType: "FUNDED" });
-      await ensureTradingCredential(account, { queueEmail: true });
+      await ensureTradingCredential(account, { queueEmail: true, platformAccountId: account.platformAccountId });
       account.status = "FUNDED";
       account.enabled = true;
       account.fundedApprovedAt = new Date();
