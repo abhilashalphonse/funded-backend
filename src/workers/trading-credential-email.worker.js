@@ -55,6 +55,7 @@ export class TradingCredentialEmailWorker {
         accountMode: account.accountMode,
         challengeType: account.challengeType,
         leverage: account.leverage || 100,
+        tenantId: process.env.ACG_TRADER_TENANT || "acg-funded",
       });
       credential.delivery.status = "SENT";
       credential.delivery.sentAt = new Date();
