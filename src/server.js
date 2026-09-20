@@ -4,6 +4,7 @@ import EventIngestionWorker from "./workers/event-ingestion.worker.js";
 import StateEngineWorker from "./workers/state-engine-worker.js";
 import { CommandWorker } from "./workers/command-worker.js";
 import { PaymentActivationWorker } from "./workers/payment-activation.worker.js";
+import { TradingCredentialEmailWorker } from "./workers/trading-credential-email.worker.js";
 import boss from "./config/boss.js";
 import EventService from "./apis/services/event.service.js";
 import simulatorEngine from "./simulator/engine.js";
@@ -20,11 +21,13 @@ async function start() {
     const stateEngine = new StateEngineWorker(boss); 
     const commandWorker = new CommandWorker(boss);
     const paymentActivationWorker = new PaymentActivationWorker(boss);
+    const tradingCredentialEmailWorker = new TradingCredentialEmailWorker(boss);
 
     await ingestion.start(); 
     await stateEngine.start();
     await commandWorker.start();
     await paymentActivationWorker.start();
+    await tradingCredentialEmailWorker.start();
 
     simulatorEngine.on("snapshot", async (event) => {
       try {
