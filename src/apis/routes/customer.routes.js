@@ -12,6 +12,7 @@ import { getTradingReadiness } from "../services/tradingReadiness.service.js";
 import { recordAnalyticsEvent } from "../services/analytics.service.js";
 import { completeAcademyLesson, getAcademyProgress, viewAcademyLesson } from "../services/academy.service.js";
 import { getCustomerNewsCalendar } from "../services/newsCalendar.service.js";
+import { getCustomerTradingCredential, rotateCustomerTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 
 const router = express.Router();
 
@@ -70,6 +71,30 @@ router.get("/trial-readiness", async (_req, res, next) => {
   try {
     const data = await getTradingReadiness();
     res.status(data.ready ? 200 : 503).json({ success: data.ready, data, message: data.error || undefined });
+  } catch (error) { next(error); }
+});
+
+router.get("/accounts/:accountId/trading-credentials", async (req, res, next) => {
+  try {
+    const data = await getCustomerTradingCredential(req.customer, req.params.accountId, { reveal: false });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/accounts/:accountId/trading-credentials/reveal", async (req, res, next) => {
+  try {
+    const data = await getCustomerTradingCredential(req.customer, req.params.accountId, { reveal: true });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/accounts/:accountId/trading-credentials/reset", async (req, res, next) => {
+  try {
+    const data = await rotateCustomerTradingCredential(req.customer, req.params.accountId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
   } catch (error) { next(error); }
 });
 
