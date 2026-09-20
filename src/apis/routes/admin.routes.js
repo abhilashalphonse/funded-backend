@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { Router } from "express";
 import Customer from "../../customers/customer.model.js";
 import Account from "../../accounts/account.model.js";
@@ -13,6 +14,7 @@ import { getTradingConnector } from "../../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
+import { sendSupportEmail, replySubject } from "../../email/resendSupport.service.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -461,12 +463,108 @@ router.post("/payments/:paymentId/retry-activation", async (req, res, next) => {
 router.get("/support", async (req, res, next) => {
   try {
     const { page, limit, skip } = pageOptions(req.query);
-    const filter = req.query.status ? { status: String(req.query.status).toUpperCase() } : {};
+    const q = String(req.query.q || "").trim();
+    const filter = {
+      ...(req.query.status ? { status: String(req.query.status).toUpperCase() } : {}),
+      ...(req.query.channel ? { channel: String(req.query.channel).toUpperCase() } : {}),
+    };
+    if (q) {
+      const rx = new RegExp(escapeRegex(q), "i");
+      filter.$or = [
+        { conversationId: rx },
+        { customerId: rx },
+        { category: rx },
+        { "email.customerEmail": rx },
+        { "email.subject": rx },
+      ];
+    }
     const [rows, total] = await Promise.all([
       SupportConversation.find(filter).sort({ lastMessageAt: -1 }).skip(skip).limit(limit).lean(),
       SupportConversation.countDocuments(filter),
     ]);
     res.json({ success: true, data: { rows, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } } });
+  } catch (error) { next(error); }
+});
+
+router.get("/support/:conversationId", async (req, res, next) => {
+  try {
+    const conversation = await SupportConversation.findOne({ conversationId: req.params.conversationId }).lean();
+    if (!conversation) return res.status(404).json({ success: false, message: "Support case not found." });
+    const customer = conversation.customerId
+      ? await Customer.findOne({ customerId: conversation.customerId }).select("customerId primaryEmail status").lean()
+      : null;
+    res.json({ success: true, data: { conversation, customer } });
+  } catch (error) { next(error); }
+});
+
+router.post("/support/:conversationId/reply", async (req, res, next) => {
+  try {
+    const message = String(req.body?.message || "").trim();
+    if (!message) return res.status(400).json({ success: false, message: "A reply message is required." });
+    if (message.length > 3000) return res.status(400).json({ success: false, message: "Support replies are limited to 3000 characters." });
+
+    const conversation = await SupportConversation.findOne({ conversationId: req.params.conversationId });
+    if (!conversation) return res.status(404).json({ success: false, message: "Support case not found." });
+
+    let sent = null;
+    if (conversation.channel === "EMAIL") {
+      const recipient = conversation.email?.customerEmail;
+      if (!recipient) return res.status(409).json({ success: false, message: "This email case has no reply address." });
+      sent = await sendSupportEmail({
+        to: recipient,
+        subject: replySubject(conversation.email?.subject || "ACG Funded Support"),
+        text: message,
+        inReplyTo: conversation.email?.lastInboundMessageId || undefined,
+        references: conversation.email?.lastInboundMessageId || undefined,
+        replyTo: conversation.email?.inboundAddress || undefined,
+        idempotencyKey: `support-human-reply/${conversation.conversationId}/${Date.now()}`,
+      });
+      if (conversation.email) conversation.email.lastOutboundResendId = sent?.id || null;
+    }
+
+    conversation.messages.push({
+      messageId: crypto.randomUUID(),
+      role: "assistant",
+      content: message,
+      source: "human",
+      createdAt: new Date(),
+    });
+    conversation.status = "ESCALATED";
+    conversation.handoffReason = "HUMAN_REPLIED";
+    conversation.lastMessageAt = new Date();
+    await conversation.save();
+
+    await writeAudit(req, {
+      action: "SUPPORT_REPLY",
+      entityType: "SUPPORT_CONVERSATION",
+      entityId: conversation.conversationId,
+      reason: "Human support reply",
+      before: null,
+      after: { channel: conversation.channel, status: conversation.status, resendEmailId: sent?.id || null },
+    });
+
+    res.json({ success: true, data: { conversationId: conversation.conversationId, status: conversation.status, sentEmailId: sent?.id || null } });
+  } catch (error) { next(error); }
+});
+
+router.post("/support/:conversationId/close", async (req, res, next) => {
+  try {
+    const conversation = await SupportConversation.findOne({ conversationId: req.params.conversationId });
+    if (!conversation) return res.status(404).json({ success: false, message: "Support case not found." });
+    const before = { status: conversation.status, handoffReason: conversation.handoffReason };
+    conversation.status = "CLOSED";
+    conversation.handoffReason = "RESOLVED_BY_HUMAN";
+    conversation.lastMessageAt = new Date();
+    await conversation.save();
+    await writeAudit(req, {
+      action: "SUPPORT_CLOSE",
+      entityType: "SUPPORT_CONVERSATION",
+      entityId: conversation.conversationId,
+      reason: String(req.body?.reason || "Resolved by human support").slice(0, 240),
+      before,
+      after: { status: conversation.status, handoffReason: conversation.handoffReason },
+    });
+    res.json({ success: true, data: { conversationId: conversation.conversationId, status: conversation.status } });
   } catch (error) { next(error); }
 });
 
