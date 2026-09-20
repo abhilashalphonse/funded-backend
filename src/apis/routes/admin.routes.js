@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import Customer from "../../customers/customer.model.js";
 import Account from "../../accounts/account.model.js";
@@ -523,7 +523,7 @@ router.post("/support/:conversationId/reply", async (req, res, next) => {
     }
 
     conversation.messages.push({
-      messageId: crypto.randomUUID(),
+      messageId: randomUUID(),
       role: "assistant",
       content: message,
       source: "human",
