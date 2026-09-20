@@ -8,6 +8,7 @@ import paymentRoutes from "./apis/routes/payment.routes.js";
 import customerRoutes from "./apis/routes/customer.routes.js";
 import analyticsRoutes from "./apis/routes/analytics.routes.js";
 import supportRoutes from "./apis/routes/support.routes.js";
+import resendWebhookRoutes from "./apis/routes/resendWebhook.routes.js";
 import adminRoutes from "./apis/routes/admin.routes.js";
 import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
@@ -31,6 +32,7 @@ app.use(cors({
   },
   credentials: true,
 }));
+app.use("/api/webhooks/resend", express.raw({ type: "application/json", limit: "256kb" }), resendWebhookRoutes);
 app.use(express.json({ limit: "128kb" }));
 
 app.use("/api", acgTraderWebhookRoutes);
@@ -51,6 +53,7 @@ app.get("/health", (req, res) => res.json({
   customerAuthConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
   adminAccessConfigured: env.ADMIN_EMAILS.length > 0,
   supportAiConfigured: Boolean(env.OPENAI_API_KEY),
+  supportEmailConfigured: Boolean(process.env.RESEND_API_KEY && process.env.RESEND_WEBHOOK_SECRET && (process.env.SUPPORT_EMAIL_FROM || process.env.TRADING_EMAIL_FROM)),
   supportModel: env.OPENAI_SUPPORT_MODEL,
   tradingCredentialVaultConfigured: Boolean(process.env.TRADING_CREDENTIAL_ENCRYPTION_KEY),
   tradingCredentialEmailConfigured: Boolean(process.env.RESEND_API_KEY && process.env.TRADING_EMAIL_FROM),
