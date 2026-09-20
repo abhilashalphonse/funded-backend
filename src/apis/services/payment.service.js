@@ -238,7 +238,7 @@ export async function activatePaidPayment(payment) {
     // Credential delivery is additive to account activation. If the credential
     // feature is not configured yet, the challenge still activates and can be
     // opened through the existing federated ACG Trader launch flow.
-    await ensureTradingCredential(account, { email: claimed.email, queueEmail: true });
+    await ensureTradingCredential(account, { email: claimed.email, queueEmail: true, platformAccountId: account.platformAccountId });
 
     const activatedAt = new Date();
     await Payment.updateOne(
