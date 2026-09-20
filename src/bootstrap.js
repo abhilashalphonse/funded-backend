@@ -17,6 +17,7 @@ export async function bootstrap() {
   await boss.createQueue("state-events");
   await boss.createQueue("account-commands");
   await boss.createQueue("payment-activation");
+  await boss.createQueue("trading-credential-email");
 
   await pool.query("SELECT 1");
 }
