@@ -4,6 +4,7 @@ import simulatorEngine from "../../simulator/engine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { requireTradingReadiness } from "./tradingReadiness.service.js";
+import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 
 function ownerQuery(customer) {
   const customerIds = [...new Set([customer.customerId, ...(customer.customerIds || [])].filter(Boolean))];
@@ -161,6 +162,7 @@ export async function ensureDemoAccount(customer, input = {}) {
     account.status = "ACTIVE";
     account.enabled = true;
     await account.save();
+    await ensureTradingCredential(account, { email: customer.email, queueEmail: true });
     return serializeCustomerAccount(account);
   } catch (error) {
     account.status = "CLOSED";
