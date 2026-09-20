@@ -77,7 +77,7 @@ export class CommandWorker {
         }
 
         await provisionTradingAccount(account, { phase: 2, accountType: "CHALLENGE" });
-        await ensureTradingCredential(account, { queueEmail: true });
+        await ensureTradingCredential(account, { queueEmail: true, platformAccountId: account.platformAccountId });
 
         resetAccountForPhaseTwo(account);
         await account.save();
