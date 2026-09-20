@@ -52,6 +52,8 @@ app.get("/health", (req, res) => res.json({
   adminAccessConfigured: env.ADMIN_EMAILS.length > 0,
   supportAiConfigured: Boolean(env.OPENAI_API_KEY),
   supportModel: env.OPENAI_SUPPORT_MODEL,
+  tradingCredentialVaultConfigured: Boolean(process.env.TRADING_CREDENTIAL_ENCRYPTION_KEY),
+  tradingCredentialEmailConfigured: Boolean(process.env.RESEND_API_KEY && process.env.TRADING_EMAIL_FROM),
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
   localAdminRoutesEnabled: env.ENABLE_LOCAL_ADMIN_ROUTES,
 }));
