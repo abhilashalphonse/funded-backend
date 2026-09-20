@@ -222,6 +222,25 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
   conversation.pageContext = pageContext || conversation.pageContext;
   conversation.lastMessageAt = new Date();
 
+  if (conversation.status === "ESCALATED") {
+    const answer = "Your message has been added to the existing support case. A support specialist will review it; you do not need to repeat the earlier details.";
+    conversation.messages.push({
+      messageId: randomUUID(),
+      role: "assistant",
+      content: answer,
+      source: "fallback",
+      createdAt: new Date(),
+    });
+    await conversation.save();
+    return {
+      conversationId: conversation.conversationId,
+      status: conversation.status,
+      category: conversation.category,
+      escalated: true,
+      answer,
+    };
+  }
+
   const context = await supportContext(customer);
   const knowledgeBase = await retrieveApprovedKnowledge(text, conversation.category, 4);
   const humanReviewRecommended = mustEscalate(text);
