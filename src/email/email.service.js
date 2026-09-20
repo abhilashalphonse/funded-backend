@@ -54,9 +54,7 @@ export async function sendTradingCredentialsEmail({
         <div style="font-size:12px;color:#737373;margin-bottom:5px">Password</div>
         <div style="font-family:monospace;font-size:18px;font-weight:800;margin-bottom:16px">${escapeHtml(password)}</div>
         <div style="font-size:12px;color:#737373;margin-bottom:5px">Leverage</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:16px">1:${Number(leverage || 100)}</div>
-        <div style="font-size:12px;color:#737373;margin-bottom:5px">ACG Trader login URL</div>
-        <div style="font-family:monospace;font-size:14px;font-weight:700;word-break:break-all">${escapeHtml(traderUrl)}</div>
+        <div style="font-size:15px;font-weight:700">1:${Number(leverage || 100)}</div>
       </div>
       ${traderUrl ? `<a href="${escapeHtml(traderUrl)}" style="display:block;text-align:center;margin-top:20px;background:#fff;color:#000;text-decoration:none;font-size:14px;font-weight:800;padding:13px 18px;border-radius:9px">Open ACG Trader</a>` : ""}
       <p style="color:#626262;font-size:11px;line-height:1.5;margin-top:24px">Keep your trading password private. You can reveal or reset it from your authenticated ACG Funded dashboard.</p>
