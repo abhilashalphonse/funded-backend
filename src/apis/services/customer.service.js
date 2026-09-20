@@ -162,7 +162,7 @@ export async function ensureDemoAccount(customer, input = {}) {
     account.status = "ACTIVE";
     account.enabled = true;
     await account.save();
-    await ensureTradingCredential(account, { email: customer.email, queueEmail: true });
+    await ensureTradingCredential(account, { email: customer.email, queueEmail: true, platformAccountId: account.platformAccountId });
     return serializeCustomerAccount(account);
   } catch (error) {
     account.status = "CLOSED";
