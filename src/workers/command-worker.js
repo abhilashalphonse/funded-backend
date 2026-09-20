@@ -2,6 +2,7 @@ import { COMMAND_QUEUE_NAME } from "./state-engine/commandQueue.js";
 import Account from "../accounts/account.model.js";
 import { getTradingConnector } from "../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../connectors/trading/account-provisioning.js";
+import { ensureTradingCredential } from "../trading-credentials/trading-credential.service.js";
 
 export class CommandWorker {
   constructor(bossInstance) {
@@ -76,6 +77,7 @@ export class CommandWorker {
         }
 
         await provisionTradingAccount(account, { phase: 2, accountType: "CHALLENGE" });
+        await ensureTradingCredential(account, { queueEmail: true });
 
         resetAccountForPhaseTwo(account);
         await account.save();
