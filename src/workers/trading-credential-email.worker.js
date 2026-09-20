@@ -20,10 +20,11 @@ export class TradingCredentialEmailWorker {
 
   async handle(job) {
     const id = String(job?.data?.credentialSecretId || "").trim();
+    const force = Boolean(job?.data?.force);
     if (!id) throw new Error("trading credential email job is missing credentialSecretId.");
 
     const credential = await TradingCredentialSecret.findById(id);
-    if (!credential || credential.delivery?.status === "SENT") return;
+    if (!credential || (!force && credential.delivery?.status === "SENT")) return;
     if (!credential.deliveryEmail) {
       credential.delivery.status = "FAILED";
       credential.delivery.error = "No delivery email is available.";
