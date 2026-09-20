@@ -18,12 +18,14 @@ export async function sendTradingCredentialsEmail({
   accountMode,
   challengeType,
   leverage = 100,
+  tenantId = null,
 }) {
   const { apiKey, from } = requiredEmailConfig();
   const recipient = String(to || "").trim().toLowerCase();
   if (!recipient) throw new Error("Credential email recipient is required.");
 
   const traderUrl = String(process.env.ACG_TRADER_FRONTEND_URL || "").trim();
+  const tenant = String(tenantId || process.env.ACG_TRADER_TENANT || "acg-funded").trim();
   const isTrial = String(accountMode || "").toUpperCase() === "DEMO";
   const subject = isTrial
     ? "Your ACG Trader free trial is ready"
@@ -45,6 +47,8 @@ export async function sendTradingCredentialsEmail({
         <div style="font-size:15px;font-weight:700;margin-bottom:16px">${escapeHtml(accountId)}</div>
         <div style="font-size:12px;color:#737373;margin-bottom:5px">Program</div>
         <div style="font-size:15px;font-weight:700;margin-bottom:16px">${escapeHtml(label)} · $${Number(accountSize || 0).toLocaleString("en-US")}</div>
+        <div style="font-size:12px;color:#737373;margin-bottom:5px">Tenant ID</div>
+        <div style="font-family:monospace;font-size:15px;font-weight:800;margin-bottom:16px">${escapeHtml(tenant)}</div>
         <div style="font-size:12px;color:#737373;margin-bottom:5px">Trading login</div>
         <div style="font-family:monospace;font-size:18px;font-weight:800;margin-bottom:16px">${escapeHtml(login)}</div>
         <div style="font-size:12px;color:#737373;margin-bottom:5px">Password</div>
