@@ -9,6 +9,7 @@ import { recordAnalyticsEventOnce } from "./analytics.service.js";
 import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customers/customer.service.js";
 import boss from "../../config/boss.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
+import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
 const allowedMethods = { BTC: "btc", USDT_TRX: "usdttrc20" };
@@ -233,6 +234,11 @@ export async function activatePaidPayment(payment) {
     account.status = "ACTIVE";
     account.enabled = true;
     await account.save();
+
+    // Credential delivery is additive to account activation. If the credential
+    // feature is not configured yet, the challenge still activates and can be
+    // opened through the existing federated ACG Trader launch flow.
+    await ensureTradingCredential(account, { email: claimed.email, queueEmail: true });
 
     const activatedAt = new Date();
     await Payment.updateOne(
