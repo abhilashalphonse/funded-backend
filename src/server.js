@@ -9,6 +9,7 @@ import boss from "./config/boss.js";
 import env from "./config/env.js";
 import EventService from "./apis/services/event.service.js";
 import simulatorEngine from "./simulator/engine.js";
+import pgBossRetention from "./maintenance/pgbossRetention.js";
 
 async function startWorkers() {
   const ingestion = new EventIngestionWorker(boss);
@@ -23,6 +24,7 @@ async function startWorkers() {
   await paymentActivationWorker.start();
   await tradingCredentialEmailWorker.start();
 
+  pgBossRetention.start();
   console.log("ACG Funded workers started");
 }
 

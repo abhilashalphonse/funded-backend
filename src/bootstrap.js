@@ -7,6 +7,7 @@ import pool from "./config/postgres.js";
 import redis from "./config/redis.js";
 import { ensurePaymentProviderIndex } from "./models/payment.model.js";
 import { ensureDefaultKnowledgeBase } from "./support/knowledgeBase.service.js";
+import { PG_BOSS_QUEUE_NAMES, PG_BOSS_QUEUE_POLICIES } from "./config/pgbossQueues.js";
 
 export async function bootstrap() {
   await connectDatabase();
@@ -14,11 +15,18 @@ export async function bootstrap() {
   await ensureDefaultKnowledgeBase();
 
   await boss.start();
-  await boss.createQueue("incoming-events");
-  await boss.createQueue("state-events");
-  await boss.createQueue("account-commands");
-  await boss.createQueue("payment-activation");
-  await boss.createQueue("trading-credential-email");
+
+  // Explicit queue retention is important because pg-boss defaults retain
+  // completed jobs for 7 days and queued/retry jobs for 14 days. Those defaults
+  // are unnecessarily large for ACG's transport-only event queues.
+  for (const queueName of PG_BOSS_QUEUE_NAMES) {
+    const policy = PG_BOSS_QUEUE_POLICIES[queueName];
+    await boss.createQueue(queueName, policy);
+    // createQueue is intentionally idempotent and does not change an existing
+    // queue's options, so updateQueue applies the launch policy to deployments
+    // that already have these queues.
+    await boss.updateQueue(queueName, policy);
+  }
 
   await pool.query("SELECT 1");
 

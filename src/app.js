@@ -18,6 +18,7 @@ import accountSnapshotService from "./apis/services/accountSnapshot.service.js";
 import { COMMAND_QUEUE_NAME } from "./workers/state-engine/commandQueue.js";
 import { configuredTradingProvider } from "./connectors/trading/registry.js";
 import { provisionTradingAccount } from "./connectors/trading/account-provisioning.js";
+import pgBossRetention from "./maintenance/pgbossRetention.js";
 
 const app = express();
 
@@ -52,6 +53,7 @@ app.get("/health", (req, res) => res.json({
   runtimeRole: env.RUNTIME_ROLE,
   tradingProvider: configuredTradingProvider(),
   snapshotPipeline: accountSnapshotService.health(),
+  pgBossRetention: pgBossRetention.health(),
   acgTraderWebhookConfigured: Boolean(env.ACG_TRADER_WEBHOOK_SECRET),
   customerAuthConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
   adminAccessConfigured: env.ADMIN_EMAILS.length > 0,
