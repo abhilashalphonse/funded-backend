@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "backfill:trading-credentials": "node scripts/backfill-trading-credentials.js",
-    "resend:trading-credentials": "node scripts/resend-all-trading-credentials.js"
+    "resend:trading-credentials": "node scripts/resend-all-trading-credentials.js",
+    "maintenance:snapshot-events": "node scripts/cleanup-snapshot-events.js"
   },
   "dependencies": {
     "compression": "^1.8.1",
