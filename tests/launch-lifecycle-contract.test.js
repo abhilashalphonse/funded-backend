@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { evaluateRules } from "../src/workers/state-engine/rules.js";
 import { resolveDecision } from "../src/workers/state-engine/decisions.js";
-import { resetAccountForPhaseTwo, isActivePhaseTwo } from "../src/workers/command-worker.js";
+import { resetAccountForPhaseTwo, isActivePhaseTwo, phaseAccountType } from "../src/workers/command-worker.js";
 import { buildBreachRecord, shouldReplayPendingCommand } from "../src/workers/state-engine/processEvent.js";
 
 function account(overrides = {}) {
@@ -240,3 +240,58 @@ test("13 breach snapshot freezes the triggering valuation and limit", () => {
   assert.equal(breach.actualLoss, 10250);
   assert.equal(breach.breachAmount, 4250);
 });
+
+test("14 one-step free trial completes as PASSED instead of funded review", () => {
+  const a = account({
+    accountMode: "DEMO",
+    challengeType: "ONE_STEP",
+    currentPhase: 1,
+    rules: {
+      dailyDrawdown: 3,
+      maxDrawdown: 6,
+      minimumTradingDays: 5,
+      phases: [{ phase: 1, profitTarget: 10 }],
+    },
+    projections: { profit: 10000, dailyLoss: 0, totalLoss: 0, tradingDays: 5 },
+  });
+
+  assert.deepEqual(resolveDecision(a, evaluateRules(a)), {
+    shouldUpdate: true,
+    newStatus: "PASSED",
+    command: "COMPLETE_TRIAL",
+  });
+});
+
+test("15 two-step free trial Phase 1 stays DEMO and requests Phase 2", () => {
+  const a = account({
+    accountMode: "DEMO",
+    projections: { profit: 10000, dailyLoss: 0, totalLoss: 0, tradingDays: 5 },
+  });
+
+  assert.equal(phaseAccountType(a), "DEMO");
+  assert.deepEqual(resolveDecision(a, evaluateRules(a)), {
+    shouldUpdate: true,
+    newStatus: "PASSED",
+    command: "CREATE_PHASE_2_ACCOUNT",
+  });
+});
+
+test("16 two-step free trial final phase completes instead of funded review", () => {
+  const a = account({
+    accountMode: "DEMO",
+    currentPhase: 2,
+    status: "PHASE_2",
+    projections: { profit: 8000, dailyLoss: 0, totalLoss: 0, tradingDays: 5 },
+  });
+
+  assert.deepEqual(resolveDecision(a, evaluateRules(a)), {
+    shouldUpdate: true,
+    newStatus: "PASSED",
+    command: "COMPLETE_TRIAL",
+  });
+});
+
+test("17 paid Phase 2 provisioning remains CHALLENGE", () => {
+  assert.equal(phaseAccountType(account({ accountMode: "CHALLENGE" })), "CHALLENGE");
+});
+
