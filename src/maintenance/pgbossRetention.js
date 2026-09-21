@@ -232,22 +232,23 @@ export class PgBossRetention {
       const result = await client.query(
         `
           WITH doomed AS (
-            SELECT name, id
-            FROM pgboss.job
+            SELECT id
+            FROM pgboss.job_common
             WHERE name = $1
-              AND state::text = ANY($2::text[])
+              AND state IN ('completed', 'cancelled', 'failed')
               AND completed_on IS NOT NULL
-              AND completed_on < now() - ($3::int * interval '1 second')
-            LIMIT $4
+              AND completed_on < now() - ($2::int * interval '1 second')
+            ORDER BY id
+            LIMIT $3
             FOR UPDATE SKIP LOCKED
           )
-          DELETE FROM pgboss.job AS job
+          DELETE FROM pgboss.job_common AS job
           USING doomed
-          WHERE job.name = doomed.name
+          WHERE job.name = $1
             AND job.id = doomed.id
           RETURNING job.id
         `,
-        [queueName, TERMINAL_STATES, deleteAfterSeconds, this.batchSize],
+        [queueName, deleteAfterSeconds, this.batchSize],
       );
       await client.query("COMMIT");
       return result.rowCount || 0;
