@@ -97,6 +97,12 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
   }
 
   account.status = decision.newStatus;
+  if (decision.newStatus === "BREACHED" && !account.breach?.breachedAt) {
+    const breach = buildBreachRecord(account, decision, event);
+    account.breach = breach;
+    account.projections = account.projections || {};
+    account.projections.breachedAt = breach.breachedAt;
+  }
   if (decision.command) {
     // Stop new dashboard launches immediately while the platform-side command
     // is pending. The command worker clears commandPending only after success.
@@ -173,6 +179,41 @@ export function isOlderThanLastAuthoritativeSnapshot(account, event) {
   const currentSequence = Number(account.lastPlatformSnapshotSequence);
   if (incomingSequence === null || !Number.isFinite(currentSequence)) return false;
   return incomingSequence <= currentSequence;
+}
+
+export function buildBreachRecord(account, decision, event) {
+  const initialBalance = Number(account.initialDeposit || account.accountSize || 0);
+  const dailyLimit = initialBalance * Number(account.rules?.dailyDrawdown || 0) / 100;
+  const maxLimit = initialBalance * Number(account.rules?.maxDrawdown || 0) / 100;
+  const primaryReason = decision?.primaryReason === "MAX_DRAWDOWN"
+    ? "MAX_DRAWDOWN"
+    : "DAILY_DRAWDOWN";
+  const actualLoss = primaryReason === "MAX_DRAWDOWN"
+    ? Number(account.projections?.totalLoss || 0)
+    : Number(account.projections?.dailyLoss || 0);
+  const limitAmount = primaryReason === "MAX_DRAWDOWN" ? maxLimit : dailyLimit;
+  const breachedAt = snapshotTime(event);
+
+  return {
+    primaryReason,
+    triggeredRules: Array.isArray(decision?.triggeredRules) ? [...decision.triggeredRules] : [primaryReason],
+    breachedAt,
+    phase: Number(account.currentPhase || 1),
+    balance: finiteOrNull(account.balance),
+    equity: finiteOrNull(account.equity),
+    dailyStartEquity: finiteOrNull(account.dailyStartEquity),
+    initialBalance: finiteOrNull(initialBalance),
+    dailyLoss: finiteOrNull(account.projections?.dailyLoss),
+    totalLoss: finiteOrNull(account.projections?.totalLoss),
+    limitAmount: finiteOrNull(limitAmount),
+    actualLoss: finiteOrNull(actualLoss),
+    breachAmount: finiteOrNull(Math.max(0, actualLoss - limitAmount)),
+  };
+}
+
+function finiteOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function applySnapshotMetrics(account, event) {
