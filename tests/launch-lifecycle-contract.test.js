@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { evaluateRules } from "../src/workers/state-engine/rules.js";
 import { resolveDecision } from "../src/workers/state-engine/decisions.js";
 import { resetAccountForPhaseTwo, isActivePhaseTwo } from "../src/workers/command-worker.js";
-import { shouldReplayPendingCommand } from "../src/workers/state-engine/processEvent.js";
+import { buildBreachRecord, shouldReplayPendingCommand } from "../src/workers/state-engine/processEvent.js";
 
 function account(overrides = {}) {
   return {
@@ -51,6 +51,8 @@ test("02 crossing daily loss transitions to breach lock command", () => {
     shouldUpdate: true,
     newStatus: "BREACHED",
     command: "LOCK_ACCOUNT",
+    primaryReason: "DAILY_DRAWDOWN",
+    triggeredRules: ["DAILY_DRAWDOWN"],
   });
 });
 
@@ -60,6 +62,8 @@ test("03 crossing maximum loss transitions to breach lock command", () => {
     shouldUpdate: true,
     newStatus: "BREACHED",
     command: "LOCK_ACCOUNT",
+    primaryReason: "MAX_DRAWDOWN",
+    triggeredRules: ["MAX_DRAWDOWN"],
   });
 });
 
@@ -188,4 +192,51 @@ test("11 manually locked account remains terminal even if target conditions are 
     newStatus: "LOCKED",
     command: null,
   });
+});
+
+
+test("12 simultaneous daily and maximum loss breach records both rules with max loss as primary", () => {
+  const a = account({ projections: { profit: -7000, dailyLoss: 3500, totalLoss: 7000, tradingDays: 1 } });
+  assert.deepEqual(resolveDecision(a, evaluateRules(a)), {
+    shouldUpdate: true,
+    newStatus: "BREACHED",
+    command: "LOCK_ACCOUNT",
+    primaryReason: "MAX_DRAWDOWN",
+    triggeredRules: ["DAILY_DRAWDOWN", "MAX_DRAWDOWN"],
+  });
+});
+
+test("13 breach snapshot freezes the triggering valuation and limit", () => {
+  const a = account({
+    currentPhase: 1,
+    balance: 90500,
+    equity: 89750,
+    dailyStartEquity: 93000,
+    projections: {
+      profit: -9500,
+      dailyLoss: 3250,
+      totalLoss: 10250,
+      tradingDays: 2,
+    },
+  });
+  const decision = resolveDecision(a, evaluateRules(a));
+  const event = {
+    occurredAt: new Date("2026-09-21T03:04:05.678Z"),
+  };
+
+  const breach = buildBreachRecord(a, decision, event);
+
+  assert.equal(breach.primaryReason, "MAX_DRAWDOWN");
+  assert.deepEqual(breach.triggeredRules, ["DAILY_DRAWDOWN", "MAX_DRAWDOWN"]);
+  assert.equal(breach.breachedAt.toISOString(), "2026-09-21T03:04:05.678Z");
+  assert.equal(breach.phase, 1);
+  assert.equal(breach.balance, 90500);
+  assert.equal(breach.equity, 89750);
+  assert.equal(breach.dailyStartEquity, 93000);
+  assert.equal(breach.initialBalance, 100000);
+  assert.equal(breach.dailyLoss, 3250);
+  assert.equal(breach.totalLoss, 10250);
+  assert.equal(breach.limitAmount, 6000);
+  assert.equal(breach.actualLoss, 10250);
+  assert.equal(breach.breachAmount, 4250);
 });
