@@ -82,6 +82,29 @@ const AccountSchema = new mongoose.Schema(
         statusBeforeLock: { type: String, default: null },
         fundedApprovedAt: { type: Date, default: null },
 
+        breach: {
+            primaryReason: {
+                type: String,
+                enum: ["DAILY_DRAWDOWN", "MAX_DRAWDOWN"],
+                default: null
+            },
+            triggeredRules: {
+                type: [String],
+                default: []
+            },
+            breachedAt: { type: Date, default: null },
+            phase: { type: Number, default: null },
+            balance: { type: Number, default: null },
+            equity: { type: Number, default: null },
+            dailyStartEquity: { type: Number, default: null },
+            initialBalance: { type: Number, default: null },
+            dailyLoss: { type: Number, default: null },
+            totalLoss: { type: Number, default: null },
+            limitAmount: { type: Number, default: null },
+            actualLoss: { type: Number, default: null },
+            breachAmount: { type: Number, default: null }
+        },
+
         platform: { type: String, default: () => process.env.TRADING_PROVIDER || "simulator" },
         platformAccountId: { type: String, sparse: true },
         platformAccountCode: { type: String, default: null },
