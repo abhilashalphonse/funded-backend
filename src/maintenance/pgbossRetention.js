@@ -304,7 +304,7 @@ export class PgBossRetention {
       await client.query(`SET LOCAL statement_timeout = '${Math.max(this.statementTimeoutMs, 10000)}ms'`);
       const result = await client.query(
         `
-          WITH window AS (
+          WITH scan_window AS (
             SELECT id, state, completed_on
             FROM pgboss.job_common
             WHERE name = $1
@@ -314,7 +314,7 @@ export class PgBossRetention {
           ),
           doomed AS (
             SELECT id
-            FROM window
+            FROM scan_window
             WHERE state IN ('completed', 'cancelled', 'failed')
               AND completed_on IS NOT NULL
               AND completed_on < now() - ($4::int * interval '1 second')
@@ -329,8 +329,8 @@ export class PgBossRetention {
           )
           SELECT
             (SELECT COUNT(*)::int FROM deleted) AS deleted,
-            (SELECT id FROM window ORDER BY id DESC LIMIT 1) AS "nextCursor",
-            (SELECT COUNT(*)::int FROM window) AS scanned
+            (SELECT id FROM scan_window ORDER BY id DESC LIMIT 1) AS "nextCursor",
+            (SELECT COUNT(*)::int FROM scan_window) AS scanned
         `,
         [queueName, cursor, scanWindow, deleteAfterSeconds, this.batchSize],
       );
