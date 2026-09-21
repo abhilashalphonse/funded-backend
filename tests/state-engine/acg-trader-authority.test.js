@@ -117,3 +117,92 @@ test("missing Funded account is a terminal no-op for stale state events", async 
 
   assert.equal(calls, 1);
 });
+
+
+test("breached accounts reconcile authoritative post-liquidation metrics without changing breach state", async () => {
+  const account = {
+    status: "BREACHED",
+    balance: 94792.62,
+    equity: 94737.02,
+    margin: 1250,
+    marginFree: 93487.02,
+    marginLevel: 0,
+    floatingProfit: -55.6,
+    lastPlatformSnapshotAt: new Date("2026-09-18T10:00:10.000Z"),
+    lastPlatformSnapshotSequence: 42,
+    lastProcessedEventId: null,
+    saveCalls: 0,
+    async save() {
+      this.saveCalls += 1;
+    },
+  };
+  const accountModel = {
+    async findOne() {
+      return account;
+    },
+  };
+  const event = {
+    eventId: "acg-trader:post-liquidation",
+    aggregateId: "TRIAL-123",
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    occurredAt: new Date("2026-09-18T10:00:11.000Z"),
+    payload: {
+      complete: true,
+      valuationStatus: "LIVE",
+      valuationSequence: 43,
+      balance: 94737.02,
+      equity: 94737.02,
+      margin: 0,
+      marginFree: 94737.02,
+      marginLevel: 0,
+      floatingProfit: 0,
+    },
+  };
+
+  await processEvent(event, null, { accountModel });
+
+  assert.equal(account.status, "BREACHED");
+  assert.equal(account.balance, 94737.02);
+  assert.equal(account.equity, 94737.02);
+  assert.equal(account.margin, 0);
+  assert.equal(account.marginFree, 94737.02);
+  assert.equal(account.floatingProfit, 0);
+  assert.equal(account.lastPlatformSnapshotSequence, 43);
+  assert.equal(account.lastProcessedEventId, event.eventId);
+  assert.equal(account.saveCalls, 1);
+});
+
+test("breached accounts ignore stale post-liquidation snapshots", async () => {
+  const account = {
+    status: "BREACHED",
+    balance: 94737.02,
+    equity: 94737.02,
+    margin: 0,
+    marginFree: 94737.02,
+    floatingProfit: 0,
+    lastPlatformSnapshotAt: new Date("2026-09-18T10:00:11.000Z"),
+    lastPlatformSnapshotSequence: 43,
+    async save() {},
+  };
+  const accountModel = { async findOne() { return account; } };
+
+  await processEvent({
+    eventId: "acg-trader:stale-post-liquidation",
+    aggregateId: "TRIAL-123",
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    occurredAt: new Date("2026-09-18T10:00:10.000Z"),
+    payload: {
+      complete: true,
+      valuationStatus: "LIVE",
+      valuationSequence: 42,
+      balance: 94792.62,
+      equity: 94737.02,
+      margin: 1250,
+      marginFree: 93487.02,
+      floatingProfit: -55.6,
+    },
+  }, null, { accountModel });
+
+  assert.equal(account.balance, 94737.02);
+  assert.equal(account.floatingProfit, 0);
+});
