@@ -46,6 +46,7 @@ export function serializeCustomerAccount(account) {
     marginLevel: account.marginLevel,
     floatingProfit: account.floatingProfit,
     projections: account.projections,
+    breach: account.breach || null,
     totalTrades: account.totalTrades,
     winningTrades: account.winningTrades,
     losingTrades: account.losingTrades,
