@@ -171,12 +171,17 @@ export class PgBossRetention {
   async diagnoseCleanup() {
     const indexes = await this.#auditQuery(`
       SELECT
-        indexname AS name,
-        indexdef AS definition
-      FROM pg_indexes
-      WHERE schemaname = 'pgboss'
-        AND tablename = 'job_common'
-      ORDER BY indexname
+        pi.indexname AS name,
+        pi.indexdef AS definition,
+        i.indisvalid AS valid,
+        i.indisready AS ready
+      FROM pg_indexes pi
+      JOIN pg_class c ON c.relname = pi.indexname
+      JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = pi.schemaname
+      JOIN pg_index i ON i.indexrelid = c.oid
+      WHERE pi.schemaname = 'pgboss'
+        AND pi.tablename = 'job_common'
+      ORDER BY pi.indexname
     `);
 
     const probes = {};
@@ -215,6 +220,26 @@ export class PgBossRetention {
         queueProbe.plan = explain.rows[0]?.["QUERY PLAN"] ?? null;
       } catch (error) {
         queueProbe.planError = { code: error?.code, message: error?.message };
+      }
+
+      try {
+        const expiryExplain = await this.#auditQuery(
+          `
+            EXPLAIN (FORMAT JSON)
+            SELECT id
+            FROM pgboss.job_common
+            WHERE name = $1
+              AND state IN ('completed', 'cancelled', 'failed')
+              AND completed_on IS NOT NULL
+              AND completed_on < now() - interval '6 hours'
+            ORDER BY completed_on ASC, id ASC
+            LIMIT 500
+          `,
+          [queueName],
+        );
+        queueProbe.expiryPlan = expiryExplain.rows[0]?.["QUERY PLAN"] ?? null;
+      } catch (error) {
+        queueProbe.expiryPlanError = { code: error?.code, message: error?.message };
       }
 
       probes[queueName] = queueProbe;
@@ -285,18 +310,23 @@ export class PgBossRetention {
 
     try {
       const deferredQueues = {};
-      const scannedByQueue = {};
+      const retentionIndex = await this.cleanupIndexStatus();
+
+      if (!retentionIndex.exists || !retentionIndex.valid) {
+        return {
+          deferred: true,
+          reason: "retention-index-not-ready",
+          retentionIndex,
+        };
+      }
+
       for (const [queueName, policy] of Object.entries(PG_BOSS_QUEUE_POLICIES)) {
         let deleted = 0;
-        let scanned = 0;
-        let cursor = null;
         try {
           for (let batch = 0; batch < maxBatches; batch += 1) {
-            const result = await this.#deleteTerminalBatch(queueName, policy.deleteAfterSeconds, cursor);
-            deleted += result.deleted;
-            scanned += result.scanned;
-            cursor = result.nextCursor;
-            if (!cursor || result.scanned < result.scanWindow) break;
+            const count = await this.#deleteTerminalBatch(queueName, policy.deleteAfterSeconds);
+            deleted += count;
+            if (count < this.batchSize) break;
           }
         } catch (error) {
           if (["55P03", "57014"].includes(error?.code)) {
@@ -309,7 +339,6 @@ export class PgBossRetention {
           }
         }
         deletedByQueue[queueName] = deleted;
-        scannedByQueue[queueName] = scanned;
       }
 
       const queueStatsDeleted = await this.#deleteAuxiliaryRows(
@@ -328,7 +357,7 @@ export class PgBossRetention {
         startedAt,
         completedAt: this.lastRunAt,
         deletedByQueue,
-        scannedByQueue,
+        retentionIndex,
         deferredQueues,
         queueStatsDeleted,
         warningsDeleted,
@@ -353,67 +382,40 @@ export class PgBossRetention {
     }
   }
 
-  async #deleteTerminalBatch(queueName, deleteAfterSeconds, cursor = null) {
+  async #deleteTerminalBatch(queueName, deleteAfterSeconds) {
     const client = await this.db.connect();
-    const scanWindow = Math.max(this.batchSize * 10, 5000);
     try {
       await client.query("BEGIN");
       await client.query(`SET LOCAL lock_timeout = '${this.lockTimeoutMs}ms'`);
       await client.query(`SET LOCAL statement_timeout = '${Math.max(this.statementTimeoutMs, 10000)}ms'`);
 
-      // Avoid an OR on the cursor predicate. With cursor=null, PostgreSQL can use the
-      // (name, id) primary key directly; with a cursor, it can seek from (name, cursor).
-      // The previous "($2 IS NULL OR id > $2)" shape prevented an efficient index range scan
-      // on the large queues and timed out before scanning even the first window.
-      const cursorPredicate = cursor ? "AND id > $2::uuid" : "";
-      const params = cursor
-        ? [queueName, cursor, scanWindow, deleteAfterSeconds, this.batchSize]
-        : [queueName, scanWindow, deleteAfterSeconds, this.batchSize];
-
-      const scanLimitParam = cursor ? "$3" : "$2";
-      const cutoffParam = cursor ? "$4" : "$3";
-      const deleteLimitParam = cursor ? "$5" : "$4";
-
+      // This predicate/order matches job_common_retention_i1:
+      // (name, completed_on, id) WHERE terminal state AND completed_on IS NOT NULL.
+      // Once that index is valid, PostgreSQL can seek directly to expired terminal jobs
+      // instead of scanning either 170k-row queue through the primary key.
       const result = await client.query(
         `
-          WITH scan_window AS (
-            SELECT id, state, completed_on
+          WITH doomed AS (
+            SELECT id
             FROM pgboss.job_common
             WHERE name = $1
-              ${cursorPredicate}
-            ORDER BY id
-            LIMIT ${scanLimitParam}
-          ),
-          doomed AS (
-            SELECT id
-            FROM scan_window
-            WHERE state IN ('completed', 'cancelled', 'failed')
+              AND state IN ('completed', 'cancelled', 'failed')
               AND completed_on IS NOT NULL
-              AND completed_on < now() - (${cutoffParam}::int * interval '1 second')
-            LIMIT ${deleteLimitParam}
-          ),
-          deleted AS (
-            DELETE FROM pgboss.job_common AS job
-            USING doomed
-            WHERE job.name = $1
-              AND job.id = doomed.id
-            RETURNING job.id
+              AND completed_on < now() - ($2::int * interval '1 second')
+            ORDER BY completed_on ASC, id ASC
+            LIMIT $3
+            FOR UPDATE SKIP LOCKED
           )
-          SELECT
-            (SELECT COUNT(*)::int FROM deleted) AS deleted,
-            (SELECT id FROM scan_window ORDER BY id DESC LIMIT 1) AS "nextCursor",
-            (SELECT COUNT(*)::int FROM scan_window) AS scanned
+          DELETE FROM pgboss.job_common AS job
+          USING doomed
+          WHERE job.name = $1
+            AND job.id = doomed.id
+          RETURNING job.id
         `,
-        params,
+        [queueName, deleteAfterSeconds, this.batchSize],
       );
       await client.query("COMMIT");
-      const row = result.rows[0] || {};
-      return {
-        deleted: Number(row.deleted || 0),
-        nextCursor: row.nextCursor || null,
-        scanned: Number(row.scanned || 0),
-        scanWindow,
-      };
+      return result.rowCount || 0;
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch {}
       throw error;
