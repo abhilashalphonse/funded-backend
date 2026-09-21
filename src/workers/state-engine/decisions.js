@@ -24,6 +24,11 @@ export function resolveDecision(account, rules) {
     if (account.currentPhase === 1 && account.challengeType === "TWO_STEP") {
       newStatus = "PASSED";
       command = "CREATE_PHASE_2_ACCOUNT";
+    } else if (account.accountMode === "DEMO") {
+      // A free trial ends as a passed trial. It must never enter the paid
+      // funded-review lifecycle or be converted into a challenge account.
+      newStatus = "PASSED";
+      command = "COMPLETE_TRIAL";
     } else {
       newStatus = "FUNDED_REVIEW";
       command = "ENTER_FUNDED_REVIEW";
