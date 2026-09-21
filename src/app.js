@@ -123,7 +123,12 @@ if (env.ENABLE_LOCAL_ADMIN_ROUTES) {
 
 app.use((error, req, res, next) => {
   console.error("API error:", error);
-  res.status(error.status || 500).json({ success: false, message: error.message ?? "Internal server error", code: error.code });
+  res.status(error.status || 500).json({
+    success: false,
+    message: error.message ?? "Internal server error",
+    code: error.code,
+    retryable: error.retryable === true,
+  });
 });
 
 export default app;
