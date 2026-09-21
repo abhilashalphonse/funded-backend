@@ -19,7 +19,15 @@ function megabytes(bytes) {
 async function main() {
   const apply = process.argv.includes("--apply");
   const prepareIndex = process.argv.includes("--prepare-index");
+  const diagnose = process.argv.includes("--diagnose");
   const maxBatches = maxBatchesFromArgs();
+
+  if (diagnose) {
+    console.log("Running pg-boss cleanup diagnostics...");
+    const result = await pgBossRetention.diagnoseCleanup();
+    console.log(JSON.stringify({ diagnostics: result }, null, 2));
+    return;
+  }
 
   if (prepareIndex) {
     console.log("Preparing pg-boss retention index concurrently...");
