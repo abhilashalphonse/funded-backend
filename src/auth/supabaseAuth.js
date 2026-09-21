@@ -21,7 +21,24 @@ async function resolveCustomer(token) {
     },
   });
   const user = await response.json().catch(() => null);
-  if (!response.ok || !user?.id) return null;
+  if (!response.ok) {
+    const error = new Error(
+      response.status === 401
+        ? "We could not verify your session with the authentication provider."
+        : "The authentication provider is temporarily unavailable."
+    );
+    error.status = response.status === 401 ? 401 : 502;
+    error.code = response.status === 401 ? "AUTH_VERIFICATION_FAILED" : "AUTH_PROVIDER_UNAVAILABLE";
+    error.retryable = true;
+    throw error;
+  }
+  if (!user?.id) {
+    const error = new Error("The authentication provider returned an invalid response.");
+    error.status = 502;
+    error.code = "AUTH_PROVIDER_INVALID_RESPONSE";
+    error.retryable = true;
+    throw error;
+  }
 
   const authCustomer = {
     id: String(user.id),
