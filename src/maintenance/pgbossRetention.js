@@ -65,63 +65,106 @@ export class PgBossRetention {
   }
 
   async audit() {
-    const [sizeResult, stateResult, queueResult] = await Promise.all([
-      this.db.query(`
-        SELECT
-          relname AS relation,
-          pg_total_relation_size(c.oid)::bigint AS bytes
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'pgboss'
-          AND c.relkind IN ('r', 'p')
-        ORDER BY bytes DESC
-      `),
-      this.db.query(`
-        SELECT name, state::text AS state, COUNT(*)::bigint AS count
-        FROM pgboss.job
-        GROUP BY name, state
-        ORDER BY name, state
-      `),
-      this.db.query(`
-        SELECT
-          name,
-          retention_seconds AS "retentionSeconds",
-          deletion_seconds AS "deleteAfterSeconds",
-          table_name AS "tableName"
-        FROM pgboss.queue
-        ORDER BY name
-      `),
-    ]);
+    const sizeResult = await this.#auditQuery(`
+      SELECT
+        relname AS relation,
+        relkind AS "relationKind",
+        pg_total_relation_size(c.oid)::bigint AS bytes
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'pgboss'
+        AND c.relkind IN ('r', 'p')
+      ORDER BY bytes DESC
+    `);
+
+    const queueResult = await this.#auditQuery(`
+      SELECT
+        name,
+        retention_seconds AS "retentionSeconds",
+        deletion_seconds AS "deleteAfterSeconds",
+        table_name AS "tableName",
+        deferred_count AS "deferredCount",
+        queued_count AS "queuedCount",
+        active_count AS "activeCount",
+        failed_count AS "failedCount",
+        total_count AS "totalCount",
+        monitor_on AS "monitorOn",
+        maintain_on AS "maintainOn"
+      FROM pgboss.queue
+      ORDER BY name
+    `);
+
+    const estimateResult = await this.#auditQuery(`
+      SELECT
+        relname AS relation,
+        n_live_tup::bigint AS "estimatedRows",
+        n_dead_tup::bigint AS "estimatedDeadRows"
+      FROM pg_stat_user_tables
+      WHERE schemaname = 'pgboss'
+      ORDER BY n_live_tup DESC
+    `);
 
     const candidates = {};
+    const candidateErrors = {};
     for (const [queueName, policy] of Object.entries(PG_BOSS_QUEUE_POLICIES)) {
-      const result = await this.db.query(
-        `
-          SELECT COUNT(*)::bigint AS count
-          FROM pgboss.job
-          WHERE name = $1
-            AND state::text = ANY($2::text[])
-            AND completed_on IS NOT NULL
-            AND completed_on < now() - ($3::int * interval '1 second')
-        `,
-        [queueName, TERMINAL_STATES, policy.deleteAfterSeconds],
-      );
-      candidates[queueName] = Number(result.rows[0]?.count || 0);
+      try {
+        const result = await this.#auditQuery(
+          `
+            SELECT COUNT(*)::bigint AS count
+            FROM pgboss.job
+            WHERE name = $1
+              AND state::text = ANY($2::text[])
+              AND completed_on IS NOT NULL
+              AND completed_on < now() - ($3::int * interval '1 second')
+          `,
+          [queueName, TERMINAL_STATES, policy.deleteAfterSeconds],
+        );
+        candidates[queueName] = Number(result.rows[0]?.count || 0);
+      } catch (error) {
+        if (["55P03", "57014"].includes(error?.code)) {
+          candidates[queueName] = null;
+          candidateErrors[queueName] = {
+            code: error.code,
+            message: error.message,
+          };
+          continue;
+        }
+        throw error;
+      }
     }
 
     return {
       relations: sizeResult.rows.map(row => ({
         relation: row.relation,
+        relationKind: row.relationKind,
         bytes: Number(row.bytes || 0),
       })),
-      states: stateResult.rows.map(row => ({
-        name: row.name,
-        state: row.state,
-        count: Number(row.count || 0),
+      tableEstimates: estimateResult.rows.map(row => ({
+        relation: row.relation,
+        estimatedRows: Number(row.estimatedRows || 0),
+        estimatedDeadRows: Number(row.estimatedDeadRows || 0),
       })),
       queues: queueResult.rows,
       cleanupCandidates: candidates,
+      cleanupCandidateErrors: candidateErrors,
     };
+  }
+
+  async #auditQuery(text, values = []) {
+    const client = await this.db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL lock_timeout = '${this.lockTimeoutMs}ms'`);
+      await client.query(`SET LOCAL statement_timeout = '${Math.max(this.statementTimeoutMs, 10000)}ms'`);
+      const result = await client.query(text, values);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch {}
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async runOnce({ maxBatches = this.maxBatchesPerRun } = {}) {
