@@ -227,13 +227,18 @@ export class PgBossRetention {
 
     try {
       const deferredQueues = {};
+      const scannedByQueue = {};
       for (const [queueName, policy] of Object.entries(PG_BOSS_QUEUE_POLICIES)) {
         let deleted = 0;
+        let scanned = 0;
+        let cursor = null;
         try {
           for (let batch = 0; batch < maxBatches; batch += 1) {
-            const count = await this.#deleteTerminalBatch(queueName, policy.deleteAfterSeconds);
-            deleted += count;
-            if (count < this.batchSize) break;
+            const result = await this.#deleteTerminalBatch(queueName, policy.deleteAfterSeconds, cursor);
+            deleted += result.deleted;
+            scanned += result.scanned;
+            cursor = result.nextCursor;
+            if (!cursor || result.scanned < result.scanWindow) break;
           }
         } catch (error) {
           if (["55P03", "57014"].includes(error?.code)) {
@@ -246,6 +251,7 @@ export class PgBossRetention {
           }
         }
         deletedByQueue[queueName] = deleted;
+        scannedByQueue[queueName] = scanned;
       }
 
       const queueStatsDeleted = await this.#deleteAuxiliaryRows(
@@ -264,6 +270,7 @@ export class PgBossRetention {
         startedAt,
         completedAt: this.lastRunAt,
         deletedByQueue,
+        scannedByQueue,
         deferredQueues,
         queueStatsDeleted,
         warningsDeleted,
@@ -288,34 +295,53 @@ export class PgBossRetention {
     }
   }
 
-  async #deleteTerminalBatch(queueName, deleteAfterSeconds) {
+  async #deleteTerminalBatch(queueName, deleteAfterSeconds, cursor = null) {
     const client = await this.db.connect();
+    const scanWindow = Math.max(this.batchSize * 10, 5000);
     try {
       await client.query("BEGIN");
       await client.query(`SET LOCAL lock_timeout = '${this.lockTimeoutMs}ms'`);
-      await client.query(`SET LOCAL statement_timeout = '${this.statementTimeoutMs}ms'`);
+      await client.query(`SET LOCAL statement_timeout = '${Math.max(this.statementTimeoutMs, 10000)}ms'`);
       const result = await client.query(
         `
-          WITH doomed AS (
-            SELECT id
+          WITH window AS (
+            SELECT id, state, completed_on
             FROM pgboss.job_common
             WHERE name = $1
-              AND state IN ('completed', 'cancelled', 'failed')
-              AND completed_on IS NOT NULL
-              AND completed_on < now() - ($2::int * interval '1 second')
+              AND ($2::uuid IS NULL OR id > $2::uuid)
+            ORDER BY id
             LIMIT $3
-            FOR UPDATE SKIP LOCKED
+          ),
+          doomed AS (
+            SELECT id
+            FROM window
+            WHERE state IN ('completed', 'cancelled', 'failed')
+              AND completed_on IS NOT NULL
+              AND completed_on < now() - ($4::int * interval '1 second')
+            LIMIT $5
+          ),
+          deleted AS (
+            DELETE FROM pgboss.job_common AS job
+            USING doomed
+            WHERE job.name = $1
+              AND job.id = doomed.id
+            RETURNING job.id
           )
-          DELETE FROM pgboss.job_common AS job
-          USING doomed
-          WHERE job.name = $1
-            AND job.id = doomed.id
-          RETURNING job.id
+          SELECT
+            (SELECT COUNT(*)::int FROM deleted) AS deleted,
+            (SELECT id FROM window ORDER BY id DESC LIMIT 1) AS "nextCursor",
+            (SELECT COUNT(*)::int FROM window) AS scanned
         `,
-        [queueName, deleteAfterSeconds, this.batchSize],
+        [queueName, cursor, scanWindow, deleteAfterSeconds, this.batchSize],
       );
       await client.query("COMMIT");
-      return result.rowCount || 0;
+      const row = result.rows[0] || {};
+      return {
+        deleted: Number(row.deleted || 0),
+        nextCursor: row.nextCursor || null,
+        scanned: Number(row.scanned || 0),
+        scanWindow,
+      };
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch {}
       throw error;
