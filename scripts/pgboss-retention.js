@@ -20,16 +20,18 @@ async function main() {
   const apply = process.argv.includes("--apply");
   const maxBatches = maxBatchesFromArgs();
 
+  console.log("Starting bounded pg-boss retention audit...");
   const before = await pgBossRetention.audit();
   console.log(JSON.stringify({
     mode: apply ? "APPLY" : "DRY_RUN",
     queuePolicies: before.queues,
     cleanupCandidates: before.cleanupCandidates,
+    cleanupCandidateErrors: before.cleanupCandidateErrors,
+    tableEstimates: before.tableEstimates,
     largestRelations: before.relations.slice(0, 20).map(row => ({
       relation: row.relation,
       megabytes: megabytes(row.bytes),
     })),
-    jobStates: before.states,
   }, null, 2));
 
   if (!apply) {
@@ -45,6 +47,8 @@ async function main() {
   const after = await pgBossRetention.audit();
   console.log(JSON.stringify({
     remainingCandidates: after.cleanupCandidates,
+    cleanupCandidateErrors: after.cleanupCandidateErrors,
+    tableEstimates: after.tableEstimates,
     largestRelations: after.relations.slice(0, 20).map(row => ({
       relation: row.relation,
       megabytes: megabytes(row.bytes),
