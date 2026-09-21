@@ -3,6 +3,7 @@ import Account from "../accounts/account.model.js";
 import { getTradingConnector } from "../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../connectors/trading/account-provisioning.js";
 import { ensureTradingCredential } from "../trading-credentials/trading-credential.service.js";
+import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
 
 export class CommandWorker {
   constructor(bossInstance) {
@@ -82,6 +83,22 @@ export class CommandWorker {
 
         resetAccountForPhaseTwo(account);
         await account.save();
+
+        if (account.accountMode !== "DEMO") {
+          await recordAnalyticsEventOnce({
+            event: "phase_2_started",
+            sessionId: `account:${account.accountId}`,
+            accountId: account.accountId,
+            source: "server",
+            properties: {
+              ownerExternalRef: account.ownerExternalRef,
+              accountSize: account.accountSize,
+              challengeType: account.challengeType,
+              phase: 2,
+            },
+          }, { accountId: account.accountId }).catch(() => {});
+        }
+
         return {
           success: true,
           provider: account.platform,
