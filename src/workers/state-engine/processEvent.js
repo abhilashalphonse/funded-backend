@@ -136,6 +136,8 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
         ownerExternalRef: account.ownerExternalRef,
         accountSize: account.accountSize,
         challengeType: account.challengeType,
+        breachReason: account.breach?.primaryReason || decision.primaryReason || null,
+        triggeredRules: account.breach?.triggeredRules || decision.triggeredRules || [],
       },
     }, { accountId: account.accountId }).catch(() => {});
   }
