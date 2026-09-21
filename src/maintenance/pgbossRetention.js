@@ -238,7 +238,6 @@ export class PgBossRetention {
               AND state::text = ANY($2::text[])
               AND completed_on IS NOT NULL
               AND completed_on < now() - ($3::int * interval '1 second')
-            ORDER BY completed_on ASC
             LIMIT $4
             FOR UPDATE SKIP LOCKED
           )
