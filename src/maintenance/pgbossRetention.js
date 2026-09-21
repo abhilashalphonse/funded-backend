@@ -302,23 +302,37 @@ export class PgBossRetention {
       await client.query("BEGIN");
       await client.query(`SET LOCAL lock_timeout = '${this.lockTimeoutMs}ms'`);
       await client.query(`SET LOCAL statement_timeout = '${Math.max(this.statementTimeoutMs, 10000)}ms'`);
+
+      // Avoid an OR on the cursor predicate. With cursor=null, PostgreSQL can use the
+      // (name, id) primary key directly; with a cursor, it can seek from (name, cursor).
+      // The previous "($2 IS NULL OR id > $2)" shape prevented an efficient index range scan
+      // on the large queues and timed out before scanning even the first window.
+      const cursorPredicate = cursor ? "AND id > $2::uuid" : "";
+      const params = cursor
+        ? [queueName, cursor, scanWindow, deleteAfterSeconds, this.batchSize]
+        : [queueName, scanWindow, deleteAfterSeconds, this.batchSize];
+
+      const scanLimitParam = cursor ? "$3" : "$2";
+      const cutoffParam = cursor ? "$4" : "$3";
+      const deleteLimitParam = cursor ? "$5" : "$4";
+
       const result = await client.query(
         `
           WITH scan_window AS (
             SELECT id, state, completed_on
             FROM pgboss.job_common
             WHERE name = $1
-              AND ($2::uuid IS NULL OR id > $2::uuid)
+              ${cursorPredicate}
             ORDER BY id
-            LIMIT $3
+            LIMIT ${scanLimitParam}
           ),
           doomed AS (
             SELECT id
             FROM scan_window
             WHERE state IN ('completed', 'cancelled', 'failed')
               AND completed_on IS NOT NULL
-              AND completed_on < now() - ($4::int * interval '1 second')
-            LIMIT $5
+              AND completed_on < now() - (${cutoffParam}::int * interval '1 second')
+            LIMIT ${deleteLimitParam}
           ),
           deleted AS (
             DELETE FROM pgboss.job_common AS job
@@ -332,7 +346,7 @@ export class PgBossRetention {
             (SELECT id FROM scan_window ORDER BY id DESC LIMIT 1) AS "nextCursor",
             (SELECT COUNT(*)::int FROM scan_window) AS scanned
         `,
-        [queueName, cursor, scanWindow, deleteAfterSeconds, this.batchSize],
+        params,
       );
       await client.query("COMMIT");
       const row = result.rows[0] || {};
