@@ -10,6 +10,16 @@ export function resolveDecision(account, rules) {
   if (rules.dailyLossBreached || rules.maxLossBreached) {
     newStatus = "BREACHED";
     command = "LOCK_ACCOUNT";
+    const triggeredRules = [];
+    if (rules.dailyLossBreached) triggeredRules.push("DAILY_DRAWDOWN");
+    if (rules.maxLossBreached) triggeredRules.push("MAX_DRAWDOWN");
+    return {
+      shouldUpdate: true,
+      newStatus,
+      command,
+      primaryReason: rules.maxLossBreached ? "MAX_DRAWDOWN" : "DAILY_DRAWDOWN",
+      triggeredRules,
+    };
   } else if (rules.profitTargetHit && rules.minimumDaysMet) {
     if (account.currentPhase === 1 && account.challengeType === "TWO_STEP") {
       newStatus = "PASSED";
