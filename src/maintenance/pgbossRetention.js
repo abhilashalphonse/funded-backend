@@ -168,6 +168,64 @@ export class PgBossRetention {
     }
   }
 
+  async diagnoseCleanup() {
+    const indexes = await this.#auditQuery(`
+      SELECT
+        indexname AS name,
+        indexdef AS definition
+      FROM pg_indexes
+      WHERE schemaname = 'pgboss'
+        AND tablename = 'job_common'
+      ORDER BY indexname
+    `);
+
+    const probes = {};
+    for (const queueName of ["incoming-events", "state-events"]) {
+      const queueProbe = {};
+      try {
+        const started = Date.now();
+        const first = await this.#auditQuery(
+          `
+            SELECT id, state::text AS state, completed_on AS "completedOn"
+            FROM pgboss.job_common
+            WHERE name = $1
+            ORDER BY id
+            LIMIT 10
+          `,
+          [queueName],
+        );
+        queueProbe.firstRowsMs = Date.now() - started;
+        queueProbe.firstRows = first.rows;
+      } catch (error) {
+        queueProbe.firstRowsError = { code: error?.code, message: error?.message };
+      }
+
+      try {
+        const explain = await this.#auditQuery(
+          `
+            EXPLAIN (FORMAT JSON)
+            SELECT id, state, completed_on
+            FROM pgboss.job_common
+            WHERE name = $1
+            ORDER BY id
+            LIMIT 5000
+          `,
+          [queueName],
+        );
+        queueProbe.plan = explain.rows[0]?.["QUERY PLAN"] ?? null;
+      } catch (error) {
+        queueProbe.planError = { code: error?.code, message: error?.message };
+      }
+
+      probes[queueName] = queueProbe;
+    }
+
+    return {
+      indexes: indexes.rows,
+      probes,
+    };
+  }
+
   async cleanupIndexStatus() {
     const result = await this.db.query(`
       SELECT
