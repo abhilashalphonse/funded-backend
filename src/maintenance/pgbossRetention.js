@@ -272,13 +272,16 @@ export class PgBossRetention {
     };
   }
 
-  async prepareCleanupIndex({ statementTimeoutMs = 180000 } = {}) {
+  async prepareCleanupIndex({
+    statementTimeoutMs = 600000,
+    lockTimeoutMs = 30000,
+  } = {}) {
     const current = await this.cleanupIndexStatus();
     if (current.exists && current.valid) return { created: false, ...current };
 
     const client = await this.db.connect();
     try {
-      await client.query(`SET lock_timeout = '${Math.max(this.lockTimeoutMs, 5000)}ms'`);
+      await client.query(`SET lock_timeout = '${Math.max(lockTimeoutMs, this.lockTimeoutMs)}ms'`);
       await client.query(`SET statement_timeout = '${statementTimeoutMs}ms'`);
 
       if (current.exists && !current.valid) {
