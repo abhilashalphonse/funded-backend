@@ -7,6 +7,43 @@ function bearerToken(req) {
   return header.slice(7).trim() || null;
 }
 
+function projectRefFromSupabaseUrl(value) {
+  try {
+    const host = new URL(String(value || "")).hostname;
+    const suffix = ".supabase.co";
+    return host.endsWith(suffix) ? host.slice(0, -suffix.length) : host || null;
+  } catch {
+    return null;
+  }
+}
+
+function issuerFromJwt(token) {
+  try {
+    const payload = String(token || "").split(".")[1];
+    if (!payload) return null;
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return typeof parsed?.iss === "string" ? parsed.iss : null;
+  } catch {
+    return null;
+  }
+}
+
+function authDiagnostic(token, responseStatus, upstreamBody) {
+  const issuer = issuerFromJwt(token);
+  const tokenProjectRef = projectRefFromSupabaseUrl(issuer);
+  const backendProjectRef = projectRefFromSupabaseUrl(env.SUPABASE_URL);
+  const refsMatch = Boolean(tokenProjectRef && backendProjectRef && tokenProjectRef === backendProjectRef);
+
+  return {
+    responseStatus,
+    tokenProjectRef,
+    backendProjectRef,
+    refsMatch,
+    upstreamCode: upstreamBody?.code || upstreamBody?.error_code || null,
+    upstreamMessage: upstreamBody?.msg || upstreamBody?.message || upstreamBody?.error_description || upstreamBody?.error || null,
+  };
+}
+
 async function resolveCustomer(token) {
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
     const error = new Error("Supabase authentication is not configured on the API.");
@@ -22,6 +59,9 @@ async function resolveCustomer(token) {
   });
   const user = await response.json().catch(() => null);
   if (!response.ok) {
+    const diagnostic = authDiagnostic(token, response.status, user);
+    console.warn("[auth] Supabase user verification failed", diagnostic);
+
     const error = new Error(
       response.status === 401
         ? "We could not verify your session with the authentication provider."
