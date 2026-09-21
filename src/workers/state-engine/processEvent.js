@@ -60,7 +60,27 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
     }
   }
 
-  if (["BREACHED", "LOCKED", "CLOSED", "FUNDED"].includes(account.status)) {
+  if (["BREACHED", "LOCKED"].includes(account.status)) {
+    // A breach is terminal for challenge decisions, but ACG Trader may still
+    // emit an authoritative post-liquidation valuation after LOCK_ACCOUNT.
+    // Reconcile only account metrics so floating P&L/margin can settle to zero
+    // without re-running rules or changing the immutable breach record.
+    if (
+      event.eventType === SNAPSHOT_EVENT
+      && isAuthoritativeTraderSnapshot(event)
+      && !isOlderThanLastAuthoritativeSnapshot(account, event)
+    ) {
+      applySnapshotMetrics(account, event);
+      account.lastPlatformSnapshotAt = snapshotTime(event);
+      const sequence = snapshotSequence(event);
+      if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
+    }
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
+  if (["CLOSED", "FUNDED"].includes(account.status)) {
     account.lastProcessedEventId = event.eventId;
     await account.save();
     return;
