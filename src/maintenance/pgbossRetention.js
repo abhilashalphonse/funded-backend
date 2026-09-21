@@ -5,6 +5,7 @@ import { PG_BOSS_QUEUE_POLICIES } from "../config/pgbossQueues.js";
 const TERMINAL_STATES = Object.freeze(["completed", "cancelled", "failed"]);
 const QUEUE_STATS_RETENTION_DAYS = 1;
 const WARNING_RETENTION_DAYS = 7;
+const RETENTION_INDEX_NAME = "job_common_retention_i1";
 
 export class PgBossRetention {
   constructor({
@@ -111,13 +112,13 @@ export class PgBossRetention {
         const result = await this.#auditQuery(
           `
             SELECT COUNT(*)::bigint AS count
-            FROM pgboss.job
+            FROM pgboss.job_common
             WHERE name = $1
-              AND state::text = ANY($2::text[])
+              AND state IN ('completed', 'cancelled', 'failed')
               AND completed_on IS NOT NULL
-              AND completed_on < now() - ($3::int * interval '1 second')
+              AND completed_on < now() - ($2::int * interval '1 second')
           `,
-          [queueName, TERMINAL_STATES, policy.deleteAfterSeconds],
+          [queueName, policy.deleteAfterSeconds],
         );
         candidates[queueName] = Number(result.rows[0]?.count || 0);
       } catch (error) {
@@ -163,6 +164,57 @@ export class PgBossRetention {
       try { await client.query("ROLLBACK"); } catch {}
       throw error;
     } finally {
+      client.release();
+    }
+  }
+
+  async cleanupIndexStatus() {
+    const result = await this.db.query(`
+      SELECT
+        c.relname AS name,
+        i.indisvalid AS valid,
+        pg_relation_size(c.oid)::bigint AS bytes
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_index i ON i.indexrelid = c.oid
+      WHERE n.nspname = 'pgboss'
+        AND c.relname = $1
+    `, [RETENTION_INDEX_NAME]);
+
+    if (!result.rows.length) return { exists: false, valid: false, bytes: 0 };
+    return {
+      exists: true,
+      valid: Boolean(result.rows[0].valid),
+      bytes: Number(result.rows[0].bytes || 0),
+    };
+  }
+
+  async prepareCleanupIndex({ statementTimeoutMs = 180000 } = {}) {
+    const current = await this.cleanupIndexStatus();
+    if (current.exists && current.valid) return { created: false, ...current };
+
+    const client = await this.db.connect();
+    try {
+      await client.query(`SET lock_timeout = '${Math.max(this.lockTimeoutMs, 5000)}ms'`);
+      await client.query(`SET statement_timeout = '${statementTimeoutMs}ms'`);
+
+      if (current.exists && !current.valid) {
+        await client.query(`DROP INDEX CONCURRENTLY IF EXISTS pgboss.${RETENTION_INDEX_NAME}`);
+      }
+
+      await client.query(`
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS ${RETENTION_INDEX_NAME}
+        ON pgboss.job_common (name, completed_on, id)
+        WHERE state IN ('completed', 'cancelled', 'failed')
+          AND completed_on IS NOT NULL
+      `);
+
+      const ready = await this.cleanupIndexStatus();
+      if (!ready.valid) throw new Error("pg-boss retention index was created but is not valid");
+      return { created: true, ...ready };
+    } finally {
+      try { await client.query("RESET lock_timeout"); } catch {}
+      try { await client.query("RESET statement_timeout"); } catch {}
       client.release();
     }
   }
@@ -238,7 +290,7 @@ export class PgBossRetention {
               AND state IN ('completed', 'cancelled', 'failed')
               AND completed_on IS NOT NULL
               AND completed_on < now() - ($2::int * interval '1 second')
-            ORDER BY id
+            ORDER BY completed_on ASC, id ASC
             LIMIT $3
             FOR UPDATE SKIP LOCKED
           )
