@@ -16,9 +16,11 @@ const boss = new PgBoss({
   max: env.POSTGRES_POOL_MAX,
   connectionTimeoutMillis: env.POSTGRES_CONNECTION_TIMEOUT_MS,
   application_name: sendOnlyRuntime ? "acg-funded-api-pgboss" : "acg-funded-worker-pgboss",
-  // API-only replicas may enqueue durable business work but must not run
-  // pg-boss supervisor/queue-monitor maintenance. Worker replicas own that.
-  supervise: !sendOnlyRuntime,
+  // Queue monitoring/supervision is disabled on every runtime. The current
+  // Supabase/Postgres deployment has shown lock contention inside pg-boss
+  // Boss.supervise() -> #monitor(), so normal job consumption must not compete
+  // with queue-monitor maintenance. Workers still process jobs via boss.work().
+  supervise: false,
   schedule: !sendOnlyRuntime,
   persistQueueStats: false,
   // Polling is sufficient for these queues and is compatible with pooled
