@@ -76,7 +76,8 @@ export class CommandWorker {
           await account.save();
         }
 
-        await provisionTradingAccount(account, { phase: 2, accountType: "CHALLENGE" });
+        const nextPhaseAccountType = phaseAccountType(account);
+        await provisionTradingAccount(account, { phase: 2, accountType: nextPhaseAccountType });
         await ensureTradingCredential(account, { queueEmail: true, platformAccountId: account.platformAccountId });
 
         resetAccountForPhaseTwo(account);
@@ -87,6 +88,26 @@ export class CommandWorker {
           platformAccountId: account.platformAccountId,
           allocatedEquity: account.initialDeposit,
         };
+      }
+
+      case "COMPLETE_TRIAL": {
+        await connector.disableAccount({
+          externalRef: `${account.accountId}:phase:${account.currentPhase || 1}`,
+          platformAccountId: account.platformAccountId,
+          reason: "ACG_FUNDED_TRIAL_COMPLETED",
+          liquidate: true,
+          cancelPending: true,
+        });
+        account.enabled = false;
+        account.status = "PASSED";
+        const activeRecord = account.platformAccounts.find(item =>
+          Number(item.phase) === Number(account.currentPhase || 1)
+          && String(item.accountType || "DEMO").toUpperCase() === "DEMO"
+        );
+        if (activeRecord) activeRecord.status = "COMPLETED";
+        await account.save();
+        console.log(`[LIFECYCLE] Trial ${accountId} completed successfully`);
+        return { success: true, provider: account.platform, timestamp: new Date() };
       }
 
       case "ENTER_FUNDED_REVIEW": {
@@ -112,6 +133,10 @@ export class CommandWorker {
   }
 }
 
+
+export function phaseAccountType(account) {
+  return String(account?.accountMode || "").toUpperCase() === "DEMO" ? "DEMO" : "CHALLENGE";
+}
 
 export function isActivePhaseTwo(account) {
   const phaseTwo = account?.platformAccounts?.find(item => Number(item.phase) === 2);
