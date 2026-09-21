@@ -1,5 +1,6 @@
 import Account from "../../accounts/account.model.js";
 import { getTradingConnector } from "../../connectors/trading/registry.js";
+import { recordAnalyticsEventOnce } from "./analytics.service.js";
 
 function ownershipQuery(customer) {
   const customerIds = [...new Set([customer.customerId, ...(customer.customerIds || [])].filter(Boolean))];
@@ -68,6 +69,20 @@ export async function createCustomerTradingLaunch(customer, accountId) {
   if (!session.ticket || !session.launchUrl) throw new Error("ACG Trader did not return a valid launch session.");
   const launch = new URL(session.launchUrl);
   launch.searchParams.set("ticket", session.ticket);
+
+  await recordAnalyticsEventOnce({
+    event: "trader_session_ready",
+    sessionId: `account:${account.accountId}`,
+    customer,
+    accountId: account.accountId,
+    source: "server",
+    properties: {
+      platform: "acg-trader",
+      accountMode: account.accountMode,
+      challengeType: account.challengeType,
+      phase: account.currentPhase,
+    },
+  }, { accountId: account.accountId }).catch(() => {});
 
   return {
     accountId: account.accountId,
