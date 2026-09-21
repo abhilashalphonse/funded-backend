@@ -226,12 +226,24 @@ export class PgBossRetention {
     const deletedByQueue = {};
 
     try {
+      const deferredQueues = {};
       for (const [queueName, policy] of Object.entries(PG_BOSS_QUEUE_POLICIES)) {
         let deleted = 0;
-        for (let batch = 0; batch < maxBatches; batch += 1) {
-          const count = await this.#deleteTerminalBatch(queueName, policy.deleteAfterSeconds);
-          deleted += count;
-          if (count < this.batchSize) break;
+        try {
+          for (let batch = 0; batch < maxBatches; batch += 1) {
+            const count = await this.#deleteTerminalBatch(queueName, policy.deleteAfterSeconds);
+            deleted += count;
+            if (count < this.batchSize) break;
+          }
+        } catch (error) {
+          if (["55P03", "57014"].includes(error?.code)) {
+            deferredQueues[queueName] = {
+              code: error.code,
+              message: error.message,
+            };
+          } else {
+            throw error;
+          }
         }
         deletedByQueue[queueName] = deleted;
       }
@@ -252,6 +264,7 @@ export class PgBossRetention {
         startedAt,
         completedAt: this.lastRunAt,
         deletedByQueue,
+        deferredQueues,
         queueStatsDeleted,
         warningsDeleted,
       };
@@ -290,7 +303,6 @@ export class PgBossRetention {
               AND state IN ('completed', 'cancelled', 'failed')
               AND completed_on IS NOT NULL
               AND completed_on < now() - ($2::int * interval '1 second')
-            ORDER BY completed_on ASC, id ASC
             LIMIT $3
             FOR UPDATE SKIP LOCKED
           )
