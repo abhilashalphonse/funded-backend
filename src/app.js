@@ -14,6 +14,7 @@ import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
 import boss from "./config/boss.js";
 import env from "./config/env.js";
+import accountSnapshotService from "./apis/services/accountSnapshot.service.js";
 import { COMMAND_QUEUE_NAME } from "./workers/state-engine/commandQueue.js";
 import { configuredTradingProvider } from "./connectors/trading/registry.js";
 import { provisionTradingAccount } from "./connectors/trading/account-provisioning.js";
@@ -48,7 +49,9 @@ app.get("/health", (req, res) => res.json({
   success: true,
   message: "ACG Funded API is running",
   environment: env.NODE_ENV,
+  runtimeRole: env.RUNTIME_ROLE,
   tradingProvider: configuredTradingProvider(),
+  snapshotPipeline: accountSnapshotService.health(),
   acgTraderWebhookConfigured: Boolean(env.ACG_TRADER_WEBHOOK_SECRET),
   customerAuthConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
   adminAccessConfigured: env.ADMIN_EMAILS.length > 0,

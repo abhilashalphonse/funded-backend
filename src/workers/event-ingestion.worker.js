@@ -1,6 +1,7 @@
 import Event from "../events/event.model.js";
 import Stream from "../events/stream.model.js";
 import { v5 as uuidv5 } from "uuid";
+import accountSnapshotService from "../apis/services/accountSnapshot.service.js";
 
 const STATE_JOB_NAMESPACE = uuidv5.URL;
 const MAX_RETRIES = 5;
@@ -38,6 +39,14 @@ export default class EventIngestionWorker {
     async ingest(event) {
         this.validate(event);
 
+        // Snapshots are high-frequency latest-state data. Drain any legacy
+        // queued snapshot jobs into the Redis/direct projection path instead
+        // of creating Event + Stream + state-events amplification.
+        if (event.eventType === "ACG_TRADER_ACCOUNT_SNAPSHOT") {
+            await accountSnapshotService.receive(event);
+            return;
+        }
+
         const existing = await Event.findOne({ eventId: event.eventId }).lean();
         if (existing) {
             await this.enqueueStateEvent(event.eventId);
@@ -55,7 +64,7 @@ export default class EventIngestionWorker {
                     { $inc: { lastVersion: 1 } },
                     {
                         upsert: true,
-                        new: true,
+                        returnDocument: "after",
                         setDefaultsOnInsert: true,
                     }
                 );

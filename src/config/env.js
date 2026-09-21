@@ -40,10 +40,22 @@ const tradingProvider = String(process.env.TRADING_PROVIDER || (isProduction ? "
 if (!["acg-trader", "simulator"].includes(tradingProvider)) throw new Error("TRADING_PROVIDER must be acg-trader or simulator.");
 if (isProduction && tradingProvider !== "acg-trader") throw new Error("Production TRADING_PROVIDER must be acg-trader.");
 
+const runtimeRole = String(process.env.ACG_RUNTIME_ROLE || "all").trim().toLowerCase();
+if (!["all", "api", "worker"].includes(runtimeRole)) {
+  throw new Error("ACG_RUNTIME_ROLE must be all, api, or worker.");
+}
+
+const redisRestUrl = validUrl("UPSTASH_REDIS_REST_URL", String(process.env.UPSTASH_REDIS_REST_URL || "").trim() || undefined);
+const redisRestToken = String(process.env.UPSTASH_REDIS_REST_TOKEN || "").trim() || undefined;
+if (Boolean(redisRestUrl) !== Boolean(redisRestToken)) {
+  throw new Error("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be configured together.");
+}
+
 const env = Object.freeze({
   NODE_ENV: nodeEnv,
   IS_PRODUCTION: isProduction,
   PORT: positiveInt("PORT", 3000),
+  RUNTIME_ROLE: runtimeRole,
   MONGODB_URI: required("MONGODB_URI"),
   POSTGRES_URL: required("POSTGRES_URL"),
   POSTGRES_HOST: process.env.POSTGRES_HOST,
@@ -53,6 +65,14 @@ const env = Object.freeze({
   POSTGRES_DATABASE: process.env.POSTGRES_DATABASE,
   POSTGRES_POOL_MAX: positiveInt("POSTGRES_POOL_MAX", 4),
   POSTGRES_CONNECTION_TIMEOUT_MS: positiveInt("POSTGRES_CONNECTION_TIMEOUT_MS", 30000),
+
+  UPSTASH_REDIS_REST_URL: redisRestUrl,
+  UPSTASH_REDIS_REST_TOKEN: redisRestToken,
+  ACG_SNAPSHOT_REDIS_TIMEOUT_MS: positiveInt("ACG_SNAPSHOT_REDIS_TIMEOUT_MS", 1500),
+  ACG_SNAPSHOT_CACHE_TTL_SECONDS: positiveInt("ACG_SNAPSHOT_CACHE_TTL_SECONDS", 900),
+  ACG_SNAPSHOT_BINDING_TTL_SECONDS: positiveInt("ACG_SNAPSHOT_BINDING_TTL_SECONDS", 3600),
+  ACG_SNAPSHOT_PROJECTION_CONCURRENCY: positiveInt("ACG_SNAPSHOT_PROJECTION_CONCURRENCY", 32),
+  ACG_SNAPSHOT_PROJECTION_LOCK_MS: positiveInt("ACG_SNAPSHOT_PROJECTION_LOCK_MS", 10000),
 
   CORS_ORIGINS: csv("CORS_ORIGINS", "http://localhost:5173"),
   ADMIN_EMAILS: csv("ADMIN_EMAILS").map(value => value.toLowerCase()),
