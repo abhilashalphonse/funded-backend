@@ -252,6 +252,20 @@ export async function activatePaidPayment(payment) {
         },
       },
     );
+    await recordAnalyticsEventOnce({
+      event: "account_activated",
+      sessionId: claimed.metadata?.analyticsSessionId || `payment:${claimed._id}`,
+      email: claimed.email,
+      accountId: account.accountId,
+      paymentId: String(claimed._id),
+      source: "server",
+      attribution: claimed.metadata?.attribution || {},
+      properties: {
+        accountSize: account.accountSize,
+        challengeType: account.challengeType,
+        platform: account.platform,
+      },
+    }, { paymentId: String(claimed._id) }).catch(() => {});
     return account.accountId;
   } catch (error) {
     await Payment.updateOne(
@@ -302,6 +316,23 @@ export async function processIpn(payload, signature) {
   if (nextStatus) payment.status = nextStatus;
   if (payment.status === "PAID" && !payment.paidAt) payment.paidAt = new Date();
   await payment.save();
+
+  if (["FAILED", "EXPIRED"].includes(payment.status)) {
+    const event = payment.status === "EXPIRED" ? "payment_expired" : "payment_failed";
+    await recordAnalyticsEventOnce({
+      event,
+      sessionId: payment.metadata?.analyticsSessionId || `payment:${payment._id}`,
+      email: payment.email,
+      paymentId: String(payment._id),
+      source: "server",
+      attribution: payment.metadata?.attribution || {},
+      properties: {
+        providerStatus: payment.providerStatus,
+        amount: payment.amount,
+        currency: payment.currency,
+      },
+    }, { paymentId: String(payment._id) }).catch(() => {});
+  }
 
   if (payment.status === "PAID") {
     await recordAnalyticsEventOnce({
