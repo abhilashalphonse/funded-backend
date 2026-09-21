@@ -132,9 +132,9 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
   account.lastProcessedEventId = event.eventId;
   await account.save();
 
-  if (account.accountMode === "DEMO" && decision.newStatus === "PASSED") {
+  if (account.accountMode === "DEMO" && decision.command === "CREATE_PHASE_2_ACCOUNT") {
     await recordAnalyticsEventOnce({
-      event: "trial_passed",
+      event: "trial_phase_1_passed",
       sessionId: `account:${account.accountId}`,
       accountId: account.accountId,
       source: "server",
@@ -142,6 +142,59 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
         ownerExternalRef: account.ownerExternalRef,
         accountSize: account.accountSize,
         challengeType: account.challengeType,
+        completedPhase: 1,
+      },
+    }, { accountId: account.accountId }).catch(() => {});
+  }
+
+  if (account.accountMode === "DEMO" && decision.command === "COMPLETE_TRIAL") {
+    const properties = {
+      ownerExternalRef: account.ownerExternalRef,
+      accountSize: account.accountSize,
+      challengeType: account.challengeType,
+      completedPhase: account.currentPhase,
+    };
+    await recordAnalyticsEventOnce({
+      event: "trial_passed",
+      sessionId: `account:${account.accountId}`,
+      accountId: account.accountId,
+      source: "server",
+      properties,
+    }, { accountId: account.accountId }).catch(() => {});
+    await recordAnalyticsEventOnce({
+      event: "trial_completed",
+      sessionId: `account:${account.accountId}`,
+      accountId: account.accountId,
+      source: "server",
+      properties,
+    }, { accountId: account.accountId }).catch(() => {});
+  }
+
+  if (account.accountMode !== "DEMO" && decision.command === "CREATE_PHASE_2_ACCOUNT") {
+    await recordAnalyticsEventOnce({
+      event: "phase_1_passed",
+      sessionId: `account:${account.accountId}`,
+      accountId: account.accountId,
+      source: "server",
+      properties: {
+        ownerExternalRef: account.ownerExternalRef,
+        accountSize: account.accountSize,
+        challengeType: account.challengeType,
+      },
+    }, { accountId: account.accountId }).catch(() => {});
+  }
+
+  if (account.accountMode !== "DEMO" && decision.command === "ENTER_FUNDED_REVIEW") {
+    await recordAnalyticsEventOnce({
+      event: "evaluation_passed",
+      sessionId: `account:${account.accountId}`,
+      accountId: account.accountId,
+      source: "server",
+      properties: {
+        ownerExternalRef: account.ownerExternalRef,
+        accountSize: account.accountSize,
+        challengeType: account.challengeType,
+        completedPhase: account.currentPhase,
       },
     }, { accountId: account.accountId }).catch(() => {});
   }
