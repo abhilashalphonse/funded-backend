@@ -43,9 +43,9 @@ async function resolveCustomer(token) {
 export async function requireCustomer(req, res, next) {
   try {
     const token = bearerToken(req);
-    if (!token) return res.status(401).json({ success: false, message: "Authentication required." });
+    if (!token) return res.status(401).json({ success: false, message: "Authentication required.", code: "AUTH_REQUIRED" });
     const customer = await resolveCustomer(token);
-    if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session." });
+    if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session.", code: "AUTH_SESSION_INVALID" });
     if (String(customer.status || "").toUpperCase() === "BLOCKED") {
       return res.status(403).json({ success: false, message: "This customer account is blocked.", code: "CUSTOMER_BLOCKED" });
     }
@@ -59,9 +59,9 @@ export async function requireCustomer(req, res, next) {
 export async function requireAdmin(req, res, next) {
   try {
     const token = bearerToken(req);
-    if (!token) return res.status(401).json({ success: false, message: "Authentication required." });
+    if (!token) return res.status(401).json({ success: false, message: "Authentication required.", code: "AUTH_REQUIRED" });
     const customer = await resolveCustomer(token);
-    if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session." });
+    if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session.", code: "AUTH_SESSION_INVALID" });
 
     const email = String(customer.email || "").trim().toLowerCase();
     if (!email || !env.ADMIN_EMAILS.includes(email)) {
@@ -86,7 +86,7 @@ export async function optionalCustomer(req, res, next) {
     const token = bearerToken(req);
     if (!token) return next();
     const customer = await resolveCustomer(token);
-    if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session." });
+    if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session.", code: "AUTH_SESSION_INVALID" });
     if (String(customer.status || "").toUpperCase() === "BLOCKED") {
       return res.status(403).json({ success: false, message: "This customer account is blocked.", code: "CUSTOMER_BLOCKED" });
     }
