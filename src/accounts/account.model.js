@@ -32,6 +32,29 @@ const DemoTradeSchema = new mongoose.Schema({
     closedAt: { type: Date, default: Date.now },
 }, { _id: false });
 
+const BreachSchema = new mongoose.Schema({
+    primaryReason: {
+        type: String,
+        enum: ["DAILY_DRAWDOWN", "MAX_DRAWDOWN"],
+        required: true
+    },
+    triggeredRules: {
+        type: [String],
+        default: []
+    },
+    breachedAt: { type: Date, required: true },
+    phase: { type: Number, required: true },
+    balance: { type: Number, default: null },
+    equity: { type: Number, default: null },
+    dailyStartEquity: { type: Number, default: null },
+    initialBalance: { type: Number, default: null },
+    dailyLoss: { type: Number, default: null },
+    totalLoss: { type: Number, default: null },
+    limitAmount: { type: Number, default: null },
+    actualLoss: { type: Number, default: null },
+    breachAmount: { type: Number, default: null },
+}, { _id: false });
+
 const AccountSchema = new mongoose.Schema(
     {
         accountId: { type: String, required: true, unique: true },
@@ -82,28 +105,7 @@ const AccountSchema = new mongoose.Schema(
         statusBeforeLock: { type: String, default: null },
         fundedApprovedAt: { type: Date, default: null },
 
-        breach: {
-            primaryReason: {
-                type: String,
-                enum: ["DAILY_DRAWDOWN", "MAX_DRAWDOWN"],
-                default: null
-            },
-            triggeredRules: {
-                type: [String],
-                default: []
-            },
-            breachedAt: { type: Date, default: null },
-            phase: { type: Number, default: null },
-            balance: { type: Number, default: null },
-            equity: { type: Number, default: null },
-            dailyStartEquity: { type: Number, default: null },
-            initialBalance: { type: Number, default: null },
-            dailyLoss: { type: Number, default: null },
-            totalLoss: { type: Number, default: null },
-            limitAmount: { type: Number, default: null },
-            actualLoss: { type: Number, default: null },
-            breachAmount: { type: Number, default: null }
-        },
+        breach: { type: BreachSchema, default: null },
 
         platform: { type: String, default: () => process.env.TRADING_PROVIDER || "simulator" },
         platformAccountId: { type: String, sparse: true },
