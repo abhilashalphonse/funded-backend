@@ -37,13 +37,13 @@ function extractCheckoutUrl(data) {
     || null;
 }
 
-export async function getDailyUsdFxQuote({ forceRefresh = false } = {}) {
+export async function getDailyUsdInrQuote({ forceRefresh = false } = {}) {
   const now = Date.now();
   if (!forceRefresh && fxCache && now - fxCache.fetchedAt < FX_CACHE_TTL_MS) {
     return fxCache.value;
   }
 
-  const response = await fetch(`${FX_BASE_URL}/v2/rates?base=usd&quotes=eur,inr`, {
+  const response = await fetch(`${FX_BASE_URL}/v2/rates?base=usd&quotes=inr`, {
     headers: { Accept: "application/json" },
   });
   const data = await response.json().catch(() => null);
@@ -57,42 +57,39 @@ export async function getDailyUsdFxQuote({ forceRefresh = false } = {}) {
   const rates = Object.fromEntries(
     data.map((row) => [String(row?.quote || "").toUpperCase(), Number(row?.rate)]),
   );
-  const usdToEur = rates.EUR;
   const usdToInr = rates.INR;
-  if (!Number.isFinite(usdToEur) || usdToEur <= 0 || !Number.isFinite(usdToInr) || usdToInr <= 0) {
-    const error = new Error("Daily FX response is missing valid USD/EUR or USD/INR rates.");
+  if (!Number.isFinite(usdToInr) || usdToInr <= 0) {
+    const error = new Error("Daily FX response is missing a valid USD/INR rate.");
     error.status = 502;
     error.code = "FX_QUOTE_INVALID";
     throw error;
   }
 
   const quoteDate = data.find((row) => row?.date)?.date || new Date().toISOString().slice(0, 10);
-  const eurToInr = usdToInr / usdToEur;
   const value = {
     source: "frankfurter",
     quoteDate,
     baseCurrency: "USD",
-    usdToEur,
+    quoteCurrency: "INR",
     usdToInr,
-    eurToInr,
   };
 
   fxCache = { fetchedAt: now, value };
   return value;
 }
 
-export async function eurToInrQuote(amountEur) {
-  const amount = Number(amountEur);
+export async function usdToInrQuote(amountUsd) {
+  const amount = Number(amountUsd);
   if (!Number.isFinite(amount) || amount <= 0) {
-    const error = new Error("A valid EUR payment amount is required.");
+    const error = new Error("A valid USD payment amount is required.");
     error.status = 400;
     error.code = "INVALID_PAYMENT_AMOUNT";
     throw error;
   }
 
-  const fx = await getDailyUsdFxQuote();
+  const fx = await getDailyUsdInrQuote();
   return {
-    amountInr: Number((amount * fx.eurToInr).toFixed(2)),
+    amountInr: Number((amount * fx.usdToInr).toFixed(2)),
     ...fx,
   };
 }
