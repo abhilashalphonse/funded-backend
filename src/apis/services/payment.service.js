@@ -187,6 +187,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     error.code = "CUSTOMER_BLOCKED";
     throw error;
   }
+
   const stableCustomerId = String(fundedCustomer.customerId);
   if (!allowedMethods[paymentMethod]) throw new Error("Unsupported crypto payment method.");
   if (!process.env.NOWPAYMENTS_IPN_URL) throw new Error("NOWPAYMENTS_IPN_URL is not configured.");
@@ -194,6 +195,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
 
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
   const orderId = `ACG-${randomUUID()}`;
+  const statusAccess = createStatusToken();
   const payment = await Payment.create({
     orderId,
     ownerExternalRef: stableCustomerId,
@@ -204,6 +206,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     amount: pricing.finalPrice,
     currency: "USD",
     paymentMethod,
+    statusTokenHash: statusAccess.hash,
     status: "CREATED",
     metadata: {
       analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
@@ -212,6 +215,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   });
 
   try {
+    const returnToken = encodeURIComponent(statusAccess.token);
     const invoice = await nowPayments("/invoice", {
       price_amount: pricing.finalPrice,
       price_currency: "usd",
@@ -219,8 +223,8 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
       order_id: orderId,
       order_description: `ACG Funded ${challengeDefinition.step} $${challengeDefinition.accountSize.toLocaleString()} challenge`,
       ipn_callback_url: process.env.NOWPAYMENTS_IPN_URL,
-      success_url: `${process.env.FRONTEND_URL}/?payment=${payment._id}&status=success`,
-      cancel_url: `${process.env.FRONTEND_URL}/?payment=${payment._id}&status=cancelled`,
+      success_url: `${process.env.FRONTEND_URL}/?payment=${payment._id}&token=${returnToken}&status=success`,
+      cancel_url: `${process.env.FRONTEND_URL}/?payment=${payment._id}&token=${returnToken}&status=cancelled`,
     });
 
     payment.providerInvoiceId = String(invoice.id ?? invoice.invoice_id ?? "");
@@ -231,6 +235,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
       pricing,
     };
     await payment.save();
+
     await recordAnalyticsEventOnce({
       event: "payment_started",
       sessionId: analyticsSessionId || `payment:${payment._id}`,
@@ -247,7 +252,15 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
         profitSplit: commercialConfig?.profitSplit,
       },
     }, { paymentId: String(payment._id) }).catch(() => {});
-    return { paymentId: payment._id, orderId, amount: pricing.finalPrice, currency: "USD", checkoutUrl: payment.checkoutUrl };
+
+    return {
+      paymentId: payment._id,
+      statusToken: statusAccess.token,
+      orderId,
+      amount: pricing.finalPrice,
+      currency: "USD",
+      checkoutUrl: payment.checkoutUrl,
+    };
   } catch (error) {
     payment.status = "FAILED";
     payment.providerStatus = error.message;
@@ -256,8 +269,16 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   }
 }
 
-
-export async function createUpiPayment({ email, challengeDefinition, commercialConfig, customer = null, analyticsSessionId, attribution = {}, customerMobile }) {
+export async function createUpiPayment({
+  email,
+  challengeDefinition,
+  commercialConfig,
+  customer = null,
+  analyticsSessionId,
+  attribution = {},
+  customerMobile,
+  quoteToken,
+}) {
   const normalizedEmail = normalizeCustomerEmail(email);
   const fundedCustomer = customer?.customerId
     ? { customerId: customer.customerId, status: customer.status }
@@ -270,7 +291,7 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
     throw error;
   }
   if (!process.env.UPI_GATEWAY_CALLBACK_URL) {
-    const error = new Error("UPI_GATEWAY_CALLBACK_URL is not configured.");
+    const error = new Error("UPI payment callback is not configured.");
     error.status = 503;
     error.code = "UPI_GATEWAY_NOT_CONFIGURED";
     throw error;
@@ -278,16 +299,29 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
 
   const stableCustomerId = String(fundedCustomer.customerId);
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
-  const fx = await usdToInrQuote(pricing.finalPrice);
-  const providerAmount = fx.amountInr;
-  if (providerAmount < 1 || providerAmount > 100000) {
-    const error = new Error("This challenge price is outside the supported UPI gateway UPI range.");
+  const quote = verifyUpiQuoteToken(quoteToken, challengeDefinition, commercialConfig);
+  const providerAmount = Number(quote.providerAmount);
+
+  if (
+    String(quote.currency).toUpperCase() !== "USD"
+    || String(quote.providerCurrency).toUpperCase() !== "INR"
+    || Math.abs(Number(quote.amount) - Number(pricing.finalPrice)) > 0.01
+  ) {
+    const error = new Error("UPI quote does not match the current challenge price.");
+    error.status = 409;
+    error.code = "UPI_QUOTE_MISMATCH";
+    throw error;
+  }
+
+  if (!Number.isFinite(providerAmount) || providerAmount < 1 || providerAmount > 100000) {
+    const error = new Error("This challenge price is outside the supported UPI payment range.");
     error.status = 400;
     error.code = "UPI_AMOUNT_OUT_OF_RANGE";
     throw error;
   }
 
   const orderId = `ACG-${randomUUID()}`;
+  const statusAccess = createStatusToken();
   const payment = await Payment.create({
     orderId,
     ownerExternalRef: stableCustomerId,
@@ -301,18 +335,20 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
     providerCurrency: "INR",
     paymentMethod: "UPI",
     provider: "upi-gateway",
+    statusTokenHash: statusAccess.hash,
     status: "CREATED",
     metadata: {
       analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
       attribution,
       pricing,
       fx: {
-        source: fx.source,
-        quoteDate: fx.quoteDate,
-        baseCurrency: fx.baseCurrency,
-        quoteCurrency: fx.quoteCurrency,
-        usdToInr: fx.usdToInr,
+        source: "daily-fx",
+        quoteDate: quote.quoteDate,
+        baseCurrency: "USD",
+        quoteCurrency: "INR",
+        usdToInr: Number(quote.usdToInr),
       },
+      quoteExpiresAt: new Date(Number(quote.expiresAt)).toISOString(),
     },
   });
 
@@ -355,6 +391,7 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
 
     return {
       paymentId: payment._id,
+      statusToken: statusAccess.token,
       orderId,
       amount: pricing.finalPrice,
       currency: "USD",
