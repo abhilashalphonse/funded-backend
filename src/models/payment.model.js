@@ -14,6 +14,8 @@ const PaymentSchema = new mongoose.Schema(
     providerAmount: Number,
     providerCurrency: String,
     utr: { type: String, index: true, sparse: true },
+    statusTokenHash: { type: String, index: true, sparse: true },
+    providerLastCheckedAt: Date,
     provider: { type: String, default: "nowpayments" },
     providerPaymentId: { type: String, index: true, sparse: true },
     providerInvoiceId: { type: String, index: true, sparse: true },
@@ -57,6 +59,13 @@ PaymentSchema.index(
 
 const Payment = mongoose.model("Payment", PaymentSchema);
 
+export async function normalizePaymentCurrencyLabels() {
+  await Payment.updateMany(
+    { currency: { $in: ["EUR", "eur", null, ""] } },
+    { $set: { currency: "USD" } },
+  );
+}
+
 export async function ensurePaymentProviderIndex() {
   const indexName = "provider_1_providerPaymentId_1";
   const indexes = await Payment.collection.indexes();
@@ -78,6 +87,30 @@ export async function ensurePaymentProviderIndex() {
         unique: true,
         partialFilterExpression: {
           providerPaymentId: { $type: "string" },
+        },
+      },
+    );
+  }
+
+  const utrIndexName = "provider_1_utr_1";
+  const utrIndexes = await Payment.collection.indexes();
+  const existingUtr = utrIndexes.find((index) => index.name === utrIndexName);
+  const hasExpectedUtrFilter =
+    existingUtr?.unique === true &&
+    existingUtr?.partialFilterExpression?.utr?.$type === "string";
+
+  if (existingUtr && !hasExpectedUtrFilter) {
+    await Payment.collection.dropIndex(utrIndexName);
+  }
+
+  if (!existingUtr || !hasExpectedUtrFilter) {
+    await Payment.collection.createIndex(
+      { provider: 1, utr: 1 },
+      {
+        name: utrIndexName,
+        unique: true,
+        partialFilterExpression: {
+          utr: { $type: "string" },
         },
       },
     );
