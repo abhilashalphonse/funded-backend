@@ -45,7 +45,7 @@ export async function createUpi(req, res, next) {
 
 export async function upiQuote(req, res, next) {
   try {
-    res.json({ success: true, data: getUpiQuote(req.body || {}) });
+    res.json({ success: true, data: await getUpiQuote(req.body || {}) });
   } catch (error) { next(error); }
 }
 
