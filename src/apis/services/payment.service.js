@@ -46,7 +46,7 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   const fx = await usdToInrQuote(pricing.finalPrice);
   const providerAmount = fx.amountInr;
   if (providerAmount < 1 || providerAmount > 100000) {
-    const error = new Error("This challenge price is outside the supported UPI gateway UPI range.");
+    const error = new Error("This challenge price is outside the supported UPI payment range.");
     error.status = 400;
     error.code = "UPI_AMOUNT_OUT_OF_RANGE";
     throw error;
@@ -209,7 +209,7 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
   });
 
   try {
-    const order = await createUPI gatewayOrder({
+    const order = await createUpiOrder({
       amountInr: providerAmount,
       orderId,
       redirectUrl: process.env.UPI_GATEWAY_CALLBACK_URL,
@@ -262,10 +262,10 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
   }
 }
 
-async function markUPI gatewayPaid(payment, providerData) {
+async function markUpiPayment(payment, providerData) {
   const returnedOrderId = String(providerData?.order_id || "").trim();
   if (returnedOrderId && returnedOrderId !== payment.orderId) {
-    const error = new Error("UPI gateway order ID mismatch.");
+    const error = new Error("UPI order ID mismatch.");
     error.status = 400;
     error.code = "UPI_ORDER_MISMATCH";
     throw error;
@@ -276,13 +276,13 @@ async function markUPI gatewayPaid(payment, providerData) {
   const providerPaymentStatus = String(providerData?.payment_status || "").trim().toUpperCase();
   const returnedMethod = String(providerData?.method || "").trim().toUpperCase();
   if (providerPaymentStatus === "SUCCESS" && returnedMethod !== "UPI") {
-    const error = new Error("Unexpected UPI gateway payment method.");
+    const error = new Error("Unexpected UPI payment method.");
     error.status = 400;
     error.code = "UPI_METHOD_MISMATCH";
     throw error;
   }
   if (!Number.isFinite(returnedAmount) || Math.abs(returnedAmount - expectedAmount) > 0.01) {
-    const error = new Error("UPI gateway payment amount mismatch.");
+    const error = new Error("UPI payment amount mismatch.");
     error.status = 400;
     error.code = "UPI_AMOUNT_MISMATCH";
     throw error;
@@ -292,7 +292,7 @@ async function markUPI gatewayPaid(payment, providerData) {
   payment.utr = providerData?.utr ? String(providerData.utr) : payment.utr;
   if (providerData?.payment_token) payment.providerPaymentId = String(providerData.payment_token);
 
-  const nextStatus = normalizeUPI gatewayStatus(providerData?.payment_status || providerData?.status);
+  const nextStatus = normalizeUpiStatus(providerData?.payment_status || providerData?.status);
   payment.status = nextStatus;
   if (nextStatus === "PAID" && !payment.paidAt) payment.paidAt = new Date();
   await payment.save();
@@ -320,18 +320,18 @@ async function markUPI gatewayPaid(payment, providerData) {
   return payment;
 }
 
-export async function refreshUPI gatewayPayment(payment) {
+export async function refreshUpiPayment(payment) {
   if (!payment || payment.provider !== "upi-gateway") return payment;
   if (["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) return payment;
 
-  const providerData = await getUPI gatewayOrderStatus(payment.orderId);
-  return markUPI gatewayPaid(payment, providerData);
+  const providerData = await getUpiOrderStatus(payment.orderId);
+  return markUpiPayment(payment, providerData);
 }
 
-export async function processUPI gatewayCallback(payload = {}) {
+export async function processUpiCallback(payload = {}) {
   const orderId = String(payload?.order_id || "").trim();
   if (!orderId) {
-    const error = new Error("UPI gateway callback is missing order_id.");
+    const error = new Error("UPI callback is missing order_id.");
     error.status = 400;
     error.code = "UPI_ORDER_ID_REQUIRED";
     throw error;
@@ -344,10 +344,9 @@ export async function processUPI gatewayCallback(payload = {}) {
     throw error;
   }
 
-  // Never trust callback status by itself. UPI gateway explicitly requires the
-  // merchant to query order-status and use that result as the source of truth.
-  const verified = await getUPI gatewayOrderStatus(orderId);
-  return markUPI gatewayPaid(payment, verified);
+  // Never trust callback status by itself. Query the gateway order-status endpoint and use that result as the source of truth.
+  const verified = await getUpiOrderStatus(orderId);
+  return markUpiPayment(payment, verified);
 }
 
 function recursivelySort(value) {
@@ -593,7 +592,7 @@ export async function getPaymentStatus(id) {
 
   if (payment.provider === "upi-gateway" && !["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) {
     try {
-      await refreshUPI gatewayPayment(payment);
+      await refreshUpiPayment(payment);
       payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency checkoutUrl providerStatus paidAmount paidCurrency paidAt utr accountId activatedAt activation");
     } catch (error) {
       // Status polling should remain available if the provider is temporarily
