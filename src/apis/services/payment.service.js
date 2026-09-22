@@ -12,7 +12,7 @@ import { enqueuePaymentActivation } from "../../workers/payment-activation.queue
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import {
   createRupayexOrder,
-  eurToInrQuote,
+  usdToInrQuote,
   getRupayexOrderStatus,
   normalizeRupayexStatus,
 } from "./paymentProviders/rupayex.service.js";
@@ -43,7 +43,7 @@ async function nowPayments(path, body) {
 
 export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
-  const fx = await eurToInrQuote(pricing.finalPrice);
+  const fx = await usdToInrQuote(pricing.finalPrice);
   const providerAmount = fx.amountInr;
   if (providerAmount < 1 || providerAmount > 100000) {
     const error = new Error("This challenge price is outside the supported Rupayex UPI range.");
@@ -53,7 +53,7 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   }
   return {
     amount: pricing.finalPrice,
-    currency: "EUR",
+    currency: "USD",
     providerAmount,
     providerCurrency: "INR",
     paymentMethod: "UPI",
@@ -62,9 +62,8 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
       source: fx.source,
       quoteDate: fx.quoteDate,
       baseCurrency: fx.baseCurrency,
-      usdToEur: fx.usdToEur,
+      quoteCurrency: fx.quoteCurrency,
       usdToInr: fx.usdToInr,
-      eurToInr: fx.eurToInr,
     },
   };
 }
@@ -95,7 +94,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     challengeDefinition,
     commercialConfig,
     amount: pricing.finalPrice,
-    currency: "EUR",
+    currency: "USD",
     paymentMethod,
     status: "CREATED",
     metadata: {
@@ -107,7 +106,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   try {
     const invoice = await nowPayments("/invoice", {
       price_amount: pricing.finalPrice,
-      price_currency: "eur",
+      price_currency: "usd",
       pay_currency: allowedMethods[paymentMethod],
       order_id: orderId,
       order_description: `ACG Funded ${challengeDefinition.step} $${challengeDefinition.accountSize.toLocaleString()} challenge`,
@@ -133,14 +132,14 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
       attribution,
       properties: {
         amount: pricing.finalPrice,
-        currency: "EUR",
+        currency: "USD",
         paymentMethod,
         accountSize: challengeDefinition.accountSize,
         step: challengeDefinition.step,
         profitSplit: commercialConfig?.profitSplit,
       },
     }, { paymentId: String(payment._id) }).catch(() => {});
-    return { paymentId: payment._id, orderId, amount: pricing.finalPrice, currency: "EUR", checkoutUrl: payment.checkoutUrl };
+    return { paymentId: payment._id, orderId, amount: pricing.finalPrice, currency: "USD", checkoutUrl: payment.checkoutUrl };
   } catch (error) {
     payment.status = "FAILED";
     payment.providerStatus = error.message;
@@ -171,7 +170,7 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
 
   const stableCustomerId = String(fundedCustomer.customerId);
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
-  const fx = await eurToInrQuote(pricing.finalPrice);
+  const fx = await usdToInrQuote(pricing.finalPrice);
   const providerAmount = fx.amountInr;
   if (providerAmount < 1 || providerAmount > 100000) {
     const error = new Error("This challenge price is outside the supported Rupayex UPI range.");
@@ -189,7 +188,7 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
     challengeDefinition,
     commercialConfig,
     amount: pricing.finalPrice,
-    currency: "EUR",
+    currency: "USD",
     providerAmount,
     providerCurrency: "INR",
     paymentMethod: "UPI",
@@ -203,9 +202,8 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
         source: fx.source,
         quoteDate: fx.quoteDate,
         baseCurrency: fx.baseCurrency,
-        usdToEur: fx.usdToEur,
+        quoteCurrency: fx.quoteCurrency,
         usdToInr: fx.usdToInr,
-        eurToInr: fx.eurToInr,
       },
     },
   });
@@ -237,7 +235,7 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
       attribution,
       properties: {
         amount: pricing.finalPrice,
-        currency: "EUR",
+        currency: "USD",
         providerAmount,
         providerCurrency: "INR",
         paymentMethod: "UPI",
@@ -251,7 +249,7 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
       paymentId: payment._id,
       orderId,
       amount: pricing.finalPrice,
-      currency: "EUR",
+      currency: "USD",
       providerAmount,
       providerCurrency: "INR",
       checkoutUrl: payment.checkoutUrl,
@@ -532,7 +530,8 @@ export async function processIpn(payload, signature) {
   const expectedCrypto = allowedMethods[payment.paymentMethod];
   const expectedFiat = Number(payment.amount);
   const receivedFiat = Number(payload.price_amount);
-  if (payload.price_currency && String(payload.price_currency).toLowerCase() !== "eur") throw new Error("Unexpected payment fiat currency.");
+  const expectedFiatCurrency = String(payment.currency || "USD").toLowerCase();
+  if (payload.price_currency && String(payload.price_currency).toLowerCase() !== expectedFiatCurrency) throw new Error("Unexpected payment fiat currency.");
   if (Number.isFinite(receivedFiat) && Math.abs(receivedFiat - expectedFiat) > 0.01) throw new Error("Payment amount mismatch.");
   if (payload.pay_currency && String(payload.pay_currency).toLowerCase() !== expectedCrypto) throw new Error("Payment cryptocurrency mismatch.");
 
