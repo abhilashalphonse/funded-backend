@@ -118,7 +118,7 @@ export function calculatePrice(challengeDefinition, commercialConfig) {
   const subtotal = roundCurrency(base * multiplier);
 
   return {
-    currency: "EUR",
+    currency: "USD",
     basePrice: base,
     adjustmentTotal,
     multiplier,
