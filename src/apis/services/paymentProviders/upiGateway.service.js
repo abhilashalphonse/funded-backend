@@ -180,8 +180,13 @@ export async function getUpiOrderStatus(orderId) {
 
 export function normalizeUpiStatus(value) {
   const status = String(value || "").trim().toUpperCase();
+
+  if (status === "PENDING") return "WAITING";
+  if (status === "APPROVED") return "CONFIRMING";
+  if (status === "PROCESSING") return "CONFIRMING";
   if (status === "SUCCESS") return "PAID";
-  if (["FAILED", "FAILURE", "REJECTED", "CANCELLED", "CANCELED"].includes(status)) return "FAILED";
-  if (["EXPIRED"].includes(status)) return "EXPIRED";
+  if (status === "REJECTED") return "REFUNDED";
+
+  // Unknown provider states must never activate a challenge.
   return "WAITING";
 }
