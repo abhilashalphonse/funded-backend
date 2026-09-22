@@ -51,7 +51,10 @@ export async function upiQuote(req, res, next) {
 
 export async function upiCallback(req, res, next) {
   try {
-    await processUpiCallback({ ...(req.query || {}), ...(req.body || {}) });
+    await processUpiCallback(
+      { ...(req.query || {}), ...(req.body || {}) },
+      req.params?.gatewayId || "upi_gateway_1",
+    );
     return res.status(200).json({ success: true });
   } catch (error) { next(error); }
 }
