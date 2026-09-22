@@ -40,6 +40,100 @@ async function nowPayments(path, body) {
   return data;
 }
 
+const UPI_QUOTE_TTL_MS = 10 * 60 * 1000;
+const UPI_PROVIDER_POLL_INTERVAL_MS = 15 * 1000;
+
+function hashToken(value) {
+  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+}
+
+function createStatusToken() {
+  const token = crypto.randomBytes(24).toString("base64url");
+  return { token, hash: hashToken(token) };
+}
+
+function safeStringEqual(a, b) {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function upiQuoteSecret() {
+  const secret = String(process.env.UPI_GATEWAY_API_TOKEN || "").trim();
+  if (!secret) {
+    const error = new Error("UPI payment gateway is not configured.");
+    error.status = 503;
+    error.code = "UPI_GATEWAY_NOT_CONFIGURED";
+    throw error;
+  }
+  return secret;
+}
+
+function pricingFingerprint(challengeDefinition, commercialConfig) {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(recursivelySort({ challengeDefinition, commercialConfig })))
+    .digest("hex");
+}
+
+function signUpiQuote(payload) {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto.createHmac("sha256", upiQuoteSecret()).update(encoded).digest("base64url");
+  return `${encoded}.${signature}`;
+}
+
+function verifyUpiQuoteToken(token, challengeDefinition, commercialConfig) {
+  const [encoded, signature] = String(token || "").split(".");
+  if (!encoded || !signature) {
+    const error = new Error("A valid UPI quote is required.");
+    error.status = 400;
+    error.code = "UPI_QUOTE_REQUIRED";
+    throw error;
+  }
+
+  const expected = crypto.createHmac("sha256", upiQuoteSecret()).update(encoded).digest("base64url");
+  if (!safeStringEqual(signature, expected)) {
+    const error = new Error("UPI quote verification failed.");
+    error.status = 400;
+    error.code = "UPI_QUOTE_INVALID";
+    throw error;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    const error = new Error("UPI quote is invalid.");
+    error.status = 400;
+    error.code = "UPI_QUOTE_INVALID";
+    throw error;
+  }
+
+  if (!Number.isFinite(Number(payload?.expiresAt)) || Number(payload.expiresAt) < Date.now()) {
+    const error = new Error("UPI quote has expired. Refresh the checkout amount and try again.");
+    error.status = 409;
+    error.code = "UPI_QUOTE_EXPIRED";
+    throw error;
+  }
+
+  const expectedFingerprint = pricingFingerprint(challengeDefinition, commercialConfig);
+  if (!safeStringEqual(payload?.fingerprint, expectedFingerprint)) {
+    const error = new Error("UPI quote does not match this challenge configuration.");
+    error.status = 409;
+    error.code = "UPI_QUOTE_MISMATCH";
+    throw error;
+  }
+
+  return payload;
+}
+
+function nextPaymentStatus(currentStatus, requestedStatus) {
+  const current = String(currentStatus || "CREATED").toUpperCase();
+  const next = String(requestedStatus || current).toUpperCase();
+  if (current === "REFUNDED") return "REFUNDED";
+  if (current === "PAID") return next === "REFUNDED" ? "REFUNDED" : "PAID";
+  return next;
+}
+
 
 export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
