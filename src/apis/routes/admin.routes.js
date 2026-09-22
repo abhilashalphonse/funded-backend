@@ -45,6 +45,7 @@ async function writeAudit(req, event) {
 }
 
 const TRADABLE_ACCOUNT_STATUSES = new Set(["ACTIVE", "PHASE_2", "FUNDED"]);
+const PAYMENT_ADMIN_FIELDS = "orderId customerId email amount currency paymentMethod provider providerStatus status providerAmount providerCurrency paidAmount paidCurrency paidAt utr accountId activatedAt activation createdAt updatedAt";
 
 function platformRecord(account) {
   return (account.platformAccounts || []).find(item =>
@@ -134,7 +135,7 @@ router.get("/overview", async (_req, res, next) => {
     ]);
 
     const recentPayments = await Payment.find({}).sort({ createdAt: -1 }).limit(8)
-      .select("orderId email amount currency status accountId createdAt paidAt").lean();
+      .select(PAYMENT_ADMIN_FIELDS).lean();
     const recentAccounts = await Account.find({}).sort({ updatedAt: -1 }).limit(8)
       .select("accountId customerId accountMode status accountSize currentPhase updatedAt").lean();
 
@@ -227,7 +228,7 @@ router.get("/users/:customerId", async (req, res, next) => {
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found." });
     const [accounts, payments, support] = await Promise.all([
       Account.find({ customerId: customer.customerId }).sort({ createdAt: -1 }).lean(),
-      Payment.find({ customerId: customer.customerId }).sort({ createdAt: -1 }).lean(),
+      Payment.find({ customerId: customer.customerId }).sort({ createdAt: -1 }).select(PAYMENT_ADMIN_FIELDS).lean(),
       SupportConversation.find({ customerId: customer.customerId }).sort({ lastMessageAt: -1 }).limit(20).lean(),
     ]);
     const spend = payments.filter(item => item.status === "PAID").reduce((sum, item) => sum + Number(item.amount || 0), 0);
@@ -333,7 +334,7 @@ router.get("/challenges/:accountId", async (req, res, next) => {
     const account = await Account.findOne({ accountId: req.params.accountId }).lean();
     if (!account) return res.status(404).json({ success: false, message: "Challenge not found." });
     const customer = account.customerId ? await Customer.findOne({ customerId: account.customerId }).lean() : null;
-    const payment = await Payment.findOne({ accountId: account.accountId }).lean();
+    const payment = await Payment.findOne({ accountId: account.accountId }).select(PAYMENT_ADMIN_FIELDS).lean();
     res.json({ success: true, data: { account, customer, payment } });
   } catch (error) { next(error); }
 });
@@ -424,7 +425,7 @@ async function listPayments(req, res, next) {
       filter.$or = [{ orderId: rx }, { email: rx }, { customerId: rx }, { providerPaymentId: rx }, { accountId: rx }];
     }
     const [rows, total] = await Promise.all([
-      Payment.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Payment.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).select(PAYMENT_ADMIN_FIELDS).lean(),
       Payment.countDocuments(filter),
     ]);
     res.json({ success: true, data: { rows, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } } });
