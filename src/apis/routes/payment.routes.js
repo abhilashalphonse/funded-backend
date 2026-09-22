@@ -6,7 +6,9 @@ const router = Router();
 router.post("/crypto/create", optionalCustomer, createCrypto);
 router.post("/upi/quote", upiQuote);
 router.post("/upi/create", optionalCustomer, createUpi);
+// Legacy gateway-1 callback remains valid for existing deployment configuration.
 router.post("/upi/callback", upiCallback);
+router.post("/upi/:gatewayId/callback", upiCallback);
 router.post("/crypto/ipn", ipn);
 router.get("/:paymentId/status", status);
 export default router;
