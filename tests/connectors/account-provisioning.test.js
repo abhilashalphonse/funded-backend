@@ -21,6 +21,8 @@ test("risk policy converts Funded percentage rules into execution currency limit
     dailyLoss: { limit: "3000", reference: "DAILY_START_EQUITY" },
     maxLoss: { limit: "6000", reference: "INITIAL_BALANCE" },
     profitTarget: "10000",
+    maxRiskPerTradePercent: null,
+    maxAggregateRiskPercent: null,
     breachAction: "LIQUIDATE_AND_LOCK",
   });
   assert.equal(buildRiskPolicy(account, 2).profitTarget, "5000");
@@ -41,6 +43,8 @@ test("funded risk policy keeps loss limits but has no evaluation profit target",
   assert.deepEqual(buildRiskPolicy(account, 2, { includeProfitTarget: false }), {
     dailyLoss: { limit: "5000", reference: "DAILY_START_EQUITY" },
     maxLoss: { limit: "10000", reference: "INITIAL_BALANCE" },
+    maxRiskPerTradePercent: null,
+    maxAggregateRiskPercent: null,
     breachAction: "LIQUIDATE_AND_LOCK",
   });
 });

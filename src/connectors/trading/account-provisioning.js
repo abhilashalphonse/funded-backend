@@ -73,6 +73,8 @@ export function buildRiskPolicy(account, phase = account.currentPhase || 1, { in
     dailyLoss: { limit: percentAmount(balance, account.rules?.dailyDrawdown), reference: "DAILY_START_EQUITY" },
     maxLoss: { limit: percentAmount(balance, account.rules?.maxDrawdown), reference: "INITIAL_BALANCE" },
     ...(includeProfitTarget ? { profitTarget: percentAmount(balance, phaseRule?.profitTarget) } : {}),
+    maxRiskPerTradePercent: null,
+    maxAggregateRiskPercent: null,
     breachAction: "LIQUIDATE_AND_LOCK",
   };
 }
