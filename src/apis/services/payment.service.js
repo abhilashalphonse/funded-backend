@@ -150,6 +150,7 @@ export function nextPaymentStatus(currentStatus, requestedStatus) {
 
 
 export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
+  const gateway = await getActiveUpiGateway();
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
   const fx = await usdToInrQuote(pricing.finalPrice);
   const providerAmount = fx.amountInr;
@@ -162,6 +163,7 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
 
   const expiresAt = Date.now() + UPI_QUOTE_TTL_MS;
   const quoteToken = signUpiQuote({
+    gatewayId: gateway.id,
     fingerprint: pricingFingerprint(challengeDefinition, commercialConfig),
     amount: pricing.finalPrice,
     currency: "USD",
@@ -170,7 +172,7 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
     usdToInr: fx.usdToInr,
     quoteDate: fx.quoteDate,
     expiresAt,
-  });
+  }, gateway);
 
   return {
     amount: pricing.finalPrice,
@@ -178,6 +180,7 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
     providerAmount,
     providerCurrency: "INR",
     paymentMethod: "UPI",
+    gatewayId: gateway.id,
     quoteToken,
     expiresAt,
     fx: {
@@ -303,16 +306,17 @@ export async function createUpiPayment({
     error.code = "CUSTOMER_BLOCKED";
     throw error;
   }
-  if (!process.env.UPI_GATEWAY_CALLBACK_URL) {
+  const stableCustomerId = String(fundedCustomer.customerId);
+  const pricing = calculatePrice(challengeDefinition, commercialConfig);
+  const quote = verifyUpiQuoteToken(quoteToken, challengeDefinition, commercialConfig);
+  const gateway = getUpiGateway(quote.gatewayId || DEFAULT_UPI_GATEWAY_ID);
+  const callbackUrl = gateway.callbackUrl?.();
+  if (!callbackUrl) {
     const error = new Error("UPI payment callback is not configured.");
     error.status = 503;
     error.code = "UPI_GATEWAY_NOT_CONFIGURED";
     throw error;
   }
-
-  const stableCustomerId = String(fundedCustomer.customerId);
-  const pricing = calculatePrice(challengeDefinition, commercialConfig);
-  const quote = verifyUpiQuoteToken(quoteToken, challengeDefinition, commercialConfig);
   const providerAmount = Number(quote.providerAmount);
 
   if (
@@ -347,7 +351,7 @@ export async function createUpiPayment({
     providerAmount,
     providerCurrency: "INR",
     paymentMethod: "UPI",
-    provider: "upi-gateway",
+    provider: gateway.id,
     statusTokenHash: statusAccess.hash,
     status: "CREATED",
     metadata: {
@@ -366,10 +370,10 @@ export async function createUpiPayment({
   });
 
   try {
-    const order = await createUpiOrder({
+    const order = await gateway.createOrder({
       amountInr: providerAmount,
       orderId,
-      redirectUrl: process.env.UPI_GATEWAY_CALLBACK_URL,
+      redirectUrl: callbackUrl,
       customerMobile,
       remark1: `ACG Funded ${challengeDefinition.step} ${Number(challengeDefinition.accountSize).toLocaleString()} challenge`,
     });
@@ -396,6 +400,7 @@ export async function createUpiPayment({
         providerAmount,
         providerCurrency: "INR",
         paymentMethod: "UPI",
+        gatewayId: gateway.id,
         accountSize: challengeDefinition.accountSize,
         step: challengeDefinition.step,
         profitSplit: commercialConfig?.profitSplit,
