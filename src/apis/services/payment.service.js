@@ -12,7 +12,7 @@ import { enqueuePaymentActivation } from "../../workers/payment-activation.queue
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import {
   createRupayexOrder,
-  eurToInr,
+  eurToInrQuote,
   getRupayexOrderStatus,
   normalizeRupayexStatus,
 } from "./paymentProviders/rupayex.service.js";
@@ -41,9 +41,10 @@ async function nowPayments(path, body) {
 }
 
 
-export function getUpiQuote({ challengeDefinition, commercialConfig }) {
+export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
-  const providerAmount = eurToInr(pricing.finalPrice);
+  const fx = await eurToInrQuote(pricing.finalPrice);
+  const providerAmount = fx.amountInr;
   if (providerAmount < 1 || providerAmount > 100000) {
     const error = new Error("This challenge price is outside the supported Rupayex UPI range.");
     error.status = 400;
@@ -57,6 +58,14 @@ export function getUpiQuote({ challengeDefinition, commercialConfig }) {
     providerCurrency: "INR",
     paymentMethod: "UPI",
     provider: "rupayex",
+    fx: {
+      source: fx.source,
+      quoteDate: fx.quoteDate,
+      baseCurrency: fx.baseCurrency,
+      usdToEur: fx.usdToEur,
+      usdToInr: fx.usdToInr,
+      eurToInr: fx.eurToInr,
+    },
   };
 }
 
@@ -162,7 +171,8 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
 
   const stableCustomerId = String(fundedCustomer.customerId);
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
-  const providerAmount = eurToInr(pricing.finalPrice);
+  const fx = await eurToInrQuote(pricing.finalPrice);
+  const providerAmount = fx.amountInr;
   if (providerAmount < 1 || providerAmount > 100000) {
     const error = new Error("This challenge price is outside the supported Rupayex UPI range.");
     error.status = 400;
@@ -189,7 +199,14 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
       analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
       attribution,
       pricing,
-      fxRate: providerAmount / pricing.finalPrice,
+      fx: {
+        source: fx.source,
+        quoteDate: fx.quoteDate,
+        baseCurrency: fx.baseCurrency,
+        usdToEur: fx.usdToEur,
+        usdToInr: fx.usdToInr,
+        eurToInr: fx.eurToInr,
+      },
     },
   });
 
