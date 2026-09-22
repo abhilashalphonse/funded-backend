@@ -258,8 +258,9 @@ async function markRupayexPaid(payment, providerData) {
 
   const expectedAmount = Number(payment.providerAmount);
   const returnedAmount = Number(providerData?.amount);
+  const providerPaymentStatus = String(providerData?.payment_status || "").trim().toUpperCase();
   const returnedMethod = String(providerData?.method || "").trim().toUpperCase();
-  if (returnedMethod !== "UPI") {
+  if (providerPaymentStatus === "SUCCESS" && returnedMethod !== "UPI") {
     const error = new Error("Unexpected Rupayex payment method.");
     error.status = 400;
     error.code = "RUPAYEX_METHOD_MISMATCH";
