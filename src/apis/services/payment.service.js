@@ -11,11 +11,11 @@ import boss from "../../config/boss.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import {
-  createRupayexOrder,
+  createUpiOrder,
   usdToInrQuote,
-  getRupayexOrderStatus,
-  normalizeRupayexStatus,
-} from "./paymentProviders/rupayex.service.js";
+  getUpiOrderStatus,
+  normalizeUpiStatus,
+} from "./paymentProviders/upiGateway.service.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
 const allowedMethods = { BTC: "btc", USDT_TRX: "usdttrc20" };
@@ -46,9 +46,9 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   const fx = await usdToInrQuote(pricing.finalPrice);
   const providerAmount = fx.amountInr;
   if (providerAmount < 1 || providerAmount > 100000) {
-    const error = new Error("This challenge price is outside the supported Rupayex UPI range.");
+    const error = new Error("This challenge price is outside the supported UPI gateway UPI range.");
     error.status = 400;
-    error.code = "RUPAYEX_AMOUNT_OUT_OF_RANGE";
+    error.code = "UPI_AMOUNT_OUT_OF_RANGE";
     throw error;
   }
   return {
@@ -57,7 +57,7 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
     providerAmount,
     providerCurrency: "INR",
     paymentMethod: "UPI",
-    provider: "rupayex",
+    provider: "upi-gateway",
     fx: {
       source: fx.source,
       quoteDate: fx.quoteDate,
@@ -161,10 +161,10 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
     error.code = "CUSTOMER_BLOCKED";
     throw error;
   }
-  if (!process.env.RUPAYEX_CALLBACK_URL) {
-    const error = new Error("RUPAYEX_CALLBACK_URL is not configured.");
+  if (!process.env.UPI_GATEWAY_CALLBACK_URL) {
+    const error = new Error("UPI_GATEWAY_CALLBACK_URL is not configured.");
     error.status = 503;
-    error.code = "RUPAYEX_NOT_CONFIGURED";
+    error.code = "UPI_GATEWAY_NOT_CONFIGURED";
     throw error;
   }
 
@@ -173,9 +173,9 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
   const fx = await usdToInrQuote(pricing.finalPrice);
   const providerAmount = fx.amountInr;
   if (providerAmount < 1 || providerAmount > 100000) {
-    const error = new Error("This challenge price is outside the supported Rupayex UPI range.");
+    const error = new Error("This challenge price is outside the supported UPI gateway UPI range.");
     error.status = 400;
-    error.code = "RUPAYEX_AMOUNT_OUT_OF_RANGE";
+    error.code = "UPI_AMOUNT_OUT_OF_RANGE";
     throw error;
   }
 
@@ -192,7 +192,7 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
     providerAmount,
     providerCurrency: "INR",
     paymentMethod: "UPI",
-    provider: "rupayex",
+    provider: "upi-gateway",
     status: "CREATED",
     metadata: {
       analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
@@ -209,10 +209,10 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
   });
 
   try {
-    const order = await createRupayexOrder({
+    const order = await createUPI gatewayOrder({
       amountInr: providerAmount,
       orderId,
-      redirectUrl: process.env.RUPAYEX_CALLBACK_URL,
+      redirectUrl: process.env.UPI_GATEWAY_CALLBACK_URL,
       customerMobile,
       remark1: `ACG Funded ${challengeDefinition.step} ${Number(challengeDefinition.accountSize).toLocaleString()} challenge`,
     });
@@ -262,12 +262,12 @@ export async function createUpiPayment({ email, challengeDefinition, commercialC
   }
 }
 
-async function markRupayexPaid(payment, providerData) {
+async function markUPI gatewayPaid(payment, providerData) {
   const returnedOrderId = String(providerData?.order_id || "").trim();
   if (returnedOrderId && returnedOrderId !== payment.orderId) {
-    const error = new Error("Rupayex order ID mismatch.");
+    const error = new Error("UPI gateway order ID mismatch.");
     error.status = 400;
-    error.code = "RUPAYEX_ORDER_MISMATCH";
+    error.code = "UPI_ORDER_MISMATCH";
     throw error;
   }
 
@@ -276,15 +276,15 @@ async function markRupayexPaid(payment, providerData) {
   const providerPaymentStatus = String(providerData?.payment_status || "").trim().toUpperCase();
   const returnedMethod = String(providerData?.method || "").trim().toUpperCase();
   if (providerPaymentStatus === "SUCCESS" && returnedMethod !== "UPI") {
-    const error = new Error("Unexpected Rupayex payment method.");
+    const error = new Error("Unexpected UPI gateway payment method.");
     error.status = 400;
-    error.code = "RUPAYEX_METHOD_MISMATCH";
+    error.code = "UPI_METHOD_MISMATCH";
     throw error;
   }
   if (!Number.isFinite(returnedAmount) || Math.abs(returnedAmount - expectedAmount) > 0.01) {
-    const error = new Error("Rupayex payment amount mismatch.");
+    const error = new Error("UPI gateway payment amount mismatch.");
     error.status = 400;
-    error.code = "RUPAYEX_AMOUNT_MISMATCH";
+    error.code = "UPI_AMOUNT_MISMATCH";
     throw error;
   }
 
@@ -292,7 +292,7 @@ async function markRupayexPaid(payment, providerData) {
   payment.utr = providerData?.utr ? String(providerData.utr) : payment.utr;
   if (providerData?.payment_token) payment.providerPaymentId = String(providerData.payment_token);
 
-  const nextStatus = normalizeRupayexStatus(providerData?.payment_status || providerData?.status);
+  const nextStatus = normalizeUPI gatewayStatus(providerData?.payment_status || providerData?.status);
   payment.status = nextStatus;
   if (nextStatus === "PAID" && !payment.paidAt) payment.paidAt = new Date();
   await payment.save();
@@ -320,34 +320,34 @@ async function markRupayexPaid(payment, providerData) {
   return payment;
 }
 
-export async function refreshRupayexPayment(payment) {
-  if (!payment || payment.provider !== "rupayex") return payment;
+export async function refreshUPI gatewayPayment(payment) {
+  if (!payment || payment.provider !== "upi-gateway") return payment;
   if (["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) return payment;
 
-  const providerData = await getRupayexOrderStatus(payment.orderId);
-  return markRupayexPaid(payment, providerData);
+  const providerData = await getUPI gatewayOrderStatus(payment.orderId);
+  return markUPI gatewayPaid(payment, providerData);
 }
 
-export async function processRupayexCallback(payload = {}) {
+export async function processUPI gatewayCallback(payload = {}) {
   const orderId = String(payload?.order_id || "").trim();
   if (!orderId) {
-    const error = new Error("Rupayex callback is missing order_id.");
+    const error = new Error("UPI gateway callback is missing order_id.");
     error.status = 400;
-    error.code = "RUPAYEX_ORDER_ID_REQUIRED";
+    error.code = "UPI_ORDER_ID_REQUIRED";
     throw error;
   }
 
-  const payment = await Payment.findOne({ orderId, provider: "rupayex" });
+  const payment = await Payment.findOne({ orderId, provider: "upi-gateway" });
   if (!payment) {
     const error = new Error("Payment order not found.");
     error.status = 404;
     throw error;
   }
 
-  // Never trust callback status by itself. Rupayex explicitly requires the
+  // Never trust callback status by itself. UPI gateway explicitly requires the
   // merchant to query order-status and use that result as the source of truth.
-  const verified = await getRupayexOrderStatus(orderId);
-  return markRupayexPaid(payment, verified);
+  const verified = await getUPI gatewayOrderStatus(orderId);
+  return markUPI gatewayPaid(payment, verified);
 }
 
 function recursivelySort(value) {
@@ -591,14 +591,14 @@ export async function getPaymentStatus(id) {
   let payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency checkoutUrl providerStatus paidAmount paidCurrency paidAt utr accountId activatedAt activation");
   if (!payment) { const error = new Error("Payment not found."); error.status = 404; throw error; }
 
-  if (payment.provider === "rupayex" && !["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) {
+  if (payment.provider === "upi-gateway" && !["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) {
     try {
-      await refreshRupayexPayment(payment);
+      await refreshUPI gatewayPayment(payment);
       payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency checkoutUrl providerStatus paidAmount paidCurrency paidAt utr accountId activatedAt activation");
     } catch (error) {
       // Status polling should remain available if the provider is temporarily
       // unavailable. The payment stays pending until a later verified refresh.
-      console.warn("[RUPAYEX] Status refresh failed:", error?.message || error);
+      console.warn("[UPI] Status refresh failed:", error?.message || error);
     }
   }
 
