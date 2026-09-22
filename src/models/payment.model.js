@@ -9,7 +9,7 @@ const PaymentSchema = new mongoose.Schema(
     challengeDefinition: { type: mongoose.Schema.Types.Mixed, required: true },
     commercialConfig: { type: mongoose.Schema.Types.Mixed, required: true },
     amount: { type: Number, required: true },
-    currency: { type: String, required: true, default: "EUR" },
+    currency: { type: String, required: true, default: "USD" },
     paymentMethod: { type: String, enum: ["UPI", "BTC", "USDT_TRX"], required: true },
     providerAmount: Number,
     providerCurrency: String,
