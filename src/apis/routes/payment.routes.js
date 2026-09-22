@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { optionalCustomer } from "../../auth/supabaseAuth.js";
-import { createCrypto, createUpi, ipn, rupayexCallback, status, upiQuote } from "../controllers/payment.controller.js";
+import { createCrypto, createUpi, ipn, upiCallback, status, upiQuote } from "../controllers/payment.controller.js";
 
 const router = Router();
 router.post("/crypto/create", optionalCustomer, createCrypto);
