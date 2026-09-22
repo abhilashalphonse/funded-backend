@@ -426,6 +426,7 @@ export async function createUpiPayment({
 }
 
 async function markUpiPayment(payment, providerData) {
+  const gateway = getUpiGateway(payment.provider || DEFAULT_UPI_GATEWAY_ID);
   const returnedOrderId = String(providerData?.order_id || "").trim();
   if (returnedOrderId && returnedOrderId !== payment.orderId) {
     const error = new Error("UPI order ID mismatch.");
@@ -453,7 +454,7 @@ async function markUpiPayment(payment, providerData) {
   }
 
   const previousStatus = payment.status;
-  const requestedStatus = normalizeUpiStatus(providerData?.payment_status || providerData?.status);
+  const requestedStatus = gateway.normalizeStatus(providerData?.payment_status || providerData?.status);
   const nextStatus = nextPaymentStatus(previousStatus, requestedStatus);
   const becamePaid = previousStatus !== "PAID" && nextStatus === "PAID";
 
@@ -495,9 +496,10 @@ async function markUpiPayment(payment, providerData) {
 }
 
 export async function refreshUpiPayment(payment, { force = false } = {}) {
-  if (!payment || payment.provider !== "upi-gateway") return payment;
+  if (!payment || payment.paymentMethod !== "UPI") return payment;
   if (["PAID", "REFUNDED"].includes(payment.status)) return payment;
 
+  const gateway = getUpiGateway(payment.provider || DEFAULT_UPI_GATEWAY_ID);
   const lastCheckedAt = payment.providerLastCheckedAt ? new Date(payment.providerLastCheckedAt).getTime() : 0;
   if (!force && lastCheckedAt && Date.now() - lastCheckedAt < UPI_PROVIDER_POLL_INTERVAL_MS) {
     return payment;
@@ -506,11 +508,11 @@ export async function refreshUpiPayment(payment, { force = false } = {}) {
   payment.providerLastCheckedAt = new Date();
   await payment.save();
 
-  const providerData = await getUpiOrderStatus(payment.orderId);
+  const providerData = await gateway.getOrderStatus(payment.orderId);
   return markUpiPayment(payment, providerData);
 }
 
-export async function processUpiCallback(payload = {}) {
+export async function processUpiCallback(payload = {}, callbackGatewayId = DEFAULT_UPI_GATEWAY_ID) {
   const orderId = String(payload?.order_id || "").trim();
   if (!orderId) {
     const error = new Error("UPI callback is missing order_id.");
@@ -519,10 +521,19 @@ export async function processUpiCallback(payload = {}) {
     throw error;
   }
 
-  const payment = await Payment.findOne({ orderId, provider: "upi-gateway" });
+  const callbackGateway = getUpiGateway(callbackGatewayId);
+  const payment = await Payment.findOne({ orderId, paymentMethod: "UPI" });
   if (!payment) {
     const error = new Error("Payment order not found.");
     error.status = 404;
+    throw error;
+  }
+
+  const paymentGatewayId = normalizeUpiGatewayId(payment.provider || DEFAULT_UPI_GATEWAY_ID);
+  if (paymentGatewayId !== callbackGateway.id) {
+    const error = new Error("Payment gateway does not match callback route.");
+    error.status = 400;
+    error.code = "UPI_GATEWAY_MISMATCH";
     throw error;
   }
 
