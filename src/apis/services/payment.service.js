@@ -377,7 +377,7 @@ export async function createUpiPayment({
     payment.status = "WAITING";
     payment.metadata = {
       ...(payment.metadata || {}),
-      providerCreateResponse: order.data,
+      providerCreateAcknowledged: true,
     };
     await payment.save();
 
