@@ -1,4 +1,8 @@
 const RUPAYEX_BASE_URL = "https://rupayex.net";
+const FX_BASE_URL = "https://api.frankfurter.dev";
+const FX_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+let fxCache = null;
 
 function apiToken() {
   const token = String(process.env.RUPAYEX_API_TOKEN || "").trim();
@@ -33,18 +37,51 @@ function extractCheckoutUrl(data) {
     || null;
 }
 
-export function rupayexInrPerEur() {
-  const rate = Number(process.env.RUPAYEX_INR_PER_EUR);
-  if (!Number.isFinite(rate) || rate <= 0) {
-    const error = new Error("RUPAYEX_INR_PER_EUR must be configured as a positive number.");
-    error.status = 503;
-    error.code = "RUPAYEX_FX_NOT_CONFIGURED";
+export async function getDailyUsdFxQuote({ forceRefresh = false } = {}) {
+  const now = Date.now();
+  if (!forceRefresh && fxCache && now - fxCache.fetchedAt < FX_CACHE_TTL_MS) {
+    return fxCache.value;
+  }
+
+  const response = await fetch(`${FX_BASE_URL}/v2/rates?base=usd&quotes=eur,inr`, {
+    headers: { Accept: "application/json" },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !Array.isArray(data)) {
+    const error = new Error(`Daily FX quote request failed (${response.status}).`);
+    error.status = 502;
+    error.code = "FX_QUOTE_FAILED";
     throw error;
   }
-  return rate;
+
+  const rates = Object.fromEntries(
+    data.map((row) => [String(row?.quote || "").toUpperCase(), Number(row?.rate)]),
+  );
+  const usdToEur = rates.EUR;
+  const usdToInr = rates.INR;
+  if (!Number.isFinite(usdToEur) || usdToEur <= 0 || !Number.isFinite(usdToInr) || usdToInr <= 0) {
+    const error = new Error("Daily FX response is missing valid USD/EUR or USD/INR rates.");
+    error.status = 502;
+    error.code = "FX_QUOTE_INVALID";
+    throw error;
+  }
+
+  const quoteDate = data.find((row) => row?.date)?.date || new Date().toISOString().slice(0, 10);
+  const eurToInr = usdToInr / usdToEur;
+  const value = {
+    source: "frankfurter",
+    quoteDate,
+    baseCurrency: "USD",
+    usdToEur,
+    usdToInr,
+    eurToInr,
+  };
+
+  fxCache = { fetchedAt: now, value };
+  return value;
 }
 
-export function eurToInr(amountEur) {
+export async function eurToInrQuote(amountEur) {
   const amount = Number(amountEur);
   if (!Number.isFinite(amount) || amount <= 0) {
     const error = new Error("A valid EUR payment amount is required.");
@@ -53,9 +90,11 @@ export function eurToInr(amountEur) {
     throw error;
   }
 
-  // Rupayex accepts INR. Charge whole paise-compatible values and preserve
-  // two decimal places so the exact provider amount can be verified later.
-  return Number((amount * rupayexInrPerEur()).toFixed(2));
+  const fx = await getDailyUsdFxQuote();
+  return {
+    amountInr: Number((amount * fx.eurToInr).toFixed(2)),
+    ...fx,
+  };
 }
 
 export async function createRupayexOrder({ amountInr, orderId, redirectUrl, customerMobile, remark1 }) {
