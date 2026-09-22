@@ -126,11 +126,23 @@ function verifyUpiQuoteToken(token, challengeDefinition, commercialConfig) {
   return payload;
 }
 
-function nextPaymentStatus(currentStatus, requestedStatus) {
+export function nextPaymentStatus(currentStatus, requestedStatus) {
   const current = String(currentStatus || "CREATED").toUpperCase();
   const next = String(requestedStatus || current).toUpperCase();
+
   if (current === "REFUNDED") return "REFUNDED";
   if (current === "PAID") return next === "REFUNDED" ? "REFUNDED" : "PAID";
+  if (next === "PAID" || next === "REFUNDED") return next;
+
+  const progress = { CREATED: 0, WAITING: 1, CONFIRMING: 2 };
+  if (progress[current] != null && progress[next] != null) {
+    return progress[next] >= progress[current] ? next : current;
+  }
+
+  if (["FAILED", "EXPIRED", "UNDERPAID"].includes(current) && ["CREATED", "WAITING", "CONFIRMING"].includes(next)) {
+    return current;
+  }
+
   return next;
 }
 
@@ -215,7 +227,6 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   });
 
   try {
-    const returnToken = encodeURIComponent(statusAccess.token);
     const invoice = await nowPayments("/invoice", {
       price_amount: pricing.finalPrice,
       price_currency: "usd",
@@ -223,8 +234,8 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
       order_id: orderId,
       order_description: `ACG Funded ${challengeDefinition.step} $${challengeDefinition.accountSize.toLocaleString()} challenge`,
       ipn_callback_url: process.env.NOWPAYMENTS_IPN_URL,
-      success_url: `${process.env.FRONTEND_URL}/?payment=${payment._id}&token=${returnToken}&status=success`,
-      cancel_url: `${process.env.FRONTEND_URL}/?payment=${payment._id}&token=${returnToken}&status=cancelled`,
+      success_url: `${process.env.FRONTEND_URL}/?payment=${payment._id}&status=success`,
+      cancel_url: `${process.env.FRONTEND_URL}/?payment=${payment._id}&status=cancelled`,
     });
 
     payment.providerInvoiceId = String(invoice.id ?? invoice.invoice_id ?? "");
