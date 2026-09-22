@@ -106,6 +106,10 @@ const env = Object.freeze({
   NOWPAYMENTS_IPN_URL: validUrl("NOWPAYMENTS_IPN_URL", isProduction ? required("NOWPAYMENTS_IPN_URL") : process.env.NOWPAYMENTS_IPN_URL),
   NOWPAYMENTS_IPN_SECRET: isProduction ? required("NOWPAYMENTS_IPN_SECRET") : process.env.NOWPAYMENTS_IPN_SECRET,
 
+  UPI_GATEWAY_BASE_URL: validUrl("UPI_GATEWAY_BASE_URL", isProduction ? required("UPI_GATEWAY_BASE_URL") : process.env.UPI_GATEWAY_BASE_URL),
+  UPI_GATEWAY_API_TOKEN: isProduction ? required("UPI_GATEWAY_API_TOKEN") : process.env.UPI_GATEWAY_API_TOKEN,
+  UPI_GATEWAY_CALLBACK_URL: validUrl("UPI_GATEWAY_CALLBACK_URL", isProduction ? required("UPI_GATEWAY_CALLBACK_URL") : process.env.UPI_GATEWAY_CALLBACK_URL),
+
   ENABLE_SIMULATOR_ROUTES: bool("ENABLE_SIMULATOR_ROUTES", !isProduction),
   ENABLE_LOCAL_ADMIN_ROUTES: bool("ENABLE_LOCAL_ADMIN_ROUTES", !isProduction),
 });
