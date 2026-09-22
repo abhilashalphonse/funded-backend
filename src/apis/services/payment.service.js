@@ -420,6 +420,7 @@ async function markUpiPayment(payment, providerData) {
   const returnedAmount = Number(providerData?.amount);
   const providerPaymentStatus = String(providerData?.payment_status || "").trim().toUpperCase();
   const returnedMethod = String(providerData?.method || "").trim().toUpperCase();
+
   if (providerPaymentStatus === "SUCCESS" && returnedMethod !== "UPI") {
     const error = new Error("Unexpected UPI payment method.");
     error.status = 400;
@@ -433,16 +434,26 @@ async function markUpiPayment(payment, providerData) {
     throw error;
   }
 
+  const previousStatus = payment.status;
+  const requestedStatus = normalizeUpiStatus(providerData?.payment_status || providerData?.status);
+  const nextStatus = nextPaymentStatus(previousStatus, requestedStatus);
+  const becamePaid = previousStatus !== "PAID" && nextStatus === "PAID";
+
   payment.providerStatus = String(providerData?.payment_status || providerData?.status || "");
+  payment.providerLastCheckedAt = new Date();
   payment.utr = providerData?.utr ? String(providerData.utr) : payment.utr;
   if (providerData?.payment_token) payment.providerPaymentId = String(providerData.payment_token);
-
-  const nextStatus = normalizeUpiStatus(providerData?.payment_status || providerData?.status);
   payment.status = nextStatus;
-  if (nextStatus === "PAID" && !payment.paidAt) payment.paidAt = new Date();
-  await payment.save();
 
   if (nextStatus === "PAID") {
+    payment.paidAmount = returnedAmount;
+    payment.paidCurrency = "INR";
+    if (!payment.paidAt) payment.paidAt = new Date();
+  }
+
+  await payment.save();
+
+  if (becamePaid) {
     await recordAnalyticsEventOnce({
       event: "payment_completed",
       sessionId: payment.metadata?.analyticsSessionId || `payment:${payment._id}`,
@@ -452,9 +463,9 @@ async function markUpiPayment(payment, providerData) {
       attribution: payment.metadata?.attribution || {},
       properties: {
         amount: payment.amount,
-        currency: payment.currency,
+        currency: "USD",
         providerAmount: payment.providerAmount,
-        providerCurrency: payment.providerCurrency,
+        providerCurrency: "INR",
         method: "UPI",
       },
     }, { paymentId: String(payment._id) }).catch(() => {});
@@ -465,9 +476,17 @@ async function markUpiPayment(payment, providerData) {
   return payment;
 }
 
-export async function refreshUpiPayment(payment) {
+export async function refreshUpiPayment(payment, { force = false } = {}) {
   if (!payment || payment.provider !== "upi-gateway") return payment;
-  if (["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) return payment;
+  if (["PAID", "REFUNDED"].includes(payment.status)) return payment;
+
+  const lastCheckedAt = payment.providerLastCheckedAt ? new Date(payment.providerLastCheckedAt).getTime() : 0;
+  if (!force && lastCheckedAt && Date.now() - lastCheckedAt < UPI_PROVIDER_POLL_INTERVAL_MS) {
+    return payment;
+  }
+
+  payment.providerLastCheckedAt = new Date();
+  await payment.save();
 
   const providerData = await getUpiOrderStatus(payment.orderId);
   return markUpiPayment(payment, providerData);
@@ -489,9 +508,8 @@ export async function processUpiCallback(payload = {}) {
     throw error;
   }
 
-  // Never trust callback status by itself. Query the gateway order-status endpoint and use that result as the source of truth.
-  const verified = await getUpiOrderStatus(orderId);
-  return markUpiPayment(payment, verified);
+  if (payment.status === "PAID" || payment.status === "REFUNDED") return payment;
+  return refreshUpiPayment(payment, { force: true });
 }
 
 function recursivelySort(value) {
@@ -684,7 +702,7 @@ export async function processIpn(payload, signature) {
   payment.paidAmount = Number(payload.actually_paid ?? payload.pay_amount ?? 0);
   payment.paidCurrency = payload.pay_currency;
 
-  const nextStatus = ({
+  const requestedStatus = ({
     waiting: "WAITING",
     confirming: "CONFIRMING",
     confirmed: "PAID",
@@ -694,7 +712,9 @@ export async function processIpn(payload, signature) {
     partially_paid: "UNDERPAID",
     refunded: "REFUNDED",
   })[payload.payment_status];
-  if (nextStatus) payment.status = nextStatus;
+  const previousStatus = payment.status;
+  if (requestedStatus) payment.status = nextPaymentStatus(previousStatus, requestedStatus);
+  const becamePaid = previousStatus !== "PAID" && payment.status === "PAID";
   if (payment.status === "PAID" && !payment.paidAt) payment.paidAt = new Date();
   await payment.save();
 
@@ -715,7 +735,7 @@ export async function processIpn(payload, signature) {
     }, { paymentId: String(payment._id) }).catch(() => {});
   }
 
-  if (payment.status === "PAID") {
+  if (becamePaid) {
     await recordAnalyticsEventOnce({
       event: "payment_completed",
       sessionId: payment.metadata?.analyticsSessionId || `payment:${payment._id}`,
@@ -731,20 +751,35 @@ export async function processIpn(payload, signature) {
   return payment;
 }
 
-export async function getPaymentStatus(id) {
-  let payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency checkoutUrl providerStatus paidAmount paidCurrency paidAt utr accountId activatedAt activation");
-  if (!payment) { const error = new Error("Payment not found."); error.status = 404; throw error; }
+export async function getPaymentStatus(id, statusToken) {
+  let payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency providerStatus paidAmount paidCurrency paidAt accountId activatedAt activation statusTokenHash providerLastCheckedAt");
+  if (!payment || !statusToken || !payment.statusTokenHash || !safeStringEqual(hashToken(statusToken), payment.statusTokenHash)) {
+    const error = new Error("Payment not found.");
+    error.status = 404;
+    throw error;
+  }
 
-  if (payment.provider === "upi-gateway" && !["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) {
+  if (payment.provider === "upi-gateway" && !["PAID", "REFUNDED"].includes(payment.status)) {
     try {
       await refreshUpiPayment(payment);
-      payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency checkoutUrl providerStatus paidAmount paidCurrency paidAt utr accountId activatedAt activation");
+      payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency providerStatus paidAmount paidCurrency paidAt accountId activatedAt activation statusTokenHash providerLastCheckedAt");
     } catch (error) {
-      // Status polling should remain available if the provider is temporarily
-      // unavailable. The payment stays pending until a later verified refresh.
       console.warn("[UPI] Status refresh failed:", error?.message || error);
     }
   }
 
-  return payment;
+  return {
+    orderId: payment.orderId,
+    status: payment.status,
+    amount: payment.amount,
+    currency: "USD",
+    providerAmount: payment.providerAmount,
+    providerCurrency: payment.providerCurrency,
+    paidAmount: payment.paidAmount,
+    paidCurrency: payment.paidCurrency,
+    paidAt: payment.paidAt,
+    accountId: payment.accountId,
+    activatedAt: payment.activatedAt,
+    activation: payment.activation,
+  };
 }
