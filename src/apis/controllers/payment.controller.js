@@ -51,7 +51,7 @@ export async function upiQuote(req, res, next) {
 
 export async function upiCallback(req, res, next) {
   try {
-    const payment = await processRupayexCallback({ ...(req.query || {}), ...(req.body || {}) });
+    const payment = await processUpiCallback({ ...(req.query || {}), ...(req.body || {}) });
     return res.json({ success: true, data: { paymentId: payment._id, status: payment.status } });
   } catch (error) { next(error); }
 }
