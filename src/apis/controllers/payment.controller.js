@@ -1,4 +1,4 @@
-import { createCryptoPayment, createUpiPayment, getPaymentStatus, getUpiQuote, processIpn, processRupayexCallback } from "../services/payment.service.js";
+import { createCryptoPayment, createUpiPayment, getPaymentStatus, getUpiQuote, processIpn, processUpiCallback } from "../services/payment.service.js";
 
 export async function createCrypto(req, res, next) {
   try {
@@ -23,7 +23,7 @@ export async function ipn(req, res, next) {
 }
 
 export async function status(req, res, next) {
-  try { res.json({ success: true, data: await getPaymentStatus(req.params.paymentId) }); }
+  try { res.json({ success: true, data: await getPaymentStatus(req.params.paymentId, req.query?.token) }); }
   catch (error) { next(error); }
 }
 
@@ -49,7 +49,7 @@ export async function upiQuote(req, res, next) {
   } catch (error) { next(error); }
 }
 
-export async function rupayexCallback(req, res, next) {
+export async function upiCallback(req, res, next) {
   try {
     const payment = await processRupayexCallback({ ...(req.query || {}), ...(req.body || {}) });
     return res.json({ success: true, data: { paymentId: payment._id, status: payment.status } });
