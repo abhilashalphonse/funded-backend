@@ -40,6 +40,26 @@ async function nowPayments(path, body) {
   return data;
 }
 
+
+export function getUpiQuote({ challengeDefinition, commercialConfig }) {
+  const pricing = calculatePrice(challengeDefinition, commercialConfig);
+  const providerAmount = eurToInr(pricing.finalPrice);
+  if (providerAmount < 1 || providerAmount > 100000) {
+    const error = new Error("This challenge price is outside the supported Rupayex UPI range.");
+    error.status = 400;
+    error.code = "RUPAYEX_AMOUNT_OUT_OF_RANGE";
+    throw error;
+  }
+  return {
+    amount: pricing.finalPrice,
+    currency: "EUR",
+    providerAmount,
+    providerCurrency: "INR",
+    paymentMethod: "UPI",
+    provider: "rupayex",
+  };
+}
+
 export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod, customer = null, analyticsSessionId, attribution = {} }) {
   const normalizedEmail = normalizeCustomerEmail(email);
   const fundedCustomer = customer?.customerId
@@ -238,6 +258,13 @@ async function markRupayexPaid(payment, providerData) {
 
   const expectedAmount = Number(payment.providerAmount);
   const returnedAmount = Number(providerData?.amount);
+  const returnedMethod = String(providerData?.method || "").trim().toUpperCase();
+  if (returnedMethod !== "UPI") {
+    const error = new Error("Unexpected Rupayex payment method.");
+    error.status = 400;
+    error.code = "RUPAYEX_METHOD_MISMATCH";
+    throw error;
+  }
   if (!Number.isFinite(returnedAmount) || Math.abs(returnedAmount - expectedAmount) > 0.01) {
     const error = new Error("Rupayex payment amount mismatch.");
     error.status = 400;
