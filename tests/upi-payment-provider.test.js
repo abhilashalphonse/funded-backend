@@ -7,11 +7,13 @@ import {
   usdToInrQuote,
 } from "../src/apis/services/paymentProviders/upiGateway.service.js";
 
-test("normalizes UPI statuses into ACG payment states", () => {
-  assert.equal(normalizeUpiStatus("SUCCESS"), "PAID");
+test("normalizes the documented UPI lifecycle into ACG payment states", () => {
   assert.equal(normalizeUpiStatus("PENDING"), "WAITING");
-  assert.equal(normalizeUpiStatus("REJECTED"), "FAILED");
-  assert.equal(normalizeUpiStatus("EXPIRED"), "EXPIRED");
+  assert.equal(normalizeUpiStatus("APPROVED"), "CONFIRMING");
+  assert.equal(normalizeUpiStatus("PROCESSING"), "CONFIRMING");
+  assert.equal(normalizeUpiStatus("SUCCESS"), "PAID");
+  assert.equal(normalizeUpiStatus("REJECTED"), "REFUNDED");
+  assert.equal(normalizeUpiStatus("UNKNOWN"), "WAITING");
 });
 
 test("converts USD challenge price directly to INR using the daily USD/INR quote", async () => {
