@@ -18,7 +18,7 @@ function apiToken() {
   if (!token) {
     const error = new Error("UPI_GATEWAY_API_TOKEN is not configured.");
     error.status = 503;
-    error.code = "RUPAYEX_NOT_CONFIGURED";
+    error.code = "UPI_GATEWAY_NOT_CONFIGURED";
     throw error;
   }
   return token;
@@ -129,7 +129,7 @@ export async function createUpiOrder({ amountInr, orderId, redirectUrl, customer
   if (!response.ok || data?.status === false) {
     const error = new Error(data?.message || `UPI gateway create-order failed (${response.status}).`);
     error.status = response.status >= 400 ? response.status : 502;
-    error.code = "RUPAYEX_CREATE_ORDER_FAILED";
+    error.code = "UPI_GATEWAY_CREATE_ORDER_FAILED";
     throw error;
   }
 
@@ -137,7 +137,7 @@ export async function createUpiOrder({ amountInr, orderId, redirectUrl, customer
   if (!checkoutUrl) {
     const error = new Error("UPI gateway create-order did not return a checkout URL.");
     error.status = 502;
-    error.code = "RUPAYEX_CHECKOUT_URL_MISSING";
+    error.code = "UPI_GATEWAY_CHECKOUT_URL_MISSING";
     throw error;
   }
 
@@ -158,7 +158,7 @@ export async function getUpiOrderStatus(orderId) {
   if (!response.ok || data?.status === false) {
     const error = new Error(data?.message || `UPI gateway order-status failed (${response.status}).`);
     error.status = response.status >= 400 ? response.status : 502;
-    error.code = "RUPAYEX_STATUS_FAILED";
+    error.code = "UPI_GATEWAY_STATUS_FAILED";
     throw error;
   }
 
