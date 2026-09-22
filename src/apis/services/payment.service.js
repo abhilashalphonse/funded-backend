@@ -10,12 +10,13 @@ import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customer
 import boss from "../../config/boss.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
+import { usdToInrQuote } from "./paymentProviders/upiGateway.service.js";
 import {
-  createUpiOrder,
-  usdToInrQuote,
-  getUpiOrderStatus,
-  normalizeUpiStatus,
-} from "./paymentProviders/upiGateway.service.js";
+  DEFAULT_UPI_GATEWAY_ID,
+  getActiveUpiGateway,
+  getUpiGateway,
+  normalizeUpiGatewayId,
+} from "./paymentProviders/upiGateway.registry.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
 const allowedMethods = { BTC: "btc", USDT_TRX: "usdttrc20" };
@@ -58,8 +59,8 @@ function safeStringEqual(a, b) {
   return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-function upiQuoteSecret() {
-  const secret = String(process.env.UPI_GATEWAY_API_TOKEN || "").trim();
+function upiQuoteSecret(gateway) {
+  const secret = String(gateway?.quoteSecret?.() || "").trim();
   if (!secret) {
     const error = new Error("UPI payment gateway is not configured.");
     error.status = 503;
@@ -75,9 +76,9 @@ function pricingFingerprint(challengeDefinition, commercialConfig) {
     .digest("hex");
 }
 
-function signUpiQuote(payload) {
+function signUpiQuote(payload, gateway) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = crypto.createHmac("sha256", upiQuoteSecret()).update(encoded).digest("base64url");
+  const signature = crypto.createHmac("sha256", upiQuoteSecret(gateway)).update(encoded).digest("base64url");
   return `${encoded}.${signature}`;
 }
 
@@ -90,19 +91,20 @@ function verifyUpiQuoteToken(token, challengeDefinition, commercialConfig) {
     throw error;
   }
 
-  const expected = crypto.createHmac("sha256", upiQuoteSecret()).update(encoded).digest("base64url");
-  if (!safeStringEqual(signature, expected)) {
-    const error = new Error("UPI quote verification failed.");
-    error.status = 400;
-    error.code = "UPI_QUOTE_INVALID";
-    throw error;
-  }
-
   let payload;
   try {
     payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
   } catch {
     const error = new Error("UPI quote is invalid.");
+    error.status = 400;
+    error.code = "UPI_QUOTE_INVALID";
+    throw error;
+  }
+
+  const gateway = getUpiGateway(payload?.gatewayId || DEFAULT_UPI_GATEWAY_ID);
+  const expected = crypto.createHmac("sha256", upiQuoteSecret(gateway)).update(encoded).digest("base64url");
+  if (!safeStringEqual(signature, expected)) {
+    const error = new Error("UPI quote verification failed.");
     error.status = 400;
     error.code = "UPI_QUOTE_INVALID";
     throw error;
