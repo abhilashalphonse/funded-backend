@@ -10,6 +10,12 @@ import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customer
 import boss from "../../config/boss.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
+import {
+  createRupayexOrder,
+  eurToInr,
+  getRupayexOrderStatus,
+  normalizeRupayexStatus,
+} from "./paymentProviders/rupayex.service.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
 const allowedMethods = { BTC: "btc", USDT_TRX: "usdttrc20" };
@@ -112,6 +118,193 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     await payment.save();
     throw error;
   }
+}
+
+
+export async function createUpiPayment({ email, challengeDefinition, commercialConfig, customer = null, analyticsSessionId, attribution = {}, customerMobile }) {
+  const normalizedEmail = normalizeCustomerEmail(email);
+  const fundedCustomer = customer?.customerId
+    ? { customerId: customer.customerId, status: customer.status }
+    : await getOrCreateGuestCustomer(normalizedEmail);
+
+  if (String(fundedCustomer.status || "").toUpperCase() === "BLOCKED") {
+    const error = new Error("This customer account is blocked.");
+    error.status = 403;
+    error.code = "CUSTOMER_BLOCKED";
+    throw error;
+  }
+  if (!process.env.RUPAYEX_CALLBACK_URL) {
+    const error = new Error("RUPAYEX_CALLBACK_URL is not configured.");
+    error.status = 503;
+    error.code = "RUPAYEX_NOT_CONFIGURED";
+    throw error;
+  }
+
+  const stableCustomerId = String(fundedCustomer.customerId);
+  const pricing = calculatePrice(challengeDefinition, commercialConfig);
+  const providerAmount = eurToInr(pricing.finalPrice);
+  if (providerAmount < 1 || providerAmount > 100000) {
+    const error = new Error("This challenge price is outside the supported Rupayex UPI range.");
+    error.status = 400;
+    error.code = "RUPAYEX_AMOUNT_OUT_OF_RANGE";
+    throw error;
+  }
+
+  const orderId = `ACG-${randomUUID()}`;
+  const payment = await Payment.create({
+    orderId,
+    ownerExternalRef: stableCustomerId,
+    customerId: stableCustomerId,
+    email: normalizedEmail,
+    challengeDefinition,
+    commercialConfig,
+    amount: pricing.finalPrice,
+    currency: "EUR",
+    providerAmount,
+    providerCurrency: "INR",
+    paymentMethod: "UPI",
+    provider: "rupayex",
+    status: "CREATED",
+    metadata: {
+      analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
+      attribution,
+      pricing,
+      fxRate: providerAmount / pricing.finalPrice,
+    },
+  });
+
+  try {
+    const order = await createRupayexOrder({
+      amountInr: providerAmount,
+      orderId,
+      redirectUrl: process.env.RUPAYEX_CALLBACK_URL,
+      customerMobile,
+      remark1: `ACG Funded ${challengeDefinition.step} ${Number(challengeDefinition.accountSize).toLocaleString()} challenge`,
+    });
+
+    payment.checkoutUrl = order.checkoutUrl;
+    payment.providerStatus = "PENDING";
+    payment.status = "WAITING";
+    payment.metadata = {
+      ...(payment.metadata || {}),
+      providerCreateResponse: order.data,
+    };
+    await payment.save();
+
+    await recordAnalyticsEventOnce({
+      event: "payment_started",
+      sessionId: analyticsSessionId || `payment:${payment._id}`,
+      email: normalizedEmail,
+      paymentId: String(payment._id),
+      source: "server",
+      attribution,
+      properties: {
+        amount: pricing.finalPrice,
+        currency: "EUR",
+        providerAmount,
+        providerCurrency: "INR",
+        paymentMethod: "UPI",
+        accountSize: challengeDefinition.accountSize,
+        step: challengeDefinition.step,
+        profitSplit: commercialConfig?.profitSplit,
+      },
+    }, { paymentId: String(payment._id) }).catch(() => {});
+
+    return {
+      paymentId: payment._id,
+      orderId,
+      amount: pricing.finalPrice,
+      currency: "EUR",
+      providerAmount,
+      providerCurrency: "INR",
+      checkoutUrl: payment.checkoutUrl,
+    };
+  } catch (error) {
+    payment.status = "FAILED";
+    payment.providerStatus = error.message;
+    await payment.save();
+    throw error;
+  }
+}
+
+async function markRupayexPaid(payment, providerData) {
+  const returnedOrderId = String(providerData?.order_id || "").trim();
+  if (returnedOrderId && returnedOrderId !== payment.orderId) {
+    const error = new Error("Rupayex order ID mismatch.");
+    error.status = 400;
+    error.code = "RUPAYEX_ORDER_MISMATCH";
+    throw error;
+  }
+
+  const expectedAmount = Number(payment.providerAmount);
+  const returnedAmount = Number(providerData?.amount);
+  if (!Number.isFinite(returnedAmount) || Math.abs(returnedAmount - expectedAmount) > 0.01) {
+    const error = new Error("Rupayex payment amount mismatch.");
+    error.status = 400;
+    error.code = "RUPAYEX_AMOUNT_MISMATCH";
+    throw error;
+  }
+
+  payment.providerStatus = String(providerData?.payment_status || providerData?.status || "");
+  payment.utr = providerData?.utr ? String(providerData.utr) : payment.utr;
+  if (providerData?.payment_token) payment.providerPaymentId = String(providerData.payment_token);
+
+  const nextStatus = normalizeRupayexStatus(providerData?.payment_status || providerData?.status);
+  payment.status = nextStatus;
+  if (nextStatus === "PAID" && !payment.paidAt) payment.paidAt = new Date();
+  await payment.save();
+
+  if (nextStatus === "PAID") {
+    await recordAnalyticsEventOnce({
+      event: "payment_completed",
+      sessionId: payment.metadata?.analyticsSessionId || `payment:${payment._id}`,
+      email: payment.email,
+      paymentId: String(payment._id),
+      source: "server",
+      attribution: payment.metadata?.attribution || {},
+      properties: {
+        amount: payment.amount,
+        currency: payment.currency,
+        providerAmount: payment.providerAmount,
+        providerCurrency: payment.providerCurrency,
+        method: "UPI",
+      },
+    }, { paymentId: String(payment._id) }).catch(() => {});
+
+    await enqueuePaymentActivation(boss, payment._id);
+  }
+
+  return payment;
+}
+
+export async function refreshRupayexPayment(payment) {
+  if (!payment || payment.provider !== "rupayex") return payment;
+  if (["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) return payment;
+
+  const providerData = await getRupayexOrderStatus(payment.orderId);
+  return markRupayexPaid(payment, providerData);
+}
+
+export async function processRupayexCallback(payload = {}) {
+  const orderId = String(payload?.order_id || "").trim();
+  if (!orderId) {
+    const error = new Error("Rupayex callback is missing order_id.");
+    error.status = 400;
+    error.code = "RUPAYEX_ORDER_ID_REQUIRED";
+    throw error;
+  }
+
+  const payment = await Payment.findOne({ orderId, provider: "rupayex" });
+  if (!payment) {
+    const error = new Error("Payment order not found.");
+    error.status = 404;
+    throw error;
+  }
+
+  // Never trust callback status by itself. Rupayex explicitly requires the
+  // merchant to query order-status and use that result as the source of truth.
+  const verified = await getRupayexOrderStatus(orderId);
+  return markRupayexPaid(payment, verified);
 }
 
 function recursivelySort(value) {
@@ -351,7 +544,19 @@ export async function processIpn(payload, signature) {
 }
 
 export async function getPaymentStatus(id) {
-  const payment = await Payment.findById(id).select("orderId status amount currency checkoutUrl providerStatus paidAmount paidCurrency paidAt accountId activatedAt activation");
+  let payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency checkoutUrl providerStatus paidAmount paidCurrency paidAt utr accountId activatedAt activation");
   if (!payment) { const error = new Error("Payment not found."); error.status = 404; throw error; }
+
+  if (payment.provider === "rupayex" && !["PAID", "FAILED", "EXPIRED", "REFUNDED"].includes(payment.status)) {
+    try {
+      await refreshRupayexPayment(payment);
+      payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency checkoutUrl providerStatus paidAmount paidCurrency paidAt utr accountId activatedAt activation");
+    } catch (error) {
+      // Status polling should remain available if the provider is temporarily
+      // unavailable. The payment stays pending until a later verified refresh.
+      console.warn("[RUPAYEX] Status refresh failed:", error?.message || error);
+    }
+  }
+
   return payment;
 }
