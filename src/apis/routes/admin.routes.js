@@ -15,6 +15,7 @@ import { provisionTradingAccount } from "../../connectors/trading/account-provis
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import { sendSupportEmail, replySubject } from "../../email/resendSupport.service.js";
+import { listUpiGateways, setActiveUpiGateway } from "../services/paymentProviders/upiGateway.registry.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -613,29 +614,70 @@ router.get("/admin-users", async (req, res) => {
   });
 });
 
-router.get("/system", async (_req, res) => {
-  res.json({
-    success: true,
-    data: {
-      services: [
-        { name: "ACG Funded API", status: "HEALTHY" },
-        { name: "Customer authentication", status: env.SUPABASE_URL && env.SUPABASE_ANON_KEY ? "HEALTHY" : "NOT_CONFIGURED" },
-        { name: "ACG Trader", status: env.TRADING_PROVIDER === "acg-trader" && env.ACG_TRADER_BASE_URL ? "CONFIGURED" : "DEVELOPMENT" },
-        { name: "Crypto payments", status: env.NOWPAYMENTS_API_KEY && env.NOWPAYMENTS_IPN_SECRET && env.NOWPAYMENTS_IPN_URL ? "CONFIGURED" : "NOT_CONFIGURED" },
-        { name: "UPI payments", status: env.UPI_GATEWAY_BASE_URL && env.UPI_GATEWAY_API_TOKEN && env.UPI_GATEWAY_CALLBACK_URL ? "CONFIGURED" : "NOT_CONFIGURED" },
-        { name: "Support AI", status: env.OPENAI_API_KEY ? "CONFIGURED" : "NOT_CONFIGURED" },
-      ],
-      tradingProvider: env.TRADING_PROVIDER,
-      environment: env.NODE_ENV,
-      capabilities: {
-        payouts: false,
-        refunds: false,
-        challengeProductAdmin: false,
-        pricingAdmin: false,
-        affiliates: false,
+router.get("/system", async (_req, res, next) => {
+  try {
+    const upiGateways = await listUpiGateways();
+    const activeUpiGateway = upiGateways.find(item => item.active) || null;
+    res.json({
+      success: true,
+      data: {
+        services: [
+          { name: "ACG Funded API", status: "HEALTHY" },
+          { name: "Customer authentication", status: env.SUPABASE_URL && env.SUPABASE_ANON_KEY ? "HEALTHY" : "NOT_CONFIGURED" },
+          { name: "ACG Trader", status: env.TRADING_PROVIDER === "acg-trader" && env.ACG_TRADER_BASE_URL ? "CONFIGURED" : "DEVELOPMENT" },
+          { name: "Crypto payments", status: env.NOWPAYMENTS_API_KEY && env.NOWPAYMENTS_IPN_SECRET && env.NOWPAYMENTS_IPN_URL ? "CONFIGURED" : "NOT_CONFIGURED" },
+          { name: "UPI payments", status: activeUpiGateway?.status === "ACTIVE" ? "CONFIGURED" : "NOT_CONFIGURED" },
+          { name: "Support AI", status: env.OPENAI_API_KEY ? "CONFIGURED" : "NOT_CONFIGURED" },
+        ],
+        upiGateways,
+        activeUpiGatewayId: activeUpiGateway?.id || null,
+        tradingProvider: env.TRADING_PROVIDER,
+        environment: env.NODE_ENV,
+        capabilities: {
+          payouts: false,
+          refunds: false,
+          challengeProductAdmin: false,
+          pricingAdmin: false,
+          affiliates: false,
+        },
       },
-    },
-  });
+    });
+  } catch (error) { next(error); }
+});
+
+router.post("/upi-gateways/active", async (req, res, next) => {
+  try {
+    const gatewayId = String(req.body?.gatewayId || "").trim();
+    const reason = String(req.body?.reason || "").trim();
+    if (!gatewayId) {
+      const error = new Error("gatewayId is required.");
+      error.status = 400;
+      throw error;
+    }
+    if (reason.length < 3) {
+      const error = new Error("A reason is required to change the active UPI gateway.");
+      error.status = 400;
+      throw error;
+    }
+
+    const result = await setActiveUpiGateway(gatewayId, req.admin.email);
+    await writeAudit(req, {
+      action: "SET_ACTIVE_UPI_GATEWAY",
+      entityType: "payment_gateway",
+      entityId: result.active,
+      reason,
+      before: { activeGatewayId: result.previous },
+      after: { activeGatewayId: result.active },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        activeGatewayId: result.active,
+        gateways: await listUpiGateways(),
+      },
+    });
+  } catch (error) { next(error); }
 });
 
 export default router;
