@@ -145,13 +145,27 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
     error.code = "UPI_AMOUNT_OUT_OF_RANGE";
     throw error;
   }
+
+  const expiresAt = Date.now() + UPI_QUOTE_TTL_MS;
+  const quoteToken = signUpiQuote({
+    fingerprint: pricingFingerprint(challengeDefinition, commercialConfig),
+    amount: pricing.finalPrice,
+    currency: "USD",
+    providerAmount,
+    providerCurrency: "INR",
+    usdToInr: fx.usdToInr,
+    quoteDate: fx.quoteDate,
+    expiresAt,
+  });
+
   return {
     amount: pricing.finalPrice,
     currency: "USD",
     providerAmount,
     providerCurrency: "INR",
     paymentMethod: "UPI",
-    provider: "upi-gateway",
+    quoteToken,
+    expiresAt,
     fx: {
       source: fx.source,
       quoteDate: fx.quoteDate,
