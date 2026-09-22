@@ -5,13 +5,14 @@ import { connectDatabase } from "./config/database.js";
 import boss from "./config/boss.js";
 import pool from "./config/postgres.js";
 import redis from "./config/redis.js";
-import { ensurePaymentProviderIndex } from "./models/payment.model.js";
+import { ensurePaymentProviderIndex, normalizePaymentCurrencyLabels } from "./models/payment.model.js";
 import { ensureDefaultKnowledgeBase } from "./support/knowledgeBase.service.js";
 import { PG_BOSS_QUEUE_NAMES, PG_BOSS_QUEUE_POLICIES } from "./config/pgbossQueues.js";
 
 export async function bootstrap() {
   await connectDatabase();
   await ensurePaymentProviderIndex();
+  await normalizePaymentCurrencyLabels();
   await ensureDefaultKnowledgeBase();
 
   await boss.start();
