@@ -52,11 +52,23 @@ export async function getDailyUsdInrQuote({ forceRefresh = false } = {}) {
     return fxCache.value;
   }
 
-  const response = await fetch(`${FX_BASE_URL}/v2/rates?base=usd&quotes=inr`, {
-    headers: { Accept: "application/json" },
-  });
+  let response;
+  try {
+    response = await fetch(`${FX_BASE_URL}/v2/rates?base=usd&quotes=inr`, {
+      headers: { Accept: "application/json" },
+    });
+  } catch (cause) {
+    if (fxCache?.value) return { ...fxCache.value, stale: true };
+    const error = new Error("Daily FX quote request failed.");
+    error.status = 502;
+    error.code = "FX_QUOTE_FAILED";
+    error.cause = cause;
+    throw error;
+  }
+
   const data = await response.json().catch(() => null);
   if (!response.ok || !Array.isArray(data)) {
+    if (fxCache?.value) return { ...fxCache.value, stale: true };
     const error = new Error(`Daily FX quote request failed (${response.status}).`);
     error.status = 502;
     error.code = "FX_QUOTE_FAILED";
@@ -68,6 +80,7 @@ export async function getDailyUsdInrQuote({ forceRefresh = false } = {}) {
   );
   const usdToInr = rates.INR;
   if (!Number.isFinite(usdToInr) || usdToInr <= 0) {
+    if (fxCache?.value) return { ...fxCache.value, stale: true };
     const error = new Error("Daily FX response is missing a valid USD/INR rate.");
     error.status = 502;
     error.code = "FX_QUOTE_INVALID";
