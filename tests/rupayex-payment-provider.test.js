@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  eurToInrQuote,
-  getDailyUsdFxQuote,
+  getDailyUsdInrQuote,
   normalizeRupayexStatus,
+  usdToInrQuote,
 } from "../src/apis/services/paymentProviders/rupayex.service.js";
 
 test("normalizes Rupayex statuses into ACG payment states", () => {
@@ -14,27 +14,26 @@ test("normalizes Rupayex statuses into ACG payment states", () => {
   assert.equal(normalizeRupayexStatus("EXPIRED"), "EXPIRED");
 });
 
-test("derives EUR to INR from the daily USD base quote", async () => {
+test("converts USD challenge price directly to INR using the daily USD/INR quote", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({
     ok: true,
     status: 200,
     async json() {
       return [
-        { date: "2026-09-22", base: "USD", quote: "EUR", rate: 0.9 },
         { date: "2026-09-22", base: "USD", quote: "INR", rate: 90 },
       ];
     },
   });
 
   try {
-    const fx = await getDailyUsdFxQuote({ forceRefresh: true });
-    assert.equal(fx.usdToEur, 0.9);
+    const fx = await getDailyUsdInrQuote({ forceRefresh: true });
     assert.equal(fx.usdToInr, 90);
-    assert.equal(fx.eurToInr, 100);
+    assert.equal(fx.baseCurrency, "USD");
+    assert.equal(fx.quoteCurrency, "INR");
 
-    const quote = await eurToInrQuote(49);
-    assert.equal(quote.amountInr, 4900);
+    const quote = await usdToInrQuote(49);
+    assert.equal(quote.amountInr, 4410);
     assert.equal(quote.quoteDate, "2026-09-22");
   } finally {
     global.fetch = originalFetch;
