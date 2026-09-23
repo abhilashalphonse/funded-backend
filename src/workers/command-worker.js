@@ -51,7 +51,7 @@ export class CommandWorker {
   }
 
   async executeExternalSideEffect(command, accountId, metadata = {}) {
-    const account = await Account.findOne({ accountId });
+    let account = await Account.findOne({ accountId });
     if (!account) throw new Error(`Account ${accountId} not found`);
     if (!commandStillValid(account, command)) {
       return { success: true, skipped: true, staleCommand: true, command };
@@ -115,8 +115,30 @@ export class CommandWorker {
             await activateTradingAccount(account, {
               reason: "ACG_FUNDED_PHASE_2_LIFECYCLE_COMMITTED",
             });
-            account.enabled = true;
-            await account.save();
+            const activated = await Account.findOneAndUpdate(
+              {
+                _id: account._id,
+                status: "PHASE_2",
+                commandPending: "CREATE_PHASE_2_ACCOUNT",
+                customerAccessBlocked: { $ne: true },
+              },
+              {
+                $set: {
+                  enabled: true,
+                  "platformAccounts.$[target].status": "ACTIVE",
+                },
+              },
+              {
+                new: true,
+                arrayFilters: [{ "target.platformAccountId": account.platformAccountId }],
+              },
+            );
+            if (!activated) {
+              const superseded = new Error("Phase 2 activation was superseded by a newer lifecycle state.");
+              superseded.code = "PHASE_2_ACTIVATION_SUPERSEDED";
+              throw superseded;
+            }
+            account = activated;
           } catch (error) {
             await stageTradingAccount(account, {
               reason: "ACG_FUNDED_PHASE_2_ACTIVATION_FAILED",
