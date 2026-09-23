@@ -11,7 +11,7 @@ import env from "../../config/env.js";
 import boss from "../../config/boss.js";
 import { getCustomerOwnershipIds } from "../../customers/customer.service.js";
 import { getTradingConnector } from "../../connectors/trading/registry.js";
-import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
+import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import { resetAccountForMaster } from "../../accounts/account-lifecycle.js";
@@ -347,7 +347,7 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
     const reason = String(req.body?.reason || "").trim();
     if (!["LOCK", "UNLOCK", "CLOSE", "APPROVE_FUNDED"].includes(action)) return res.status(400).json({ success: false, message: "Unsupported challenge action." });
     if (!reason) return res.status(400).json({ success: false, message: "A reason is required." });
-    const account = await Account.findOne({ accountId: req.params.accountId });
+    let account = await Account.findOne({ accountId: req.params.accountId });
     if (!account) return res.status(404).json({ success: false, message: "Challenge not found." });
     const before = { status: account.status, enabled: account.enabled, platformAccountId: account.platformAccountId };
     const connector = getTradingConnector(account.platform);
@@ -388,6 +388,7 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
       account.status = "CLOSED";
       account.statusBeforeLock = null;
       account.enabled = false;
+      if (account.accountMode === "DEMO") account.activeTrialKey = null;
     }
 
     if (action === "APPROVE_FUNDED") {
@@ -395,34 +396,111 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
       const customer = account.customerId ? await Customer.findOne({ customerId: account.customerId }).lean() : null;
       if (customer?.status === "BLOCKED") return res.status(409).json({ success: false, message: "Blocked customers cannot be approved for a funded account." });
 
-      let fundedPlatformAccountId = null;
-      try {
-        await provisionTradingAccount(account, { phase: Number(account.currentPhase || 1), accountType: "FUNDED" });
-        fundedPlatformAccountId = account.platformAccountId;
-        await ensureTradingCredential(account, { queueEmail: true, platformAccountId: fundedPlatformAccountId });
-        await connector.resumeAccount({
-          externalRef: account.accountId,
-          platformAccountId: fundedPlatformAccountId,
-          reason: "ACG_FUNDED_MASTER_APPROVED",
+      const operationId = randomUUID();
+      const claimed = await Account.findOneAndUpdate(
+        {
+          accountId: account.accountId,
+          status: "FUNDED_REVIEW",
+          $or: [
+            { lifecycleOperationId: null },
+            { lifecycleOperationId: { $exists: false } },
+          ],
+        },
+        {
+          $set: {
+            lifecycleOperationId: operationId,
+            lifecycleOperationType: "MASTER_ACTIVATION",
+            lifecycleOperationStartedAt: new Date(),
+            lifecycleOperationError: null,
+            enabled: false,
+          },
+        },
+        { new: true },
+      );
+
+      if (!claimed) {
+        const current = await Account.findOne({ accountId: account.accountId }).lean();
+        return res.status(409).json({
+          success: false,
+          message: current?.lifecycleOperationId
+            ? "Master approval is already in progress."
+            : "This account is no longer awaiting Master approval.",
+          code: current?.lifecycleOperationId ? "MASTER_APPROVAL_IN_PROGRESS" : "MASTER_APPROVAL_NOT_AVAILABLE",
         });
+      }
+
+      account = claimed;
+      let fundedPlatformAccountId = null;
+      const staged = account.platform === "acg-trader";
+
+      try {
+        await provisionTradingAccount(account, {
+          phase: Number(account.currentPhase || 1),
+          accountType: "FUNDED",
+          activate: !staged,
+        });
+        fundedPlatformAccountId = account.platformAccountId;
+
+        // Establish a recoverable credential before activation, but do not
+        // send it until the Master lifecycle transition has fully committed.
+        await ensureTradingCredential(account, {
+          queueEmail: false,
+          platformAccountId: fundedPlatformAccountId,
+        });
+
+        resetAccountForMaster(account);
+        account.enabled = !staged;
+        account.lifecycleOperationId = operationId;
+        account.lifecycleOperationType = "MASTER_ACTIVATION";
+        account.lifecycleOperationStartedAt = account.lifecycleOperationStartedAt || new Date();
+        await account.save();
+
+        if (staged) {
+          await activateTradingAccount(account, {
+            platformAccountId: fundedPlatformAccountId,
+            reason: "ACG_FUNDED_MASTER_LIFECYCLE_COMMITTED",
+          });
+          account.enabled = true;
+        }
+
         const fundedRecord = platformRecord(account);
         if (fundedRecord) fundedRecord.status = "ACTIVE";
-        resetAccountForMaster(account);
         account.fundedApprovedAt = new Date();
+        account.lifecycleOperationId = null;
+        account.lifecycleOperationType = null;
+        account.lifecycleOperationStartedAt = null;
+        account.lifecycleOperationError = null;
         await account.save();
+
+        await ensureTradingCredential(account, {
+          queueEmail: true,
+          platformAccountId: fundedPlatformAccountId,
+        }).catch(() => {});
       } catch (error) {
         if (fundedPlatformAccountId) {
-          await connector.pauseAccount({
-            externalRef: account.accountId,
+          await stageTradingAccount(account, {
             platformAccountId: fundedPlatformAccountId,
             reason: "ACG_FUNDED_MASTER_APPROVAL_INCOMPLETE",
-            cancelPending: true,
           }).catch(() => {});
-          const fundedRecord = platformRecord(account);
-          if (fundedRecord) fundedRecord.status = "PAUSED";
-          account.status = "FUNDED_REVIEW";
-          account.enabled = false;
-          await account.save().catch(() => {});
+        }
+
+        const rollback = await Account.findOne({
+          accountId: account.accountId,
+          lifecycleOperationId: operationId,
+        });
+        if (rollback) {
+          const fundedRecord = platformRecord(rollback);
+          if (fundedRecord && !["BREACHED", "CLOSED", "DISABLED"].includes(String(fundedRecord.status || "").toUpperCase())) {
+            fundedRecord.status = "PAUSED";
+          }
+          rollback.status = "FUNDED_REVIEW";
+          rollback.enabled = false;
+          rollback.lifecycleOperationId = null;
+          rollback.lifecycleOperationType = null;
+          rollback.lifecycleOperationStartedAt = null;
+          rollback.lifecycleOperationError = String(error?.message || "Master approval failed").slice(0, 1000);
+          await rollback.save().catch(() => {});
+          account = rollback;
         }
         throw error;
       }
