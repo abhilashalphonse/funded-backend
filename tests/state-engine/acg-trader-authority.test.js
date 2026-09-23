@@ -302,10 +302,10 @@ test("current Master breach control event closes Funded-side trading state", asy
     platformAccountId: "master-1",
     initialDeposit: 100000,
     accountSize: 100000,
-    balance: 95000,
-    equity: 94000,
-    dailyStartEquity: 99000,
-    projections: { dailyLoss: 5000, totalLoss: 6000, profit: -5000, tradingDays: 2 },
+    balance: 96000,
+    equity: 95500,
+    dailyStartEquity: 99500,
+    projections: { dailyLoss: 4000, totalLoss: 4500, profit: -4000, tradingDays: 2 },
     rules: { dailyDrawdown: 3, maxDrawdown: 6 },
     platformAccounts: [{ phase: 2, accountType: "FUNDED", platformAccountId: "master-1", status: "ACTIVE" }],
     breach: null,
@@ -324,6 +324,13 @@ test("current Master breach control event closes Funded-side trading state", asy
       tradingEnabled: false,
       reason: "MAX_LOSS_LIMIT_REACHED",
       breachedAt: "2026-09-23T08:04:59.000Z",
+      balance: "94000",
+      equity: "93800",
+      floatingProfit: "-200",
+      margin: "0",
+      marginFree: "93800",
+      dailyStartEquity: "99000",
+      riskDayKey: "2026-09-23",
       sourceEvent: "trading.account.breached",
     },
   };
@@ -333,7 +340,16 @@ test("current Master breach control event closes Funded-side trading state", asy
   assert.equal(account.status, "BREACHED");
   assert.equal(account.enabled, false);
   assert.equal(account.platformAccounts[0].status, "BREACHED");
+  assert.equal(account.balance, 94000);
+  assert.equal(account.equity, 93800);
+  assert.equal(account.projections.profit, -6000);
+  assert.equal(account.projections.totalLoss, 6200);
+  assert.equal(account.projections.dailyLoss, 5200);
   assert.equal(account.breach.primaryReason, "MAX_DRAWDOWN");
+  assert.equal(account.breach.balance, 94000);
+  assert.equal(account.breach.equity, 93800);
+  assert.equal(account.breach.actualLoss, 6200);
+  assert.equal(account.breach.breachAmount, 200);
   assert.equal(account.breach.breachedAt.toISOString(), "2026-09-23T08:04:59.000Z");
   assert.equal(account.lastProcessedEventId, event.eventId);
 });
