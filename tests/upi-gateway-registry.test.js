@@ -7,20 +7,21 @@ import {
   normalizeUpiGatewayId,
 } from "../src/apis/services/paymentProviders/upiGateway.registry.js";
 
-test("legacy UPI provider ids resolve to gateway 1", () => {
-  assert.equal(normalizeUpiGatewayId("upi-gateway"), DEFAULT_UPI_GATEWAY_ID);
-  assert.equal(normalizeUpiGatewayId("upi_gateway"), DEFAULT_UPI_GATEWAY_ID);
-  assert.equal(
-    getUpiGateway("upi-gateway", { requireAvailable: false }).id,
-    DEFAULT_UPI_GATEWAY_ID,
-  );
+test("Rupex is the default UPI gateway and legacy ids remain compatible", () => {
+  assert.equal(DEFAULT_UPI_GATEWAY_ID, "rupex");
+  assert.equal(normalizeUpiGatewayId("upi-gateway"), "rupex");
+  assert.equal(normalizeUpiGatewayId("upi_gateway"), "rupex");
+  assert.equal(normalizeUpiGatewayId("upi_gateway_1"), "rupex");
+  assert.equal(getUpiGateway("rupex", { requireAvailable: false }).label, "Rupex");
 });
 
-test("gateway 2 is registered but cannot be activated before its adapter exists", () => {
-  const gateway = getUpiGateway("upi_gateway_2", { requireAvailable: false });
+test("Sunpay is registered but cannot be activated before its adapter exists", () => {
+  assert.equal(normalizeUpiGatewayId("upi_gateway_2"), "sunpay");
+  const gateway = getUpiGateway("sunpay", { requireAvailable: false });
+  assert.equal(gateway.label, "Sunpay");
   assert.equal(gateway.implemented, false);
   assert.throws(
-    () => getUpiGateway("upi_gateway_2"),
+    () => getUpiGateway("sunpay"),
     error => error?.code === "UPI_GATEWAY_NOT_INTEGRATED",
   );
 });
