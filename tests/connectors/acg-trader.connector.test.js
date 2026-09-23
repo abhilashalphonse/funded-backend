@@ -15,6 +15,7 @@ class FakeClient {
   async pauseAccount(accountId, options) { this.calls.push(["pause", accountId, options]); return { changed: true }; }
   async resumeAccount(accountId, options) { this.calls.push(["resume", accountId, options]); return { changed: true }; }
   async breachAccount(accountId, options) { this.calls.push(["breach", accountId, options]); return { changed: true }; }
+  async flattenAccount(accountId, options) { this.calls.push(["flatten", accountId, options]); return { changed: true }; }
 }
 
 test("ACG Trader connector maps generic provisioning to Trader contract", async () => {
@@ -70,4 +71,12 @@ test("ACG Trader connector routes breaches to the provider account", async () =>
   const connector = new ACGTraderConnector({ client });
   await connector.breachAccount({ platformAccountId: "66aa00112233445566778899", reason: "RULE", action: "LIQUIDATE_AND_LOCK" });
   assert.deepEqual(client.calls[0], ["breach", "66aa00112233445566778899", { reason: "RULE", action: "LIQUIDATE_AND_LOCK" }]);
+});
+
+
+test("ACG Trader connector routes reversible phase flatten to the provider account", async () => {
+  const client = new FakeClient();
+  const connector = new ACGTraderConnector({ client });
+  await connector.flattenAccount({ platformAccountId: "66aa00112233445566778899", reason: "PHASE_CHECK" });
+  assert.deepEqual(client.calls[0], ["flatten", "66aa00112233445566778899", { reason: "PHASE_CHECK" }]);
 });
