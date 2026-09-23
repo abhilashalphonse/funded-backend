@@ -460,17 +460,47 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
             platformAccountId: fundedPlatformAccountId,
             reason: "ACG_FUNDED_MASTER_LIFECYCLE_COMMITTED",
           });
-          account.enabled = true;
         }
 
-        const fundedRecord = platformRecord(account);
-        if (fundedRecord) fundedRecord.status = "ACTIVE";
-        account.fundedApprovedAt = new Date();
-        account.lifecycleOperationId = null;
-        account.lifecycleOperationType = null;
-        account.lifecycleOperationStartedAt = null;
-        account.lifecycleOperationError = null;
-        await account.save();
+        const latestCustomer = account.customerId
+          ? await Customer.findOne({ customerId: account.customerId }).select("status").lean()
+          : null;
+        if (String(latestCustomer?.status || "").toUpperCase() === "BLOCKED") {
+          const blocked = new Error("Customer was blocked while Master activation was in progress.");
+          blocked.code = "CUSTOMER_BLOCKED_DURING_MASTER_ACTIVATION";
+          blocked.status = 409;
+          throw blocked;
+        }
+
+        const activated = await Account.findOneAndUpdate(
+          {
+            _id: account._id,
+            status: "FUNDED",
+            lifecycleOperationId: operationId,
+            customerAccessBlocked: { $ne: true },
+          },
+          {
+            $set: {
+              enabled: true,
+              fundedApprovedAt: new Date(),
+              lifecycleOperationId: null,
+              lifecycleOperationType: null,
+              lifecycleOperationStartedAt: null,
+              lifecycleOperationError: null,
+              "platformAccounts.$[target].status": "ACTIVE",
+            },
+          },
+          {
+            new: true,
+            arrayFilters: [{ "target.platformAccountId": fundedPlatformAccountId }],
+          },
+        );
+        if (!activated) {
+          const superseded = new Error("Master activation was superseded by a newer lifecycle state.");
+          superseded.code = "MASTER_ACTIVATION_SUPERSEDED";
+          throw superseded;
+        }
+        account = activated;
 
         await ensureTradingCredential(account, {
           queueEmail: true,
@@ -489,11 +519,12 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
           lifecycleOperationId: operationId,
         });
         if (rollback) {
+          const terminal = ["BREACHED", "CLOSED"].includes(String(rollback.status || "").toUpperCase());
           const fundedRecord = platformRecord(rollback);
           if (fundedRecord && !["BREACHED", "CLOSED", "DISABLED"].includes(String(fundedRecord.status || "").toUpperCase())) {
             fundedRecord.status = "PAUSED";
           }
-          rollback.status = "FUNDED_REVIEW";
+          if (!terminal) rollback.status = "FUNDED_REVIEW";
           rollback.enabled = false;
           rollback.lifecycleOperationId = null;
           rollback.lifecycleOperationType = null;
