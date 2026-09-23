@@ -3,17 +3,17 @@ import assert from "node:assert/strict";
 
 import {
   getDailyUsdInrQuote,
-  normalizeUpiStatus,
   usdToInrQuote,
-} from "../src/apis/services/paymentProviders/upiGateway.service.js";
+} from "../src/apis/services/paymentProviders/upiFx.service.js";
+import { normalizeRupexStatus } from "../src/apis/services/paymentProviders/rupex.service.js";
 
-test("normalizes the documented UPI lifecycle into ACG payment states", () => {
-  assert.equal(normalizeUpiStatus("PENDING"), "WAITING");
-  assert.equal(normalizeUpiStatus("APPROVED"), "CONFIRMING");
-  assert.equal(normalizeUpiStatus("PROCESSING"), "CONFIRMING");
-  assert.equal(normalizeUpiStatus("SUCCESS"), "PAID");
-  assert.equal(normalizeUpiStatus("REJECTED"), "REFUNDED");
-  assert.equal(normalizeUpiStatus("UNKNOWN"), "WAITING");
+test("normalizes the documented Rupex lifecycle into ACG payment states", () => {
+  assert.equal(normalizeRupexStatus("PENDING"), "WAITING");
+  assert.equal(normalizeRupexStatus("APPROVED"), "CONFIRMING");
+  assert.equal(normalizeRupexStatus("PROCESSING"), "CONFIRMING");
+  assert.equal(normalizeRupexStatus("SUCCESS"), "PAID");
+  assert.equal(normalizeRupexStatus("REJECTED"), "REFUNDED");
+  assert.equal(normalizeRupexStatus("UNKNOWN"), "WAITING");
 });
 
 test("converts USD challenge price directly to INR using the daily USD/INR quote", async () => {
