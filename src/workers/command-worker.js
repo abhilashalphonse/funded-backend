@@ -149,6 +149,50 @@ export class CommandWorker {
 }
 
 
+async function finalizeCurrentPhase(account, connector, { phase, record, reason }) {
+  if (typeof connector.flattenAccount !== "function") {
+    const error = new Error("Trading provider does not support phase finalization.");
+    error.code = "TRADING_PROVIDER_FLATTEN_UNSUPPORTED";
+    throw error;
+  }
+
+  const platformAccountId = String(record?.platformAccountId || account.platformAccountId || "").trim();
+  if (!platformAccountId) {
+    const error = new Error("Current trading platform account is missing.");
+    error.code = "TRADING_PLATFORM_ACCOUNT_MISSING";
+    throw error;
+  }
+
+  await connector.flattenAccount({ platformAccountId, reason });
+  const remote = await connector.getAccount({ platformAccountId });
+  applyPlatformAccountState(account, remote?.raw || {});
+  const check = phaseCompletionState(account, { balance: account.balance, equity: account.equity }, phase);
+
+  if (!check.passed) {
+    await connector.resumeAccount({
+      platformAccountId,
+      reason: "ACG_FUNDED_PHASE_RECHECK_FAILED",
+    });
+    if (record) record.status = "ACTIVE";
+    account.status = tradablePhaseStatus(account, phase);
+    account.enabled = true;
+    account.commandPending = null;
+    await account.save();
+    return { success: false, passed: false, revalidationFailed: true, completion: check };
+  }
+
+  await connector.disableAccount({
+    platformAccountId,
+    reason: "ACG_FUNDED_PHASE_RESULT_CONFIRMED",
+    liquidate: false,
+    cancelPending: true,
+  });
+  if (record) record.status = "COMPLETED";
+  await account.save();
+  return { success: true, passed: true, platformAccountId, completion: check };
+}
+
+
 export function phaseAccountType(account) {
   return String(account?.accountMode || "").toUpperCase() === "DEMO" ? "DEMO" : "CHALLENGE";
 }
