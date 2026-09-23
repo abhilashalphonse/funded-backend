@@ -34,6 +34,16 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
 
   if (event.eventType === CONTROL_EVENT) {
     applyControlEvent(account, event);
+    if (account.status === "FUNDED" && String(event.payload?.status || "").toUpperCase() === "BREACHED") {
+      account.status = "BREACHED";
+      account.enabled = false;
+      if (!account.breach?.breachedAt) {
+        const breach = buildControlBreachRecord(account, event);
+        account.breach = breach;
+        account.projections = account.projections || {};
+        account.projections.breachedAt = breach.breachedAt;
+      }
+    }
     account.lastProcessedEventId = event.eventId;
     await account.save();
     return;
@@ -338,6 +348,17 @@ function applyDealEvent(account, event) {
   const realized = Number(p.realizedPnl || 0) - Number(p.commission || 0);
   if (realized > 0) account.winningTrades = Number(account.winningTrades || 0) + 1;
   else if (realized < 0) account.losingTrades = Number(account.losingTrades || 0) + 1;
+}
+
+export function buildControlBreachRecord(account, event) {
+  const reason = String(event?.payload?.reason || "").toUpperCase();
+  const primaryReason = reason.includes("MAX") ? "MAX_DRAWDOWN" : "DAILY_DRAWDOWN";
+  const occurredAt = event?.payload?.breachedAt || event?.occurredAt || event?.timestamp || new Date();
+  return buildBreachRecord(
+    account,
+    { primaryReason, triggeredRules: [primaryReason] },
+    { ...event, occurredAt },
+  );
 }
 
 function applyControlEvent(account, event) {
