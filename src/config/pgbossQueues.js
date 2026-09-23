@@ -22,6 +22,10 @@ export const PG_BOSS_QUEUE_POLICIES = Object.freeze({
     retentionSeconds: 7 * DAY,
     deleteAfterSeconds: 3 * DAY,
   }),
+  "challenge-activation-email": Object.freeze({
+    retentionSeconds: 7 * DAY,
+    deleteAfterSeconds: 3 * DAY,
+  }),
 });
 
 export const PG_BOSS_QUEUE_NAMES = Object.freeze(Object.keys(PG_BOSS_QUEUE_POLICIES));
