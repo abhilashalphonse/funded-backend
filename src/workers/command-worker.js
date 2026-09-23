@@ -1,7 +1,7 @@
 import { COMMAND_QUEUE_NAME } from "./state-engine/commandQueue.js";
 import Account from "../accounts/account.model.js";
 import { getTradingConnector } from "../connectors/trading/registry.js";
-import { provisionTradingAccount } from "../connectors/trading/account-provisioning.js";
+import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../connectors/trading/account-provisioning.js";
 import { ensureTradingCredential } from "../trading-credentials/trading-credential.service.js";
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
 import { applyPlatformAccountState, phaseCompletionState, resetAccountForPhaseTwo as resetPhaseTwoState, tradablePhaseStatus } from "../accounts/account-lifecycle.js";
@@ -15,6 +15,7 @@ export class CommandWorker {
   }
 
   async start() {
+    await this.recoverPendingCommands();
     await this.boss.work(COMMAND_QUEUE_NAME, { batchSize: 5 }, async (jobs) => {
       for (const job of jobs) {
         const { id: jobId, data } = job;
@@ -23,7 +24,10 @@ export class CommandWorker {
         try {
           console.log(`[WORKER] Processing Job ${jobId} | Command: ${command} for Account: ${accountId}`);
           await this.executeExternalSideEffect(command, accountId, metadata);
-          await Account.updateOne({ accountId }, { $set: { commandPending: null } });
+          await Account.updateOne(
+            { accountId, commandPending: command },
+            { $set: { commandPending: null } },
+          );
           console.log(`[WORKER SUCCESS] Completed command ${command} safely for Account ${accountId}`);
         } catch (error) {
           console.error(`[WORKER CRASH] Execution failed on Job ${jobId}:`, error.message);
@@ -33,9 +37,25 @@ export class CommandWorker {
     });
   }
 
+  async recoverPendingCommands() {
+    const pending = await Account.find({
+      commandPending: { $in: ["LOCK_ACCOUNT", "CREATE_PHASE_2_ACCOUNT", "COMPLETE_TRIAL", "ENTER_FUNDED_REVIEW"] },
+    }).select("accountId commandPending").limit(500).lean();
+
+    const queue = new CommandQueue(this.boss);
+    for (const account of pending) {
+      await queue.enqueueCommand(account.commandPending, account).catch(error => {
+        console.error("[WORKER RECOVERY] Failed to requeue lifecycle command", account.accountId, error?.message || error);
+      });
+    }
+  }
+
   async executeExternalSideEffect(command, accountId, metadata = {}) {
     const account = await Account.findOne({ accountId });
     if (!account) throw new Error(`Account ${accountId} not found`);
+    if (!commandStillValid(account, command)) {
+      return { success: true, skipped: true, staleCommand: true, command };
+    }
     const connector = getTradingConnector(account.platform);
 
     switch (command) {
@@ -76,11 +96,42 @@ export class CommandWorker {
         }
 
         const nextPhaseAccountType = phaseAccountType(account);
-        await provisionTradingAccount(account, { phase: 2, accountType: nextPhaseAccountType });
-        await ensureTradingCredential(account, { queueEmail: true, platformAccountId: account.platformAccountId });
+        const staged = account.platform === "acg-trader";
+        await provisionTradingAccount(account, {
+          phase: 2,
+          accountType: nextPhaseAccountType,
+          activate: !staged,
+        });
 
+        // Commit the new lifecycle generation before the Trader account becomes
+        // tradable or federation-visible.
         resetAccountForPhaseTwo(account);
+        account.enabled = !staged;
+        if (staged) account.commandPending = "CREATE_PHASE_2_ACCOUNT";
         await account.save();
+
+        if (staged) {
+          try {
+            await activateTradingAccount(account, {
+              reason: "ACG_FUNDED_PHASE_2_LIFECYCLE_COMMITTED",
+            });
+            account.enabled = true;
+            await account.save();
+          } catch (error) {
+            await stageTradingAccount(account, {
+              reason: "ACG_FUNDED_PHASE_2_ACTIVATION_FAILED",
+            }).catch(() => {});
+            account.enabled = false;
+            account.commandPending = "CREATE_PHASE_2_ACCOUNT";
+            await account.save().catch(() => {});
+            throw error;
+          }
+        }
+
+        await ensureTradingCredential(account, {
+          queueEmail: true,
+          platformAccountId: account.platformAccountId,
+        }).catch(() => {});
 
         if (account.accountMode === "DEMO") {
           await recordAnalyticsEventOnce({
@@ -142,6 +193,7 @@ export class CommandWorker {
         }
         account.enabled = false;
         account.status = "PASSED";
+        account.activeTrialKey = null;
         if (activeRecord) activeRecord.status = "COMPLETED";
         await account.save();
 
@@ -217,10 +269,39 @@ async function finalizeCurrentPhase(account, connector, { phase, record, reason 
 
   await connector.flattenAccount({ platformAccountId, reason });
   const remote = await connector.getAccount({ platformAccountId });
-  applyPlatformAccountState(account, remote?.raw || {});
+  const raw = remote?.raw || {};
+  const remoteStatus = String(raw?.status || raw?.account?.status || "").toUpperCase();
+
+  applyPlatformAccountState(account, raw);
+
+  if (remoteStatus === "BREACHED") {
+    if (record) record.status = "BREACHED";
+    account.status = "BREACHED";
+    account.enabled = false;
+    account.commandPending = null;
+    if (account.accountMode === "DEMO") account.activeTrialKey = null;
+    await account.save();
+    return { success: false, passed: false, breached: true, platformAccountId };
+  }
+
+  if (remoteStatus === "CLOSED") {
+    if (record) record.status = "CLOSED";
+    account.status = "CLOSED";
+    account.enabled = false;
+    account.commandPending = null;
+    if (account.accountMode === "DEMO") account.activeTrialKey = null;
+    await account.save();
+    return { success: false, passed: false, closed: true, platformAccountId };
+  }
+
   const check = phaseCompletionState(account, { balance: account.balance, equity: account.equity }, phase);
 
   if (!check.passed) {
+    if (remoteStatus === "DISABLED") {
+      const error = new Error("Disabled phase account no longer satisfies the confirmed completion target.");
+      error.code = "PHASE_FINALIZATION_STATE_CONFLICT";
+      throw error;
+    }
     await connector.resumeAccount({
       platformAccountId,
       reason: "ACG_FUNDED_PHASE_RECHECK_FAILED",
@@ -233,17 +314,38 @@ async function finalizeCurrentPhase(account, connector, { phase, record, reason 
     return { success: false, passed: false, revalidationFailed: true, completion: check };
   }
 
-  await connector.disableAccount({
-    platformAccountId,
-    reason: "ACG_FUNDED_PHASE_RESULT_CONFIRMED",
-    liquidate: false,
-    cancelPending: true,
-  });
+  if (remoteStatus !== "DISABLED") {
+    await connector.disableAccount({
+      platformAccountId,
+      reason: "ACG_FUNDED_PHASE_RESULT_CONFIRMED",
+      liquidate: false,
+      cancelPending: true,
+    });
+  }
+
   if (record) record.status = "COMPLETED";
   await account.save();
-  return { success: true, passed: true, platformAccountId, completion: check };
+  return {
+    success: true,
+    passed: true,
+    platformAccountId,
+    completion: check,
+    idempotentRemoteFinalization: remoteStatus === "DISABLED",
+  };
 }
 
+export function commandStillValid(account, command) {
+  if (!account || String(account.commandPending || "") !== String(command || "")) return false;
+  const status = String(account.status || "").toUpperCase();
+
+  if (command === "LOCK_ACCOUNT") return status === "BREACHED";
+  if (command === "CREATE_PHASE_2_ACCOUNT") {
+    return account.challengeType === "TWO_STEP" && ["PASSED", "PHASE_2"].includes(status);
+  }
+  if (command === "COMPLETE_TRIAL") return account.accountMode === "DEMO" && status === "PASSED";
+  if (command === "ENTER_FUNDED_REVIEW") return status === "FUNDED_REVIEW";
+  return false;
+}
 
 export function phaseAccountType(account) {
   return String(account?.accountMode || "").toUpperCase() === "DEMO" ? "DEMO" : "CHALLENGE";
@@ -251,7 +353,10 @@ export function phaseAccountType(account) {
 
 export function isActivePhaseTwo(account) {
   const phaseTwo = account?.platformAccounts?.find(item => Number(item.phase) === 2);
-  return Number(account?.currentPhase) === 2 && account?.status === "PHASE_2" && phaseTwo?.status === "ACTIVE";
+  return Number(account?.currentPhase) === 2
+    && account?.status === "PHASE_2"
+    && account?.enabled === true
+    && phaseTwo?.status === "ACTIVE";
 }
 
 export function resetAccountForPhaseTwo(account, now = new Date()) {
