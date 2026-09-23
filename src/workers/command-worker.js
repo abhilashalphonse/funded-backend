@@ -1,4 +1,4 @@
-import { COMMAND_QUEUE_NAME } from "./state-engine/commandQueue.js";
+import { COMMAND_QUEUE_NAME, CommandQueue } from "./state-engine/commandQueue.js";
 import Account from "../accounts/account.model.js";
 import { getTradingConnector } from "../connectors/trading/registry.js";
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../connectors/trading/account-provisioning.js";
