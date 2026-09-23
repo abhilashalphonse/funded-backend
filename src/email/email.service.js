@@ -29,11 +29,11 @@ export async function sendTradingCredentialsEmail({
   const isTrial = String(accountMode || "").toUpperCase() === "DEMO";
   const subject = isTrial
     ? "Your ACG Trader free trial is ready"
-    : "Your ACG Trader account is ready";
+    : `Your ACG Trader login — ${String(accountId || "Trading account")}`;
 
   const label = isTrial
-    ? "Free Trial"
-    : String(challengeType || "").toUpperCase() === "TWO_STEP" ? "2-Step Evaluation" : "1-Step Evaluation";
+    ? "Trial Account"
+    : String(challengeType || "").toUpperCase() === "TWO_STEP" ? "2-Step Challenge" : "1-Step Challenge";
 
   const html = `<!doctype html>
 <html>
