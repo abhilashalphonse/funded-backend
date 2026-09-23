@@ -66,11 +66,14 @@ export class ACGTraderConnector extends TradingProviderConnector {
     return this.client.closeAccount(required(platformAccountId, "platformAccountId"), { reason, liquidate });
   }
 
-  async createTradingSession({ ownerExternalRef, platformAccountIds, metadata = {} }) {
-    const accountIds = (platformAccountIds || []).map(String).filter(Boolean);
+  async createTradingSession({ ownerExternalRef, ownerExternalRefs = [], platformAccountIds, selectedAccountId = null, metadata = {} }) {
+    const accountIds = [...new Set((platformAccountIds || []).map(String).filter(Boolean))];
+    const owners = [...new Set([ownerExternalRef, ...ownerExternalRefs].map(value => String(value || "").trim()).filter(Boolean))];
     const result = await this.client.createFederationTicket({
       ownerExternalRef: required(ownerExternalRef, "ownerExternalRef"),
+      ownerExternalRefs: owners,
       accountIds,
+      ...(selectedAccountId ? { selectedAccountId: String(selectedAccountId) } : {}),
       metadata: primitiveMetadata(metadata),
     });
     return {
@@ -78,6 +81,7 @@ export class ACGTraderConnector extends TradingProviderConnector {
       type: "FEDERATED",
       ticket: result.ticket,
       expiresAt: result.expiresAt,
+      selectedAccountId: result.selectedAccountId || selectedAccountId || accountIds[0] || null,
       launchUrl: this.frontendUrl || null,
     };
   }
