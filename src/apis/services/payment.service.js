@@ -781,17 +781,17 @@ export async function processIpn(payload, signature) {
 }
 
 export async function getPaymentStatus(id, statusToken) {
-  let payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency providerStatus paidAmount paidCurrency paidAt accountId activatedAt activation statusTokenHash providerLastCheckedAt");
+  let payment = await Payment.findById(id).select("orderId status amount currency paymentMethod provider providerAmount providerCurrency providerStatus paidAmount paidCurrency paidAt accountId activatedAt activation statusTokenHash providerLastCheckedAt");
   if (!payment || !statusToken || !payment.statusTokenHash || !safeStringEqual(hashToken(statusToken), payment.statusTokenHash)) {
     const error = new Error("Payment not found.");
     error.status = 404;
     throw error;
   }
 
-  if (payment.provider === "upi-gateway" && !["PAID", "REFUNDED"].includes(payment.status)) {
+  if (payment.paymentMethod === "UPI" && !["PAID", "REFUNDED"].includes(payment.status)) {
     try {
       await refreshUpiPayment(payment);
-      payment = await Payment.findById(id).select("orderId status amount currency provider providerAmount providerCurrency providerStatus paidAmount paidCurrency paidAt accountId activatedAt activation statusTokenHash providerLastCheckedAt");
+      payment = await Payment.findById(id).select("orderId status amount currency paymentMethod provider providerAmount providerCurrency providerStatus paidAmount paidCurrency paidAt accountId activatedAt activation statusTokenHash providerLastCheckedAt");
     } catch (error) {
       console.warn("[UPI] Status refresh failed:", error?.message || error);
     }
