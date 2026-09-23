@@ -10,7 +10,7 @@ import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customer
 import boss from "../../config/boss.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
-import { usdToInrQuote } from "./paymentProviders/upiGateway.service.js";
+import { usdToInrQuote } from "./paymentProviders/upiFx.service.js";
 import {
   DEFAULT_UPI_GATEWAY_ID,
   getActiveUpiGateway,
