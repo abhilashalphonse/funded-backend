@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import Account from "../../accounts/account.model.js";
 import simulatorEngine from "../../simulator/engine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
-import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
+import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { requireTradingReadiness } from "./tradingReadiness.service.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 
@@ -124,10 +124,13 @@ export async function ensureDemoAccount(customer, input = {}) {
   const accountId = `TRIAL-${randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
   const platform = configuredTradingProvider();
 
-  const account = await Account.create({
+  let account;
+  try {
+    account = await Account.create({
     accountId,
     ownerExternalRef: customer.customerId,
     customerId: customer.customerId,
+    activeTrialKey: customer.customerId,
     accountMode: "DEMO",
     challengeType: step === "2step" ? "TWO_STEP" : "ONE_STEP",
     accountSize,
@@ -156,18 +159,48 @@ export async function ensureDemoAccount(customer, input = {}) {
       dailyStartBalance: accountSize,
       tradingDays: 0,
     },
-  });
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      const conflict = new Error("You already have an active free trial. Finish or close it before starting another.");
+      conflict.status = 409;
+      conflict.code = "ACTIVE_TRIAL_EXISTS";
+      throw conflict;
+    }
+    throw error;
+  }
 
   try {
-    await provisionTradingAccount(account, { phase: 1, accountType: "DEMO" });
+    const staged = platform === "acg-trader";
+    await provisionTradingAccount(account, { phase: 1, accountType: "DEMO", activate: !staged });
+
+    // Commit the lifecycle identity before making the remote account tradable.
     account.status = "ACTIVE";
-    account.enabled = true;
+    account.enabled = !staged;
     await account.save();
-    await ensureTradingCredential(account, { email: customer.email, queueEmail: true, platformAccountId: account.platformAccountId });
+
+    if (staged) {
+      await activateTradingAccount(account, {
+        reason: "ACG_FUNDED_TRIAL_LIFECYCLE_COMMITTED",
+      });
+      account.enabled = true;
+      await account.save();
+    }
+
+    await ensureTradingCredential(account, {
+      email: customer.email,
+      queueEmail: true,
+      platformAccountId: account.platformAccountId,
+    }).catch(() => {});
+
     return serializeCustomerAccount(account);
   } catch (error) {
+    await stageTradingAccount(account, {
+      reason: "ACG_FUNDED_TRIAL_ACTIVATION_FAILED",
+    }).catch(() => {});
     account.status = "CLOSED";
     account.enabled = false;
+    account.activeTrialKey = null;
     await account.save().catch(() => {});
     throw error;
   }
