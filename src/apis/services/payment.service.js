@@ -715,8 +715,29 @@ export async function activatePaidPayment(payment) {
         await activateTradingAccount(account, {
           reason: "ACG_FUNDED_PAID_CHALLENGE_COMMITTED",
         });
-        account.enabled = true;
-        await account.save();
+        const activated = await Account.findOneAndUpdate(
+          {
+            _id: account._id,
+            status: "ACTIVE",
+            customerAccessBlocked: { $ne: true },
+          },
+          {
+            $set: {
+              enabled: true,
+              "platformAccounts.$[target].status": "ACTIVE",
+            },
+          },
+          {
+            new: true,
+            arrayFilters: [{ "target.platformAccountId": account.platformAccountId }],
+          },
+        );
+        if (!activated) {
+          const superseded = new Error("Challenge activation was superseded by a newer lifecycle state.");
+          superseded.code = "CHALLENGE_ACTIVATION_SUPERSEDED";
+          throw superseded;
+        }
+        account = activated;
       } catch (error) {
         await stageTradingAccount(account, {
           reason: "ACG_FUNDED_PAID_CHALLENGE_ACTIVATION_FAILED",
