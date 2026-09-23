@@ -76,6 +76,18 @@ export function getUpiGateway(gatewayId, { requireAvailable = true } = {}) {
   return gateway;
 }
 
+export async function normalizeStoredUpiGatewaySetting() {
+  const setting = await SystemSetting.findOne({ key: ACTIVE_UPI_GATEWAY_SETTING });
+  if (!setting) return DEFAULT_UPI_GATEWAY_ID;
+
+  const normalized = normalizeUpiGatewayId(setting.value || DEFAULT_UPI_GATEWAY_ID);
+  if (setting.value !== normalized && byId.has(normalized)) {
+    setting.value = normalized;
+    await setting.save();
+  }
+  return normalized;
+}
+
 export async function getActiveUpiGatewayId() {
   const setting = await SystemSetting.findOne({ key: ACTIVE_UPI_GATEWAY_SETTING }).lean();
   return normalizeUpiGatewayId(setting?.value || DEFAULT_UPI_GATEWAY_ID);
