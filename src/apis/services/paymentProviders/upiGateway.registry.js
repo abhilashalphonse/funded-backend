@@ -1,42 +1,44 @@
 import env from "../../../config/env.js";
 import SystemSetting from "../../../models/systemSetting.model.js";
 import {
-  createUpiOrder,
-  getUpiOrderStatus,
-  normalizeUpiStatus,
-} from "./upiGateway.service.js";
+  createRupexOrder,
+  getRupexOrderStatus,
+  normalizeRupexStatus,
+} from "./rupex.service.js";
 
 export const ACTIVE_UPI_GATEWAY_SETTING = "payments.upi.activeGateway";
-export const DEFAULT_UPI_GATEWAY_ID = "upi_gateway_1";
+export const DEFAULT_UPI_GATEWAY_ID = "rupex";
 
 const LEGACY_ALIASES = new Map([
-  ["upi-gateway", DEFAULT_UPI_GATEWAY_ID],
-  ["upi_gateway", DEFAULT_UPI_GATEWAY_ID],
+  ["upi-gateway", "rupex"],
+  ["upi_gateway", "rupex"],
+  ["upi_gateway_1", "rupex"],
+  ["upi_gateway_2", "sunpay"],
 ]);
 
 const gateways = [
   {
-    id: DEFAULT_UPI_GATEWAY_ID,
-    label: "UPI Gateway 1",
+    id: "rupex",
+    label: "Rupex",
     implemented: true,
     isConfigured: () => Boolean(
-      env.UPI_GATEWAY_BASE_URL
-      && env.UPI_GATEWAY_API_TOKEN
-      && env.UPI_GATEWAY_CALLBACK_URL
+      env.RUPEX_BASE_URL
+      && env.RUPEX_API_TOKEN
+      && env.RUPEX_CALLBACK_URL
     ),
-    callbackUrl: () => env.UPI_GATEWAY_CALLBACK_URL,
-    quoteSecret: () => env.UPI_GATEWAY_API_TOKEN,
-    createOrder: createUpiOrder,
-    getOrderStatus: getUpiOrderStatus,
-    normalizeStatus: normalizeUpiStatus,
+    callbackUrl: () => env.RUPEX_CALLBACK_URL,
+    quoteSecret: () => env.RUPEX_API_TOKEN,
+    createOrder: createRupexOrder,
+    getOrderStatus: getRupexOrderStatus,
+    normalizeStatus: normalizeRupexStatus,
   },
   {
-    id: "upi_gateway_2",
-    label: "UPI Gateway 2",
+    id: "sunpay",
+    label: "Sunpay",
     implemented: false,
     isConfigured: () => false,
-    callbackUrl: () => null,
-    quoteSecret: () => null,
+    callbackUrl: () => env.SUNPAY_CALLBACK_URL || null,
+    quoteSecret: () => env.SUNPAY_API_TOKEN || null,
     createOrder: null,
     getOrderStatus: null,
     normalizeStatus: null,
@@ -129,8 +131,11 @@ export async function listUpiGateways() {
 
 export function gatewayIdsForPaymentLookup(gatewayId) {
   const normalized = normalizeUpiGatewayId(gatewayId);
-  if (normalized === DEFAULT_UPI_GATEWAY_ID) {
-    return [DEFAULT_UPI_GATEWAY_ID, "upi-gateway", "upi_gateway"];
+  if (normalized === "rupex") {
+    return ["rupex", "upi_gateway_1", "upi-gateway", "upi_gateway"];
+  }
+  if (normalized === "sunpay") {
+    return ["sunpay", "upi_gateway_2"];
   }
   return [normalized];
 }
