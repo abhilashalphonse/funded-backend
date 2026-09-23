@@ -7,6 +7,16 @@ import { resetAccountForPhaseTwo, isActivePhaseTwo, phaseAccountType } from "../
 import { buildBreachRecord, shouldReplayPendingCommand } from "../src/workers/state-engine/processEvent.js";
 
 function account(overrides = {}) {
+  const projections = overrides.projections || {
+    profit: 0,
+    dailyLoss: 0,
+    totalLoss: 0,
+    tradingDays: 0,
+  };
+  const initialDeposit = Number(overrides.initialDeposit || 100000);
+  const balance = overrides.balance ?? initialDeposit + Number(projections.profit || 0);
+  const equity = overrides.equity ?? balance;
+
   return {
     accountId: "E2E-100K",
     challengeType: "TWO_STEP",
@@ -14,7 +24,9 @@ function account(overrides = {}) {
     status: "ACTIVE",
     enabled: true,
     accountSize: 100000,
-    initialDeposit: 100000,
+    initialDeposit,
+    balance,
+    equity,
     rules: {
       dailyDrawdown: 3,
       maxDrawdown: 6,
@@ -24,12 +36,7 @@ function account(overrides = {}) {
         { phase: 2, profitTarget: 8 },
       ],
     },
-    projections: {
-      profit: 0,
-      dailyLoss: 0,
-      totalLoss: 0,
-      tradingDays: 0,
-    },
+    projections,
     platformAccounts: [
       { phase: 1, platformAccountId: "p1", status: "ACTIVE" },
     ],
