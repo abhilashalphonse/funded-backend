@@ -5,6 +5,11 @@ import {
   getRupexOrderStatus,
   normalizeRupexStatus,
 } from "./rupex.service.js";
+import {
+  createSunpayOrder,
+  normalizeSunpayStatus,
+  verifySunpayWebhook,
+} from "./sunpay.service.js";
 
 export const ACTIVE_UPI_GATEWAY_SETTING = "payments.upi.activeGateway";
 export const DEFAULT_UPI_GATEWAY_ID = "rupex";
@@ -21,6 +26,7 @@ const gateways = [
     id: "rupex",
     label: "Rupex",
     implemented: true,
+    supportsStatusPolling: true,
     isConfigured: () => Boolean(
       env.RUPEX_BASE_URL
       && env.RUPEX_API_TOKEN
@@ -31,17 +37,25 @@ const gateways = [
     createOrder: createRupexOrder,
     getOrderStatus: getRupexOrderStatus,
     normalizeStatus: normalizeRupexStatus,
+    verifyWebhook: null,
   },
   {
     id: "sunpay",
     label: "Sunpay",
-    implemented: false,
-    isConfigured: () => false,
-    callbackUrl: () => env.SUNPAY_CALLBACK_URL || null,
-    quoteSecret: () => env.SUNPAY_API_TOKEN || null,
-    createOrder: null,
+    implemented: true,
+    supportsStatusPolling: false,
+    isConfigured: () => Boolean(
+      env.SUNPAY_BASE_URL
+      && env.SUNPAY_API_KEY
+      && env.SUNPAY_API_SECRET
+      && env.SUNPAY_CALLBACK_URL
+    ),
+    callbackUrl: () => env.SUNPAY_CALLBACK_URL,
+    quoteSecret: () => env.SUNPAY_API_SECRET,
+    createOrder: createSunpayOrder,
     getOrderStatus: null,
-    normalizeStatus: null,
+    normalizeStatus: normalizeSunpayStatus,
+    verifyWebhook: verifySunpayWebhook,
   },
 ];
 
