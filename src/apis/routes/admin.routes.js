@@ -14,6 +14,7 @@ import { getTradingConnector } from "../../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
+import { resetAccountForMaster } from "../../accounts/account-lifecycle.js";
 import { sendSupportEmail, replySubject } from "../../email/resendSupport.service.js";
 import { listUpiGateways, setActiveUpiGateway } from "../services/paymentProviders/upiGateway.registry.js";
 
@@ -395,8 +396,7 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
       if (customer?.status === "BLOCKED") return res.status(409).json({ success: false, message: "Blocked customers cannot be approved for a funded account." });
       await provisionTradingAccount(account, { phase: Number(account.currentPhase || 1), accountType: "FUNDED" });
       await ensureTradingCredential(account, { queueEmail: true, platformAccountId: account.platformAccountId });
-      account.status = "FUNDED";
-      account.enabled = true;
+      resetAccountForMaster(account);
       account.fundedApprovedAt = new Date();
     }
 
