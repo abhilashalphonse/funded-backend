@@ -109,6 +109,8 @@ const AccountSchema = new mongoose.Schema(
         lifecycleOperationType: { type: String, default: null },
         lifecycleOperationStartedAt: { type: Date, default: null },
         lifecycleOperationError: { type: String, default: null },
+        credentialOperationId: { type: String, default: null },
+        credentialOperationStartedAt: { type: Date, default: null },
 
         breach: { type: BreachSchema, default: null },
 
