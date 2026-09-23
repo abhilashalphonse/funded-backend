@@ -9,6 +9,12 @@ function required(name) {
   return value || undefined;
 }
 
+function requiredResolved(name, value) {
+  const normalized = String(value || "").trim();
+  if (isProduction && !normalized) throw new Error(`${name} is required in production.`);
+  return normalized || undefined;
+}
+
 function positiveInt(name, fallback) {
   const raw = process.env[name];
   if (raw == null || raw === "") return fallback;
@@ -50,6 +56,14 @@ const redisRestToken = String(process.env.UPSTASH_REDIS_REST_TOKEN || "").trim()
 if (Boolean(redisRestUrl) !== Boolean(redisRestToken)) {
   throw new Error("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be configured together.");
 }
+
+const rupexBaseUrl = String(process.env.RUPEX_BASE_URL || process.env.UPI_GATEWAY_BASE_URL || "").trim() || undefined;
+const rupexApiToken = String(process.env.RUPEX_API_TOKEN || process.env.UPI_GATEWAY_API_TOKEN || "").trim() || undefined;
+const rupexCallbackUrl = String(process.env.RUPEX_CALLBACK_URL || process.env.UPI_GATEWAY_CALLBACK_URL || "").trim() || undefined;
+
+const sunpayBaseUrl = String(process.env.SUNPAY_BASE_URL || "").trim() || undefined;
+const sunpayApiToken = String(process.env.SUNPAY_API_TOKEN || "").trim() || undefined;
+const sunpayCallbackUrl = String(process.env.SUNPAY_CALLBACK_URL || "").trim() || undefined;
 
 const env = Object.freeze({
   NODE_ENV: nodeEnv,
@@ -106,9 +120,16 @@ const env = Object.freeze({
   NOWPAYMENTS_IPN_URL: validUrl("NOWPAYMENTS_IPN_URL", isProduction ? required("NOWPAYMENTS_IPN_URL") : process.env.NOWPAYMENTS_IPN_URL),
   NOWPAYMENTS_IPN_SECRET: isProduction ? required("NOWPAYMENTS_IPN_SECRET") : process.env.NOWPAYMENTS_IPN_SECRET,
 
-  UPI_GATEWAY_BASE_URL: validUrl("UPI_GATEWAY_BASE_URL", isProduction ? required("UPI_GATEWAY_BASE_URL") : process.env.UPI_GATEWAY_BASE_URL),
-  UPI_GATEWAY_API_TOKEN: isProduction ? required("UPI_GATEWAY_API_TOKEN") : process.env.UPI_GATEWAY_API_TOKEN,
-  UPI_GATEWAY_CALLBACK_URL: validUrl("UPI_GATEWAY_CALLBACK_URL", isProduction ? required("UPI_GATEWAY_CALLBACK_URL") : process.env.UPI_GATEWAY_CALLBACK_URL),
+  // Rupex is the currently integrated UPI gateway. Legacy UPI_GATEWAY_* names
+  // remain accepted during deployment migration, but new configuration should use RUPEX_*.
+  RUPEX_BASE_URL: validUrl("RUPEX_BASE_URL", isProduction ? requiredResolved("RUPEX_BASE_URL", rupexBaseUrl) : rupexBaseUrl),
+  RUPEX_API_TOKEN: isProduction ? requiredResolved("RUPEX_API_TOKEN", rupexApiToken) : rupexApiToken,
+  RUPEX_CALLBACK_URL: validUrl("RUPEX_CALLBACK_URL", isProduction ? requiredResolved("RUPEX_CALLBACK_URL", rupexCallbackUrl) : rupexCallbackUrl),
+
+  // Sunpay is registered in the gateway selector but remains optional until its adapter is integrated.
+  SUNPAY_BASE_URL: validUrl("SUNPAY_BASE_URL", sunpayBaseUrl),
+  SUNPAY_API_TOKEN: sunpayApiToken,
+  SUNPAY_CALLBACK_URL: validUrl("SUNPAY_CALLBACK_URL", sunpayCallbackUrl),
 
   ENABLE_SIMULATOR_ROUTES: bool("ENABLE_SIMULATOR_ROUTES", !isProduction),
   ENABLE_LOCAL_ADMIN_ROUTES: bool("ENABLE_LOCAL_ADMIN_ROUTES", !isProduction),
