@@ -151,7 +151,7 @@ export class CommandWorker {
         account.status = "FUNDED_REVIEW";
         if (activeRecord) activeRecord.status = "COMPLETED";
         await account.save();
-        console.log(`[LIFECYCLE] Account ${accountId} entered funded review`);
+        await recordAnalyticsEventOnce({ event: "evaluation_passed", sessionId: `account:${account.accountId}`, accountId: account.accountId, source: "server", properties: { ownerExternalRef: account.ownerExternalRef, accountSize: account.accountSize, challengeType: account.challengeType, completedPhase: phase } }, { accountId: account.accountId }).catch(() => {});\n\n        console.log(`[LIFECYCLE] Account ${accountId} entered funded review`);
         return { success: true, provider: account.platform, timestamp: new Date() };
       }
 
