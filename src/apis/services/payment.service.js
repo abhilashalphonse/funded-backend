@@ -542,6 +542,13 @@ export async function processUpiCallback(
 
   const callbackGateway = getUpiGateway(callbackGatewayId);
 
+  if (callbackGateway.id === "sunpay" && payload?.event && payload.event !== "payin.updated") {
+    const error = new Error("Unexpected Sunpay webhook event.");
+    error.status = 400;
+    error.code = "SUNPAY_WEBHOOK_EVENT_INVALID";
+    throw error;
+  }
+
   if (typeof callbackGateway.verifyWebhook === "function") {
     if (!callbackGateway.verifyWebhook(rawBody, signature)) {
       const error = new Error("Invalid UPI webhook signature.");
