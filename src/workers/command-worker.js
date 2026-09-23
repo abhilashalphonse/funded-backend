@@ -114,19 +114,21 @@ export class CommandWorker {
       }
 
       case "COMPLETE_TRIAL": {
-        await connector.disableAccount({
-          externalRef: `${account.accountId}:phase:${account.currentPhase || 1}`,
-          platformAccountId: account.platformAccountId,
-          reason: "ACG_FUNDED_TRIAL_COMPLETED",
-          liquidate: true,
-          cancelPending: true,
-        });
-        account.enabled = false;
-        account.status = "PASSED";
+        const phase = Number(account.currentPhase || 1);
         const activeRecord = account.platformAccounts.find(item =>
-          Number(item.phase) === Number(account.currentPhase || 1)
+          Number(item.phase) === phase
           && String(item.accountType || "DEMO").toUpperCase() === "DEMO"
         );
+        if (activeRecord?.status !== "COMPLETED") {
+          const check = await finalizeCurrentPhase(account, connector, {
+            phase,
+            record: activeRecord,
+            reason: "ACG_FUNDED_TRIAL_COMPLETION_CHECK",
+          });
+          if (!check.passed) return check;
+        }
+        account.enabled = false;
+        account.status = "PASSED";
         if (activeRecord) activeRecord.status = "COMPLETED";
         await account.save();
         console.log(`[LIFECYCLE] Trial ${accountId} completed successfully`);
