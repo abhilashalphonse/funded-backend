@@ -4,7 +4,7 @@ import Payment from "../../models/payment.model.js";
 import Account from "../../accounts/account.model.js";
 import { calculatePrice } from "../../pricing/pricingEngine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
-import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
+import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
 import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customers/customer.service.js";
 import boss from "../../config/boss.js";
@@ -695,18 +695,44 @@ export async function activatePaidPayment(payment) {
       });
     }
 
+    const staged = account.platform === "acg-trader";
     if (account.provisioning?.status !== "ACTIVE" || !account.platformAccountId) {
-      await provisionTradingAccount(account, { phase: 1, accountType: "CHALLENGE" });
+      await provisionTradingAccount(account, {
+        phase: 1,
+        accountType: "CHALLENGE",
+        activate: !staged,
+      });
     }
 
+    // Persist the accepted Phase 1 identity first. While staged, launch
+    // selection still rejects the PAUSED platform record.
     account.status = "ACTIVE";
-    account.enabled = true;
+    account.enabled = !staged;
     await account.save();
 
-    // Credential delivery is additive to account activation. If the credential
-    // feature is not configured yet, the challenge still activates and can be
-    // opened through the existing federated ACG Trader launch flow.
-    await ensureTradingCredential(account, { email: claimed.email, queueEmail: true, platformAccountId: account.platformAccountId });
+    if (staged) {
+      try {
+        await activateTradingAccount(account, {
+          reason: "ACG_FUNDED_PAID_CHALLENGE_COMMITTED",
+        });
+        account.enabled = true;
+        await account.save();
+      } catch (error) {
+        await stageTradingAccount(account, {
+          reason: "ACG_FUNDED_PAID_CHALLENGE_ACTIVATION_FAILED",
+        }).catch(() => {});
+        account.enabled = false;
+        await account.save().catch(() => {});
+        throw error;
+      }
+    }
+
+    // Native credentials are additive; federated launch remains authoritative.
+    await ensureTradingCredential(account, {
+      email: claimed.email,
+      queueEmail: true,
+      platformAccountId: account.platformAccountId,
+    }).catch(() => {});
 
     const activatedAt = new Date();
     await Payment.updateOne(
