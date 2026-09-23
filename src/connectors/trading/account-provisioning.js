@@ -1,6 +1,6 @@
 import { getTradingConnector } from "./registry.js";
 
-export async function provisionTradingAccount(account, { phase = account.currentPhase || 1, accountType = "CHALLENGE" } = {}) {
+export async function provisionTradingAccount(account, { phase = account.currentPhase || 1, accountType = "CHALLENGE", activate = true } = {}) {
   const provider = account.platform;
   const connector = getTradingConnector(provider);
   const normalizedAccountType = String(accountType || "CHALLENGE").toUpperCase();
@@ -20,6 +20,7 @@ export async function provisionTradingAccount(account, { phase = account.current
       currency: "USD",
       leverage: account.leverage || 100,
       initialBalance: account.initialDeposit || account.accountSize,
+      activate,
       riskPolicy,
       riskTimezone: "UTC",
       metadata: {
@@ -37,7 +38,7 @@ export async function provisionTradingAccount(account, { phase = account.current
       platformAccountId: String(result.platformAccountId),
       accountCode: result.accountCode || null,
       login: result.login == null ? null : String(result.login),
-      status: "ACTIVE",
+      status: String(result?.raw?.status || (activate ? "ACTIVE" : "PAUSED")).toUpperCase(),
       provisionedAt: new Date(),
     };
 
@@ -64,6 +65,39 @@ export async function provisionTradingAccount(account, { phase = account.current
     await account.save();
     throw error;
   }
+}
+
+
+export async function activateTradingAccount(account, {
+  platformAccountId = account?.platformAccountId,
+  reason = "ACG_FUNDED_LIFECYCLE_ACTIVATED",
+} = {}) {
+  const id = String(platformAccountId || "").trim();
+  if (!id) throw new Error("Trading platform account is missing.");
+  if (account.platform === "acg-trader") {
+    const connector = getTradingConnector(account.platform);
+    await connector.activateAccount({ platformAccountId: id, reason });
+  }
+  const record = account.platformAccounts?.find(item => String(item.platformAccountId || "") === id);
+  if (record) record.status = "ACTIVE";
+  return account;
+}
+
+export async function stageTradingAccount(account, {
+  platformAccountId = account?.platformAccountId,
+  reason = "ACG_FUNDED_LIFECYCLE_STAGED",
+} = {}) {
+  const id = String(platformAccountId || "").trim();
+  if (!id) return account;
+  if (account.platform === "acg-trader") {
+    const connector = getTradingConnector(account.platform);
+    await connector.stageAccount({ platformAccountId: id, reason, cancelPending: true });
+  }
+  const record = account.platformAccounts?.find(item => String(item.platformAccountId || "") === id);
+  if (record && !["BREACHED", "CLOSED", "DISABLED"].includes(String(record.status || "").toUpperCase())) {
+    record.status = "PAUSED";
+  }
+  return account;
 }
 
 export function buildRiskPolicy(account, phase = account.currentPhase || 1, { includeProfitTarget = true } = {}) {
