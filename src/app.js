@@ -35,7 +35,14 @@ app.use(cors({
   credentials: true,
 }));
 app.use("/api/webhooks/resend", express.raw({ type: "application/json", limit: "256kb" }), resendWebhookRoutes);
-app.use(express.json({ limit: "128kb" }));
+app.use(express.json({
+  limit: "128kb",
+  verify(req, _res, buffer) {
+    if (req.originalUrl?.startsWith("/api/payments/upi/sunpay/callback")) {
+      req.rawBody = Buffer.from(buffer);
+    }
+  },
+}));
 
 app.use("/api", acgTraderWebhookRoutes);
 app.use("/api", tradeWebhookRoutes);
@@ -63,7 +70,7 @@ app.get("/health", (req, res) => res.json({
   tradingCredentialVaultConfigured: Boolean(process.env.TRADING_CREDENTIAL_ENCRYPTION_KEY),
   tradingCredentialEmailConfigured: Boolean(process.env.RESEND_API_KEY && process.env.TRADING_EMAIL_FROM),
   rupexConfigured: Boolean(env.RUPEX_BASE_URL && env.RUPEX_API_TOKEN && env.RUPEX_CALLBACK_URL),
-  sunpayConfigured: false,
+  sunpayConfigured: Boolean(env.SUNPAY_BASE_URL && env.SUNPAY_API_KEY && env.SUNPAY_API_SECRET && env.SUNPAY_CALLBACK_URL),
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
   localAdminRoutesEnabled: env.ENABLE_LOCAL_ADMIN_ROUTES,
 }));
