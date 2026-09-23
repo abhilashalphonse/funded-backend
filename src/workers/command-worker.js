@@ -84,6 +84,14 @@ export class CommandWorker {
 
         if (account.accountMode !== "DEMO") {
           await recordAnalyticsEventOnce({
+            event: "phase_1_passed",
+            sessionId: `account:${account.accountId}`,
+            accountId: account.accountId,
+            source: "server",
+            properties: { ownerExternalRef: account.ownerExternalRef, accountSize: account.accountSize, challengeType: account.challengeType },
+          }, { accountId: account.accountId }).catch(() => {});
+
+          await recordAnalyticsEventOnce({
             event: "phase_2_started",
             sessionId: `account:${account.accountId}`,
             accountId: account.accountId,
