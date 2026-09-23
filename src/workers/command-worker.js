@@ -4,6 +4,7 @@ import { getTradingConnector } from "../connectors/trading/registry.js";
 import { provisionTradingAccount } from "../connectors/trading/account-provisioning.js";
 import { ensureTradingCredential } from "../trading-credentials/trading-credential.service.js";
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
+import { applyPlatformAccountState, phaseCompletionState, resetAccountForPhaseTwo as resetPhaseTwoState, tradablePhaseStatus } from "../accounts/account-lifecycle.js";
 
 export class CommandWorker {
   constructor(bossInstance) {
