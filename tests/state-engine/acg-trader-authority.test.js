@@ -5,6 +5,7 @@ import {
   isOlderThanLastAuthoritativeSnapshot,
   snapshotSequence,
   snapshotTime,
+  isEventForCurrentPlatformAccount,
   processEvent,
 } from "../../src/workers/state-engine/processEvent.js";
 
@@ -205,4 +206,134 @@ test("breached accounts ignore stale post-liquidation snapshots", async () => {
 
   assert.equal(account.balance, 94737.02);
   assert.equal(account.floatingProfit, 0);
+});
+
+
+test("events from superseded Trader accounts cannot overwrite the current phase", async () => {
+  const account = {
+    status: "PHASE_2",
+    platformAccountId: "phase-2",
+    balance: 100000,
+    lastProcessedEventId: null,
+    saveCalls: 0,
+    async save() { this.saveCalls += 1; },
+  };
+  const accountModel = { async findOne() { return account; } };
+  const event = {
+    eventId: "acg-trader:old-phase-snapshot",
+    aggregateId: "ACG-123",
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    payload: {
+      platformAccountId: "phase-1",
+      complete: true,
+      valuationStatus: "LIVE",
+      balance: 109000,
+      equity: 109000,
+    },
+  };
+
+  assert.equal(isEventForCurrentPlatformAccount(account, event), false);
+  await processEvent(event, null, { accountModel });
+
+  assert.equal(account.balance, 100000);
+  assert.equal(account.lastProcessedEventId, event.eventId);
+  assert.equal(account.saveCalls, 1);
+});
+
+test("Master accounts keep accepting live valuation snapshots without challenge progression", async () => {
+  const account = {
+    status: "FUNDED",
+    enabled: true,
+    platformAccountId: "master-1",
+    initialDeposit: 100000,
+    accountSize: 100000,
+    balance: 100000,
+    equity: 100000,
+    dailyStartEquity: 100000,
+    projections: {
+      highestBalance: 100000,
+      highestEquity: 100000,
+      profit: 0,
+      dailyLoss: 0,
+      totalLoss: 0,
+      tradingDays: 0,
+    },
+    lastProcessedEventId: null,
+    async save() {},
+  };
+  const accountModel = { async findOne() { return account; } };
+  const event = {
+    eventId: "acg-trader:master-live",
+    aggregateId: "ACG-123",
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    occurredAt: new Date("2026-09-23T08:00:00.000Z"),
+    payload: {
+      platformAccountId: "master-1",
+      complete: true,
+      valuationStatus: "LIVE",
+      valuationSequence: 55,
+      balance: 101250,
+      equity: 101100,
+      margin: 500,
+      marginFree: 100600,
+      marginLevel: 20220,
+      floatingProfit: -150,
+      dailyStartEquity: 100500,
+      riskDayKey: "2026-09-23",
+    },
+  };
+
+  await processEvent(event, null, { accountModel });
+
+  assert.equal(account.status, "FUNDED");
+  assert.equal(account.enabled, true);
+  assert.equal(account.balance, 101250);
+  assert.equal(account.equity, 101100);
+  assert.equal(account.floatingProfit, -150);
+  assert.equal(account.projections.profit, 1250);
+  assert.equal(account.projections.dailyLoss, 0);
+  assert.equal(account.lastProcessedEventId, event.eventId);
+});
+
+test("current Master breach control event closes Funded-side trading state", async () => {
+  const account = {
+    status: "FUNDED",
+    enabled: true,
+    platformAccountId: "master-1",
+    initialDeposit: 100000,
+    accountSize: 100000,
+    balance: 95000,
+    equity: 94000,
+    dailyStartEquity: 99000,
+    projections: { dailyLoss: 5000, totalLoss: 6000, profit: -5000, tradingDays: 2 },
+    rules: { dailyDrawdown: 3, maxDrawdown: 6 },
+    platformAccounts: [{ phase: 2, accountType: "FUNDED", platformAccountId: "master-1", status: "ACTIVE" }],
+    breach: null,
+    lastProcessedEventId: null,
+    async save() {},
+  };
+  const accountModel = { async findOne() { return account; } };
+  const event = {
+    eventId: "acg-trader:master-breach",
+    aggregateId: "ACG-123",
+    eventType: "ACG_TRADER_ACCOUNT_CONTROLLED",
+    timestamp: "2026-09-23T08:05:00.000Z",
+    payload: {
+      platformAccountId: "master-1",
+      status: "BREACHED",
+      tradingEnabled: false,
+      reason: "MAX_LOSS_LIMIT_REACHED",
+      breachedAt: "2026-09-23T08:04:59.000Z",
+      sourceEvent: "trading.account.breached",
+    },
+  };
+
+  await processEvent(event, null, { accountModel });
+
+  assert.equal(account.status, "BREACHED");
+  assert.equal(account.enabled, false);
+  assert.equal(account.platformAccounts[0].status, "BREACHED");
+  assert.equal(account.breach.primaryReason, "MAX_DRAWDOWN");
+  assert.equal(account.breach.breachedAt.toISOString(), "2026-09-23T08:04:59.000Z");
+  assert.equal(account.lastProcessedEventId, event.eventId);
 });
