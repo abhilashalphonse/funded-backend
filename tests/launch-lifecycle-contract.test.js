@@ -5,6 +5,7 @@ import { evaluateRules } from "../src/workers/state-engine/rules.js";
 import { resolveDecision } from "../src/workers/state-engine/decisions.js";
 import { resetAccountForPhaseTwo, isActivePhaseTwo, phaseAccountType } from "../src/workers/command-worker.js";
 import { buildBreachRecord, shouldReplayPendingCommand } from "../src/workers/state-engine/processEvent.js";
+import { phaseCompletionState, resetAccountForMaster } from "../src/accounts/account-lifecycle.js";
 
 function account(overrides = {}) {
   const projections = overrides.projections || {
@@ -330,4 +331,54 @@ test("19 target passes only when both realized balance and equity satisfy the ph
     newStatus: "PASSED",
     command: "CREATE_PHASE_2_ACCOUNT",
   });
+});
+
+
+test("20 final phase confirmation fails if the realized post-close balance is below target", () => {
+  const a = account({
+    currentPhase: 2,
+    status: "FUNDED_REVIEW",
+    projections: { profit: 8000, dailyLoss: 0, totalLoss: 0, tradingDays: 5 },
+  });
+  const result = phaseCompletionState(a, { balance: 107950, equity: 107950 }, 2);
+  assert.equal(result.passed, false);
+  assert.equal(result.balanceTargetMet, false);
+  assert.equal(result.equityTargetMet, false);
+});
+
+test("21 Master activation resets Phase 2 performance without changing lifecycle identity", () => {
+  const a = account({
+    currentPhase: 2,
+    status: "FUNDED_REVIEW",
+    enabled: false,
+    balance: 108500,
+    equity: 108500,
+    margin: 900,
+    marginFree: 107600,
+    floatingProfit: 0,
+    dailyStartEquity: 107000,
+    totalTrades: 21,
+    winningTrades: 14,
+    losingTrades: 7,
+    projections: { profit: 8500, dailyLoss: 0, totalLoss: 0, tradingDays: 7 },
+    lastPlatformSnapshotAt: new Date("2026-09-23T07:00:00.000Z"),
+    lastPlatformSnapshotSequence: 99,
+  });
+
+  resetAccountForMaster(a, new Date("2026-09-23T08:00:00.000Z"));
+
+  assert.equal(a.status, "FUNDED");
+  assert.equal(a.enabled, true);
+  assert.equal(a.currentPhase, 2);
+  assert.equal(a.balance, 100000);
+  assert.equal(a.equity, 100000);
+  assert.equal(a.margin, 0);
+  assert.equal(a.marginFree, 100000);
+  assert.equal(a.totalTrades, 0);
+  assert.equal(a.winningTrades, 0);
+  assert.equal(a.losingTrades, 0);
+  assert.equal(a.projections.profit, 0);
+  assert.equal(a.projections.tradingDays, 0);
+  assert.equal(a.lastPlatformSnapshotAt, null);
+  assert.equal(a.lastPlatformSnapshotSequence, null);
 });
