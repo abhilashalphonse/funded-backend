@@ -82,7 +82,20 @@ export class CommandWorker {
         resetAccountForPhaseTwo(account);
         await account.save();
 
-        if (account.accountMode !== "DEMO") {
+        if (account.accountMode === "DEMO") {
+          await recordAnalyticsEventOnce({
+            event: "trial_phase_1_passed",
+            sessionId: `account:${account.accountId}`,
+            accountId: account.accountId,
+            source: "server",
+            properties: {
+              ownerExternalRef: account.ownerExternalRef,
+              accountSize: account.accountSize,
+              challengeType: account.challengeType,
+              completedPhase: 1,
+            },
+          }, { accountId: account.accountId }).catch(() => {});
+        } else {
           await recordAnalyticsEventOnce({
             event: "phase_1_passed",
             sessionId: `account:${account.accountId}`,
@@ -131,6 +144,28 @@ export class CommandWorker {
         account.status = "PASSED";
         if (activeRecord) activeRecord.status = "COMPLETED";
         await account.save();
+
+        const properties = {
+          ownerExternalRef: account.ownerExternalRef,
+          accountSize: account.accountSize,
+          challengeType: account.challengeType,
+          completedPhase: phase,
+        };
+        await recordAnalyticsEventOnce({
+          event: "trial_passed",
+          sessionId: `account:${account.accountId}`,
+          accountId: account.accountId,
+          source: "server",
+          properties,
+        }, { accountId: account.accountId }).catch(() => {});
+        await recordAnalyticsEventOnce({
+          event: "trial_completed",
+          sessionId: `account:${account.accountId}`,
+          accountId: account.accountId,
+          source: "server",
+          properties,
+        }, { accountId: account.accountId }).catch(() => {});
+
         console.log(`[LIFECYCLE] Trial ${accountId} completed successfully`);
         return { success: true, provider: account.platform, timestamp: new Date() };
       }
