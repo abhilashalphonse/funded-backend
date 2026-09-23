@@ -153,11 +153,14 @@ export async function processEvent(event, boss, {
   }
 
   account.status = decision.newStatus;
-  if (decision.newStatus === "BREACHED" && !account.breach?.breachedAt) {
-    const breach = buildBreachRecord(account, decision, event);
-    account.breach = breach;
-    account.projections = account.projections || {};
-    account.projections.breachedAt = breach.breachedAt;
+  if (decision.newStatus === "BREACHED") {
+    if (account.accountMode === "DEMO") account.activeTrialKey = null;
+    if (!account.breach?.breachedAt) {
+      const breach = buildBreachRecord(account, decision, event);
+      account.breach = breach;
+      account.projections = account.projections || {};
+      account.projections.breachedAt = breach.breachedAt;
+    }
   }
   if (decision.command) {
     // Stop new dashboard launches immediately while the platform-side command
