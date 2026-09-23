@@ -54,6 +54,10 @@ export async function upiCallback(req, res, next) {
     await processUpiCallback(
       { ...(req.query || {}), ...(req.body || {}) },
       req.params?.gatewayId || "rupex",
+      {
+        rawBody: req.rawBody || null,
+        signature: req.get("x-signature"),
+      },
     );
     return res.status(200).json({ success: true });
   } catch (error) { next(error); }
