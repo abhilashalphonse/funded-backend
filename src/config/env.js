@@ -9,12 +9,6 @@ function required(name) {
   return value || undefined;
 }
 
-function requiredResolved(name, value) {
-  const normalized = String(value || "").trim();
-  if (isProduction && !normalized) throw new Error(`${name} is required in production.`);
-  return normalized || undefined;
-}
-
 function positiveInt(name, fallback) {
   const raw = process.env[name];
   if (raw == null || raw === "") return fallback;
