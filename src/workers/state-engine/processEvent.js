@@ -33,6 +33,7 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
   }
 
   if (event.eventType === CONTROL_EVENT) {
+    if (hasControlMetrics(event.payload)) applySnapshotEvent(account, event);
     applyControlEvent(account, event);
     if (account.status === "FUNDED" && String(event.payload?.status || "").toUpperCase() === "BREACHED") {
       account.status = "BREACHED";
@@ -351,6 +352,11 @@ export function buildControlBreachRecord(account, event) {
     { primaryReason, triggeredRules: [primaryReason] },
     { ...event, occurredAt },
   );
+}
+
+function hasControlMetrics(payload = {}) {
+  return ["balance", "equity", "floatingProfit", "margin", "marginFree", "dailyStartEquity"]
+    .some(key => payload?.[key] !== undefined && payload?.[key] !== null);
 }
 
 function applyControlEvent(account, event) {
