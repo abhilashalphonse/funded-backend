@@ -126,16 +126,21 @@ export class CommandWorker {
       }
 
       case "ENTER_FUNDED_REVIEW": {
-        await connector.disableAccount({
-          externalRef: `${account.accountId}:phase:${account.currentPhase || 1}`,
-          platformAccountId: account.platformAccountId,
-          reason: "ACG_FUNDED_EVALUATION_COMPLETED",
-          liquidate: true,
-          cancelPending: true,
-        });
+        const phase = Number(account.currentPhase || 1);
+        const activeRecord = account.platformAccounts.find(item =>
+          Number(item.phase) === phase
+          && String(item.accountType || "CHALLENGE").toUpperCase() === "CHALLENGE"
+        );
+        if (activeRecord?.status !== "COMPLETED") {
+          const check = await finalizeCurrentPhase(account, connector, {
+            phase,
+            record: activeRecord,
+            reason: "ACG_FUNDED_FINAL_PHASE_COMPLETION_CHECK",
+          });
+          if (!check.passed) return check;
+        }
         account.enabled = false;
         account.status = "FUNDED_REVIEW";
-        const activeRecord = account.platformAccounts.find(item => Number(item.phase) === Number(account.currentPhase || 1));
         if (activeRecord) activeRecord.status = "COMPLETED";
         await account.save();
         console.log(`[LIFECYCLE] Account ${accountId} entered funded review`);
