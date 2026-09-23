@@ -17,6 +17,7 @@ export class ACGTraderClient {
   pauseAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/pause`, { method: "POST", body: options }); }
   resumeAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/resume`, { method: "POST", body: options }); }
   breachAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/breach`, { method: "POST", body: options }); }
+  flattenAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/flatten`, { method: "POST", body: options }); }
   disableAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/disable`, { method: "POST", body: options }); }
   closeAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/close`, { method: "POST", body: options }); }
   createFederationTicket(command) { return this.requestWithTransientRetry("/v1/internal/auth/federation/tickets", { method: "POST", body: command }); }
