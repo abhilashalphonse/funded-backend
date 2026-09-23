@@ -49,6 +49,9 @@ export async function processEvent(event, boss, {
       account.status = "BREACHED";
       account.enabled = false;
       account.commandPending = null;
+      account.lifecycleOperationId = null;
+      account.lifecycleOperationType = null;
+      account.lifecycleOperationStartedAt = null;
       if (account.accountMode === "DEMO") account.activeTrialKey = null;
       if (!account.breach?.breachedAt) {
         const breach = buildControlBreachRecord(account, event);
@@ -154,6 +157,9 @@ export async function processEvent(event, boss, {
 
   account.status = decision.newStatus;
   if (decision.newStatus === "BREACHED") {
+    account.lifecycleOperationId = null;
+    account.lifecycleOperationType = null;
+    account.lifecycleOperationStartedAt = null;
     if (account.accountMode === "DEMO") account.activeTrialKey = null;
     if (!account.breach?.breachedAt) {
       const breach = buildBreachRecord(account, decision, event);
