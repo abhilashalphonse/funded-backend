@@ -162,32 +162,5 @@ export function isActivePhaseTwo(account) {
 }
 
 export function resetAccountForPhaseTwo(account, now = new Date()) {
-  const startingBalance = Number(account.initialDeposit || account.accountSize || 0);
-  account.currentPhase = 2;
-  account.status = "PHASE_2";
-  account.enabled = true;
-  account.balance = startingBalance;
-  account.equity = startingBalance;
-  account.margin = 0;
-  account.marginFree = startingBalance;
-  account.marginLevel = 0;
-  account.floatingProfit = 0;
-  account.dailyStartEquity = startingBalance;
-  account.dailyResetAt = now;
-  account.riskDayKey = null;
-  account.lastActiveDay = null;
-  account.lastTradingDay = null;
-  account.totalTrades = 0;
-  account.winningTrades = 0;
-  account.losingTrades = 0;
-  account.projections = {
-    highestBalance: startingBalance,
-    highestEquity: startingBalance,
-    profit: 0,
-    dailyLoss: 0,
-    totalLoss: 0,
-    dailyStartBalance: startingBalance,
-    tradingDays: 0,
-  };
-  return account;
+  return resetPhaseTwoState(account, now);
 }
