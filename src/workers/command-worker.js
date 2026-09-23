@@ -143,9 +143,14 @@ export class CommandWorker {
             await stageTradingAccount(account, {
               reason: "ACG_FUNDED_PHASE_2_ACTIVATION_FAILED",
             }).catch(() => {});
-            account.enabled = false;
-            account.commandPending = "CREATE_PHASE_2_ACCOUNT";
-            await account.save().catch(() => {});
+            await Account.updateOne(
+              {
+                _id: account._id,
+                status: "PHASE_2",
+                commandPending: "CREATE_PHASE_2_ACCOUNT",
+              },
+              { $set: { enabled: false } },
+            ).catch(() => {});
             throw error;
           }
         }
