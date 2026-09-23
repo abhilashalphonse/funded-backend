@@ -53,7 +53,7 @@ export async function upiCallback(req, res, next) {
   try {
     await processUpiCallback(
       { ...(req.query || {}), ...(req.body || {}) },
-      req.params?.gatewayId || "upi_gateway_1",
+      req.params?.gatewayId || "rupex",
     );
     return res.status(200).json({ success: true });
   } catch (error) { next(error); }
