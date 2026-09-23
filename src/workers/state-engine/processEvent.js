@@ -155,21 +155,6 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
   account.lastProcessedEventId = event.eventId;
   await account.save();
 
-  if (account.accountMode === "DEMO" && decision.command === "CREATE_PHASE_2_ACCOUNT") {
-    await recordAnalyticsEventOnce({
-      event: "trial_phase_1_passed",
-      sessionId: `account:${account.accountId}`,
-      accountId: account.accountId,
-      source: "server",
-      properties: {
-        ownerExternalRef: account.ownerExternalRef,
-        accountSize: account.accountSize,
-        challengeType: account.challengeType,
-        completedPhase: 1,
-      },
-    }, { accountId: account.accountId }).catch(() => {});
-  }
-
   if (account.accountMode === "DEMO" && decision.command === "COMPLETE_TRIAL") {
     const properties = {
       ownerExternalRef: account.ownerExternalRef,
