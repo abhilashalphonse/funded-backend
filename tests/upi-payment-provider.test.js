@@ -6,7 +6,7 @@ import {
   usdToInrQuote,
 } from "../src/apis/services/paymentProviders/upiFx.service.js";
 import { normalizeRupexStatus } from "../src/apis/services/paymentProviders/rupex.service.js";
-import { normalizeSunpayStatus } from "../src/apis/services/paymentProviders/sunpay.service.js";
+import { computeSunpaySignature, normalizeSunpayStatus } from "../src/apis/services/paymentProviders/sunpay.service.js";
 
 test("normalizes the documented Rupex lifecycle into ACG payment states", () => {
   assert.equal(normalizeRupexStatus("PENDING"), "WAITING");
@@ -51,4 +51,13 @@ test("normalizes the documented Sunpay pay-in lifecycle into ACG payment states"
   assert.equal(normalizeSunpayStatus("failed"), "FAILED");
   assert.equal(normalizeSunpayStatus("expired"), "EXPIRED");
   assert.equal(normalizeSunpayStatus("unknown"), "WAITING");
+});
+
+
+test("Sunpay signs the exact raw JSON body with HMAC-SHA256", () => {
+  const body = '{"order_id":"ORDER_001","amount":2500,"currency":"INR","method":"upi"}';
+  assert.equal(
+    computeSunpaySignature(body, "test-secret"),
+    "cc356d4e439736a8c245bd2207df27eb334da6cc595cbf9f60594f78649b3b71",
+  );
 });
