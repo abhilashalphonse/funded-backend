@@ -15,6 +15,8 @@ export class ACGTraderClient {
   provisionAccount(command) { return this.request("/v1/internal/trading/accounts/provision", { method: "POST", body: command }); }
   getAccount(accountId) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}`); }
   pauseAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/pause`, { method: "POST", body: options }); }
+  stageAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/stage`, { method: "POST", body: options }); }
+  activateAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/activate`, { method: "POST", body: options }); }
   resumeAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/resume`, { method: "POST", body: options }); }
   breachAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/breach`, { method: "POST", body: options }); }
   flattenAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/flatten`, { method: "POST", body: options }); }

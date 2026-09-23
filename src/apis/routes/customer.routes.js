@@ -13,6 +13,7 @@ import { recordAnalyticsEvent } from "../services/analytics.service.js";
 import { completeAcademyLesson, getAcademyProgress, viewAcademyLesson } from "../services/academy.service.js";
 import { getCustomerNewsCalendar } from "../services/newsCalendar.service.js";
 import { getCustomerTradingCredential, rotateCustomerTradingCredential } from "../../trading-credentials/trading-credential.service.js";
+import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 
 const router = express.Router();
 
@@ -131,18 +132,20 @@ router.post("/demo-account", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.post("/demo-account/:accountId/orders", async (req, res, next) => {
-  try {
-    const data = await placeDemoOrder(req.customer, req.params.accountId, req.body || {});
-    res.status(201).json({ success: true, data });
-  } catch (error) { next(error); }
-});
+if (configuredTradingProvider() === "simulator") {
+  router.post("/demo-account/:accountId/orders", async (req, res, next) => {
+    try {
+      const data = await placeDemoOrder(req.customer, req.params.accountId, req.body || {});
+      res.status(201).json({ success: true, data });
+    } catch (error) { next(error); }
+  });
 
-router.post("/demo-account/:accountId/positions/:positionId/close", async (req, res, next) => {
-  try {
-    const data = await closeDemoPosition(req.customer, req.params.accountId, req.params.positionId, req.body || {});
-    res.json({ success: true, data });
-  } catch (error) { next(error); }
-});
+  router.post("/demo-account/:accountId/positions/:positionId/close", async (req, res, next) => {
+    try {
+      const data = await closeDemoPosition(req.customer, req.params.accountId, req.params.positionId, req.body || {});
+      res.json({ success: true, data });
+    } catch (error) { next(error); }
+  });
+}
 
 export default router;

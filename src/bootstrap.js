@@ -9,9 +9,18 @@ import { ensurePaymentProviderIndex, normalizePaymentCurrencyLabels, normalizeUp
 import { ensureDefaultKnowledgeBase } from "./support/knowledgeBase.service.js";
 import { PG_BOSS_QUEUE_NAMES, PG_BOSS_QUEUE_POLICIES } from "./config/pgbossQueues.js";
 import { normalizeStoredUpiGatewaySetting } from "./apis/services/paymentProviders/upiGateway.registry.js";
+import Account from "./accounts/account.model.js";
 
 export async function bootstrap() {
   await connectDatabase();
+  await Account.collection.createIndex(
+    { activeTrialKey: 1 },
+    {
+      unique: true,
+      partialFilterExpression: { activeTrialKey: { $type: "string" } },
+      name: "activeTrialKey_1",
+    },
+  );
   await ensurePaymentProviderIndex();
   await normalizePaymentCurrencyLabels();
   await normalizeUpiProviderLabels();

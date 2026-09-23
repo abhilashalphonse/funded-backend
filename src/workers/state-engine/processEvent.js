@@ -1,4 +1,5 @@
 import Account from "../../accounts/account.model.js";
+import AccountTradingDay from "../../accounts/account-trading-day.model.js";
 import { evaluateRules } from "./rules.js";
 import { resolveDecision } from "./decisions.js";
 import { CommandQueue } from "./commandQueue.js";
@@ -9,7 +10,10 @@ const DEAL_EVENT = "ACG_TRADER_DEAL_CREATED";
 const CONTROL_EVENT = "ACG_TRADER_ACCOUNT_CONTROLLED";
 const CLOSE_DEAL_TYPES = new Set(["CLOSE", "PARTIAL_CLOSE", "REVERSE_CLOSE", "STOP_LOSS", "TAKE_PROFIT", "LIQUIDATION"]);
 
-export async function processEvent(event, boss, { accountModel = Account } = {}) {
+export async function processEvent(event, boss, {
+  accountModel = Account,
+  tradingDayModel = AccountTradingDay,
+} = {}) {
   const account = await accountModel.findOne({ accountId: event.aggregateId });
   if (!account) {
     // Events can legitimately outlive a Funded account after local resets,
@@ -35,9 +39,20 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
   if (event.eventType === CONTROL_EVENT) {
     if (hasControlMetrics(event.payload)) applySnapshotEvent(account, event);
     applyControlEvent(account, event);
-    if (account.status === "FUNDED" && String(event.payload?.status || "").toUpperCase() === "BREACHED") {
+    if (
+      String(event.payload?.status || "").toUpperCase() === "BREACHED"
+      && !["BREACHED", "CLOSED"].includes(String(account.status || "").toUpperCase())
+    ) {
+      // Trader breach is terminal across Trial, Challenge, and Master. It also
+      // invalidates any lifecycle command that was queued from an earlier
+      // target snapshot.
       account.status = "BREACHED";
       account.enabled = false;
+      account.commandPending = null;
+      account.lifecycleOperationId = null;
+      account.lifecycleOperationType = null;
+      account.lifecycleOperationStartedAt = null;
+      if (account.accountMode === "DEMO") account.activeTrialKey = null;
       if (!account.breach?.breachedAt) {
         const breach = buildControlBreachRecord(account, event);
         account.breach = breach;
@@ -51,7 +66,7 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
   }
 
   if (event.eventType === DEAL_EVENT) {
-    applyDealEvent(account, event);
+    await applyDealEvent(account, event, tradingDayModel);
     account.lastProcessedEventId = event.eventId;
     await account.save();
     await recordAnalyticsEventOnce({
@@ -141,11 +156,17 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
   }
 
   account.status = decision.newStatus;
-  if (decision.newStatus === "BREACHED" && !account.breach?.breachedAt) {
-    const breach = buildBreachRecord(account, decision, event);
-    account.breach = breach;
-    account.projections = account.projections || {};
-    account.projections.breachedAt = breach.breachedAt;
+  if (decision.newStatus === "BREACHED") {
+    account.lifecycleOperationId = null;
+    account.lifecycleOperationType = null;
+    account.lifecycleOperationStartedAt = null;
+    if (account.accountMode === "DEMO") account.activeTrialKey = null;
+    if (!account.breach?.breachedAt) {
+      const breach = buildBreachRecord(account, decision, event);
+      account.breach = breach;
+      account.projections = account.projections || {};
+      account.projections.breachedAt = breach.breachedAt;
+    }
   }
   if (decision.command) {
     // Stop new dashboard launches immediately while the platform-side command
@@ -323,17 +344,14 @@ function applySnapshotEvent(account, event) {
   account.projections.totalLoss = Math.max(0, initialBalance - equity);
 }
 
-function applyDealEvent(account, event) {
+async function applyDealEvent(account, event, tradingDayModel) {
   const p = event.payload || {};
   const type = String(p.type || "").toUpperCase();
   const executedAt = new Date(p.executedAt || event.occurredAt || event.receivedAt || Date.now());
   const tradingDay = Number.isNaN(executedAt.getTime()) ? null : executedAt.toISOString().slice(0, 10);
 
-  if (tradingDay && account.lastTradingDay !== tradingDay) {
-    account.lastTradingDay = tradingDay;
-    account.lastActiveDay = tradingDay;
-    account.projections = account.projections || {};
-    account.projections.tradingDays = Number(account.projections.tradingDays || 0) + 1;
+  if (tradingDay) {
+    await recordTradingDay(account, event, tradingDay, executedAt, tradingDayModel);
   }
 
   if (!CLOSE_DEAL_TYPES.has(type)) return;
@@ -341,6 +359,47 @@ function applyDealEvent(account, event) {
   const realized = Number(p.realizedPnl || 0) - Number(p.commission || 0);
   if (realized > 0) account.winningTrades = Number(account.winningTrades || 0) + 1;
   else if (realized < 0) account.losingTrades = Number(account.losingTrades || 0) + 1;
+}
+
+export async function recordTradingDay(account, event, tradingDay, executedAt, tradingDayModel) {
+  if (!tradingDayModel) return;
+  const platformAccountId = String(event?.payload?.platformAccountId || account?.platformAccountId || "").trim();
+  if (!platformAccountId) return;
+
+  const scope = {
+    accountId: String(account.accountId),
+    phase: Number(account.currentPhase || 1),
+    platformAccountId,
+    dayKey: tradingDay,
+  };
+
+  try {
+    await tradingDayModel.updateOne(
+      scope,
+      {
+        $setOnInsert: {
+          ...scope,
+          firstDealEventId: event?.eventId || null,
+          firstExecutedAt: executedAt,
+        },
+      },
+      { upsert: true },
+    );
+  } catch (error) {
+    // Concurrent first trades on the same UTC day may race the unique index.
+    if (error?.code !== 11000) throw error;
+  }
+
+  const tradingDays = await tradingDayModel.countDocuments({
+    accountId: scope.accountId,
+    phase: scope.phase,
+    platformAccountId: scope.platformAccountId,
+  });
+
+  account.projections = account.projections || {};
+  account.projections.tradingDays = Number(tradingDays || 0);
+  if (!account.lastTradingDay || tradingDay > account.lastTradingDay) account.lastTradingDay = tradingDay;
+  if (!account.lastActiveDay || tradingDay > account.lastActiveDay) account.lastActiveDay = tradingDay;
 }
 
 export function buildControlBreachRecord(account, event) {

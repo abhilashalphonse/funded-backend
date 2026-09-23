@@ -2,9 +2,10 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import Payment from "../../models/payment.model.js";
 import Account from "../../accounts/account.model.js";
+import Customer from "../../customers/customer.model.js";
 import { calculatePrice } from "../../pricing/pricingEngine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
-import { provisionTradingAccount } from "../../connectors/trading/account-provisioning.js";
+import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
 import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customers/customer.service.js";
 import boss from "../../config/boss.js";
@@ -662,6 +663,15 @@ export async function activatePaidPayment(payment) {
 
   try {
     const definition = claimed.challengeDefinition;
+    if (claimed.customerId) {
+      const customer = await Customer.findOne({ customerId: claimed.customerId }).select("status").lean();
+      if (String(customer?.status || "").toUpperCase() === "BLOCKED") {
+        const blocked = new Error("Blocked customers cannot activate a trading account.");
+        blocked.status = 403;
+        blocked.code = "CUSTOMER_BLOCKED";
+        throw blocked;
+      }
+    }
     const accountId = `ACG-${String(claimed._id).slice(-16).toUpperCase()}`;
     const accountSize = Number(definition.accountSize);
     const rules = buildAccountRules(definition);
@@ -695,18 +705,70 @@ export async function activatePaidPayment(payment) {
       });
     }
 
+    const staged = account.platform === "acg-trader";
     if (account.provisioning?.status !== "ACTIVE" || !account.platformAccountId) {
-      await provisionTradingAccount(account, { phase: 1, accountType: "CHALLENGE" });
+      await provisionTradingAccount(account, {
+        phase: 1,
+        accountType: "CHALLENGE",
+        activate: !staged,
+      });
     }
 
+    // Persist the accepted Phase 1 identity first. While staged, launch
+    // selection still rejects the PAUSED platform record.
     account.status = "ACTIVE";
-    account.enabled = true;
+    account.enabled = !staged;
     await account.save();
 
-    // Credential delivery is additive to account activation. If the credential
-    // feature is not configured yet, the challenge still activates and can be
-    // opened through the existing federated ACG Trader launch flow.
-    await ensureTradingCredential(account, { email: claimed.email, queueEmail: true, platformAccountId: account.platformAccountId });
+    if (staged) {
+      try {
+        await activateTradingAccount(account, {
+          reason: "ACG_FUNDED_PAID_CHALLENGE_COMMITTED",
+        });
+        const activated = await Account.findOneAndUpdate(
+          {
+            _id: account._id,
+            status: "ACTIVE",
+            customerAccessBlocked: { $ne: true },
+          },
+          {
+            $set: {
+              enabled: true,
+              "platformAccounts.$[target].status": "ACTIVE",
+            },
+          },
+          {
+            new: true,
+            arrayFilters: [{ "target.platformAccountId": account.platformAccountId }],
+          },
+        );
+        if (!activated) {
+          const superseded = new Error("Challenge activation was superseded by a newer lifecycle state.");
+          superseded.code = "CHALLENGE_ACTIVATION_SUPERSEDED";
+          throw superseded;
+        }
+        account = activated;
+      } catch (error) {
+        await stageTradingAccount(account, {
+          reason: "ACG_FUNDED_PAID_CHALLENGE_ACTIVATION_FAILED",
+        }).catch(() => {});
+        await Account.updateOne(
+          {
+            _id: account._id,
+            status: "ACTIVE",
+          },
+          { $set: { enabled: false } },
+        ).catch(() => {});
+        throw error;
+      }
+    }
+
+    // Native credentials are additive; federated launch remains authoritative.
+    await ensureTradingCredential(account, {
+      email: claimed.email,
+      queueEmail: true,
+      platformAccountId: account.platformAccountId,
+    }).catch(() => {});
 
     const activatedAt = new Date();
     await Payment.updateOne(

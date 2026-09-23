@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { evaluateRules } from "../src/workers/state-engine/rules.js";
 import { resolveDecision } from "../src/workers/state-engine/decisions.js";
-import { resetAccountForPhaseTwo, isActivePhaseTwo, phaseAccountType } from "../src/workers/command-worker.js";
+import { commandStillValid, resetAccountForPhaseTwo, isActivePhaseTwo, phaseAccountType } from "../src/workers/command-worker.js";
 import { buildBreachRecord, shouldReplayPendingCommand } from "../src/workers/state-engine/processEvent.js";
 import { phaseCompletionState, resetAccountForMaster } from "../src/accounts/account-lifecycle.js";
 
@@ -381,4 +381,38 @@ test("21 Master activation resets Phase 2 performance without changing lifecycle
   assert.equal(a.projections.tradingDays, 0);
   assert.equal(a.lastPlatformSnapshotAt, null);
   assert.equal(a.lastPlatformSnapshotSequence, null);
+});
+
+
+test("22 stale Phase 2 promotion command is invalidated by a later breach", () => {
+  const a = account({
+    status: "BREACHED",
+    enabled: false,
+    commandPending: null,
+  });
+  assert.equal(commandStillValid(a, "CREATE_PHASE_2_ACCOUNT"), false);
+});
+
+test("23 in-progress staged Phase 2 activation remains retryable", () => {
+  const a = account({
+    currentPhase: 2,
+    status: "PHASE_2",
+    enabled: false,
+    commandPending: "CREATE_PHASE_2_ACCOUNT",
+    platformAccounts: [
+      { phase: 1, accountType: "CHALLENGE", platformAccountId: "p1", status: "COMPLETED" },
+      { phase: 2, accountType: "CHALLENGE", platformAccountId: "p2", status: "PAUSED" },
+    ],
+  });
+  assert.equal(commandStillValid(a, "CREATE_PHASE_2_ACCOUNT"), true);
+  assert.equal(isActivePhaseTwo(a), false);
+});
+
+test("24 terminal breach cannot be mistaken for a pending trial completion", () => {
+  const a = account({
+    accountMode: "DEMO",
+    status: "BREACHED",
+    commandPending: null,
+  });
+  assert.equal(commandStillValid(a, "COMPLETE_TRIAL"), false);
 });

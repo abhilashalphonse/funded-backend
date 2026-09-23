@@ -110,8 +110,7 @@ export async function ensureTradingCredential(account, { email = null, rotate = 
   const platformAccountId = String(platformAccountIdOverride || platform?.platformAccountId || account.platformAccountId || "").trim();
   if (!platformAccountId) return { skipped: true, reason: "platform-account-missing" };
 
-  const existing = await TradingCredentialSecret.findOne({ platformAccountId });
-  if (existing && !rotate) {
+  async function returnExisting(existing) {
     if (queueEmail && existing.delivery?.status !== "SENT") {
       const deliveryEmail = existing.deliveryEmail || await resolveDeliveryEmail(account, email);
       if (deliveryEmail) {
@@ -125,67 +124,112 @@ export async function ensureTradingCredential(account, { email = null, rotate = 
     return { created: false, login: existing.login, credentialSecretId: String(existing._id) };
   }
 
-  const connector = getTradingConnector("acg-trader");
-  let result;
-  try {
-    result = await connector.createNativeCredential({ platformAccountId, rotate: Boolean(rotate) });
-  } catch (error) {
-    // Existing remote credentials with no ACG Funded vault copy cannot be
-    // recovered because ACG Trader stores only a password hash. Rotate once
-    // to establish a recoverable dashboard/email credential.
-    if (!rotate && Number(error?.status) === 409 && !existing) {
-      result = await connector.createNativeCredential({ platformAccountId, rotate: true });
-      rotate = true;
-    } else {
-      throw error;
-    }
-  }
+  let existing = await TradingCredentialSecret.findOne({ platformAccountId });
+  if (existing && !rotate) return returnExisting(existing);
 
-  if (!result?.login || !result?.temporaryPassword) {
-    const error = new Error("ACG Trader did not return native trading credentials.");
-    error.code = "TRADING_CREDENTIAL_INVALID_RESPONSE";
+  // Serialize remote credential creation/rotation across API and worker
+  // instances. This prevents two callers from rotating the Trader password
+  // behind the vault record that another caller is about to persist.
+  const operationId = crypto.randomUUID();
+  const staleBefore = new Date(Date.now() - 2 * 60 * 1000);
+  const claimed = await Account.findOneAndUpdate(
+    {
+      _id: account._id,
+      $or: [
+        { credentialOperationId: null },
+        { credentialOperationId: { $exists: false } },
+        { credentialOperationStartedAt: { $lt: staleBefore } },
+      ],
+    },
+    {
+      $set: {
+        credentialOperationId: operationId,
+        credentialOperationStartedAt: new Date(),
+      },
+    },
+    { new: true },
+  );
+
+  if (!claimed) {
+    existing = await TradingCredentialSecret.findOne({ platformAccountId });
+    if (existing && !rotate) return returnExisting(existing);
+    const error = new Error("Trading credential provisioning is already in progress.");
+    error.status = 409;
+    error.code = "TRADING_CREDENTIAL_PROVISIONING_IN_PROGRESS";
     throw error;
   }
 
-  const encrypted = encryptPassword(result.temporaryPassword);
-  const deliveryEmail = await resolveDeliveryEmail(account, email);
+  try {
+    existing = await TradingCredentialSecret.findOne({ platformAccountId });
+    if (existing && !rotate) return returnExisting(existing);
 
-  const record = existing || new TradingCredentialSecret({
-    accountId: account.accountId,
-    platformAccountId,
-    provider: "acg-trader",
-  });
-  record.accountId = account.accountId;
-  record.login = String(result.login);
-  record.encryptedPassword = encrypted.encryptedPassword;
-  record.iv = encrypted.iv;
-  record.authTag = encrypted.authTag;
-  record.keyVersion = "v1";
-  record.deliveryEmail = deliveryEmail || null;
-  record.delivery = {
-    status: queueEmail && deliveryEmail ? "PENDING" : "NOT_QUEUED",
-    attempts: existing?.delivery?.attempts || 0,
-    lastAttemptAt: existing?.delivery?.lastAttemptAt || null,
-    sentAt: null,
-    error: null,
-  };
-  if (rotate) record.rotatedAt = new Date();
-  await record.save();
+    const connector = getTradingConnector("acg-trader");
+    let result;
+    try {
+      result = await connector.createNativeCredential({ platformAccountId, rotate: Boolean(rotate) });
+    } catch (error) {
+      // Existing remote credentials with no ACG Funded vault copy cannot be
+      // recovered because ACG Trader stores only a password hash. Rotate once
+      // while holding the distributed credential operation claim.
+      if (!rotate && Number(error?.status) === 409 && !existing) {
+        result = await connector.createNativeCredential({ platformAccountId, rotate: true });
+        rotate = true;
+      } else {
+        throw error;
+      }
+    }
 
-  const matchingPlatformRecord = (account.platformAccounts || []).find(item => String(item.platformAccountId || "") === platformAccountId);
-  if (matchingPlatformRecord) matchingPlatformRecord.login = String(result.login);
-  account.platformLogin = String(result.login);
-  if (/^\d+$/.test(String(result.login))) account.login = Number(result.login);
-  await account.save();
+    if (!result?.login || !result?.temporaryPassword) {
+      const error = new Error("ACG Trader did not return native trading credentials.");
+      error.code = "TRADING_CREDENTIAL_INVALID_RESPONSE";
+      throw error;
+    }
 
-  if (queueEmail && deliveryEmail) await enqueueTradingCredentialEmail(boss, record._id);
+    const encrypted = encryptPassword(result.temporaryPassword);
+    const deliveryEmail = await resolveDeliveryEmail(account, email);
 
-  return {
-    created: !existing,
-    rotated: Boolean(rotate),
-    login: record.login,
-    credentialSecretId: String(record._id),
-  };
+    const record = existing || new TradingCredentialSecret({
+      accountId: account.accountId,
+      platformAccountId,
+      provider: "acg-trader",
+    });
+    record.accountId = account.accountId;
+    record.login = String(result.login);
+    record.encryptedPassword = encrypted.encryptedPassword;
+    record.iv = encrypted.iv;
+    record.authTag = encrypted.authTag;
+    record.keyVersion = "v1";
+    record.deliveryEmail = deliveryEmail || null;
+    record.delivery = {
+      status: queueEmail && deliveryEmail ? "PENDING" : "NOT_QUEUED",
+      attempts: existing?.delivery?.attempts || 0,
+      lastAttemptAt: existing?.delivery?.lastAttemptAt || null,
+      sentAt: null,
+      error: null,
+    };
+    if (rotate) record.rotatedAt = new Date();
+    await record.save();
+
+    const matchingPlatformRecord = (account.platformAccounts || []).find(item => String(item.platformAccountId || "") === platformAccountId);
+    if (matchingPlatformRecord) matchingPlatformRecord.login = String(result.login);
+    account.platformLogin = String(result.login);
+    if (/^\d+$/.test(String(result.login))) account.login = Number(result.login);
+    await account.save();
+
+    if (queueEmail && deliveryEmail) await enqueueTradingCredentialEmail(boss, record._id);
+
+    return {
+      created: !existing,
+      rotated: Boolean(rotate),
+      login: record.login,
+      credentialSecretId: String(record._id),
+    };
+  } finally {
+    await Account.updateOne(
+      { _id: account._id, credentialOperationId: operationId },
+      { $set: { credentialOperationId: null, credentialOperationStartedAt: null } },
+    ).catch(() => {});
+  }
 }
 
 export async function getCustomerTradingCredential(customer, accountId, { reveal = false } = {}) {
