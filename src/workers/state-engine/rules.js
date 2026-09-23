@@ -23,7 +23,7 @@ export function evaluateRules(account) {
     // Baseline policy: UTC reset, equity-based daily loss, initial-balance max loss.
     dailyLossBreached: account.projections.dailyLoss >= dailyLossLimit,
     maxLossBreached: account.projections.totalLoss >= maxLossLimit,
-    profitTargetHit: Number(account.balance) >= initial * (1 + activePhase.profitTarget / 100) && Number(account.equity) >= initial * (1 + activePhase.profitTarget / 100),
+    profitTargetHit: Number(account.balance) >= initial + initial * (activePhase.profitTarget / 100) && Number(account.equity) >= initial + initial * (activePhase.profitTarget / 100),
     minimumDaysMet: account.projections.tradingDays >= rule.minimumTradingDays
   };
 }
