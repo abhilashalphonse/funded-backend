@@ -355,7 +355,7 @@ async function applyDealEvent(account, event, tradingDayModel) {
   else if (realized < 0) account.losingTrades = Number(account.losingTrades || 0) + 1;
 }
 
-async function recordTradingDay(account, event, tradingDay, executedAt, tradingDayModel) {
+export async function recordTradingDay(account, event, tradingDay, executedAt, tradingDayModel) {
   if (!tradingDayModel) return;
   const platformAccountId = String(event?.payload?.platformAccountId || account?.platformAccountId || "").trim();
   if (!platformAccountId) return;
