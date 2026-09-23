@@ -27,8 +27,13 @@ function apiSecret() {
   return value;
 }
 
+export function computeSunpaySignature(rawBody, secret) {
+  const raw = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody || ""), "utf8");
+  return crypto.createHmac("sha256", String(secret || "")).update(raw).digest("hex");
+}
+
 function signBody(body) {
-  return crypto.createHmac("sha256", apiSecret()).update(body).digest("hex");
+  return computeSunpaySignature(body, apiSecret());
 }
 
 function safeEqualHex(leftValue, rightValue) {
@@ -40,7 +45,7 @@ function safeEqualHex(leftValue, rightValue) {
 export function verifySunpayWebhook(rawBody, signature) {
   const raw = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody || ""), "utf8");
   if (!raw.length || !signature) return false;
-  const expected = crypto.createHmac("sha256", apiSecret()).update(raw).digest("hex");
+  const expected = computeSunpaySignature(raw, apiSecret());
   return safeEqualHex(expected, signature);
 }
 
