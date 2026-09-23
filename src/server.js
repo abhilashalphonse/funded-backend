@@ -5,6 +5,7 @@ import StateEngineWorker from "./workers/state-engine-worker.js";
 import { CommandWorker } from "./workers/command-worker.js";
 import { PaymentActivationWorker } from "./workers/payment-activation.worker.js";
 import { TradingCredentialEmailWorker } from "./workers/trading-credential-email.worker.js";
+import { ChallengeActivationEmailWorker } from "./workers/challenge-activation-email.worker.js";
 import boss from "./config/boss.js";
 import env from "./config/env.js";
 import EventService from "./apis/services/event.service.js";
@@ -17,12 +18,14 @@ async function startWorkers() {
   const commandWorker = new CommandWorker(boss);
   const paymentActivationWorker = new PaymentActivationWorker(boss);
   const tradingCredentialEmailWorker = new TradingCredentialEmailWorker(boss);
+  const challengeActivationEmailWorker = new ChallengeActivationEmailWorker(boss);
 
   await ingestion.start();
   await stateEngine.start();
   await commandWorker.start();
   await paymentActivationWorker.start();
   await tradingCredentialEmailWorker.start();
+  await challengeActivationEmailWorker.start();
 
   pgBossRetention.start();
   console.log("ACG Funded workers started");
