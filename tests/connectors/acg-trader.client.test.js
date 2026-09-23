@@ -87,3 +87,21 @@ test("ACG Trader federation launch does not retry application 4xx", async () => 
   );
   assert.equal(calls, 1);
 });
+
+
+test("ACG Trader client calls the flatten lifecycle endpoint", async () => {
+  const calls = [];
+  const client = new ACGTraderClient({
+    baseUrl: "http://localhost:4000",
+    clientId: "funded-backend",
+    apiKey: "secret-key",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response(200, { account: { id: "66aa00112233445566778899", status: "PAUSED" } });
+    },
+  });
+
+  await client.flattenAccount("66aa00112233445566778899", { reason: "PHASE_CHECK" });
+  assert.equal(calls[0].url, "http://localhost:4000/v1/internal/trading/accounts/66aa00112233445566778899/flatten");
+  assert.equal(JSON.parse(calls[0].options.body).reason, "PHASE_CHECK");
+});
