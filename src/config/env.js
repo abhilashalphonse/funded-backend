@@ -123,9 +123,9 @@ const env = Object.freeze({
 
   // Rupex is the currently integrated UPI gateway. Legacy UPI_GATEWAY_* names
   // remain accepted during deployment migration, but new configuration should use RUPEX_*.
-  RUPEX_BASE_URL: validUrl("RUPEX_BASE_URL", isProduction ? requiredResolved("RUPEX_BASE_URL", rupexBaseUrl) : rupexBaseUrl),
-  RUPEX_API_TOKEN: isProduction ? requiredResolved("RUPEX_API_TOKEN", rupexApiToken) : rupexApiToken,
-  RUPEX_CALLBACK_URL: validUrl("RUPEX_CALLBACK_URL", isProduction ? requiredResolved("RUPEX_CALLBACK_URL", rupexCallbackUrl) : rupexCallbackUrl),
+  RUPEX_BASE_URL: validUrl("RUPEX_BASE_URL", rupexBaseUrl),
+  RUPEX_API_TOKEN: rupexApiToken,
+  RUPEX_CALLBACK_URL: validUrl("RUPEX_CALLBACK_URL", rupexCallbackUrl),
 
   SUNPAY_BASE_URL: validUrl("SUNPAY_BASE_URL", sunpayBaseUrl),
   SUNPAY_API_KEY: sunpayApiKey,
@@ -137,6 +137,13 @@ const env = Object.freeze({
 });
 
 if (isProduction && env.CORS_ORIGINS.length === 0) throw new Error("CORS_ORIGINS must include the production frontend origin.");
+if (
+  isProduction
+  && !(env.RUPEX_BASE_URL && env.RUPEX_API_TOKEN && env.RUPEX_CALLBACK_URL)
+  && !(env.SUNPAY_BASE_URL && env.SUNPAY_API_KEY && env.SUNPAY_API_SECRET && env.SUNPAY_CALLBACK_URL)
+) {
+  throw new Error("At least one UPI gateway (Rupex or Sunpay) must be fully configured in production.");
+}
 if (env.ACG_TRADER_WEBHOOK_SECRET && env.ACG_TRADER_WEBHOOK_SECRET.length < 16) throw new Error("ACG_TRADER_WEBHOOK_SECRET must be at least 16 characters.");
 
 export default env;
