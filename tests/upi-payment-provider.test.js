@@ -6,6 +6,7 @@ import {
   usdToInrQuote,
 } from "../src/apis/services/paymentProviders/upiFx.service.js";
 import { normalizeRupexStatus } from "../src/apis/services/paymentProviders/rupex.service.js";
+import { normalizeSunpayStatus } from "../src/apis/services/paymentProviders/sunpay.service.js";
 
 test("normalizes the documented Rupex lifecycle into ACG payment states", () => {
   assert.equal(normalizeRupexStatus("PENDING"), "WAITING");
@@ -40,4 +41,14 @@ test("converts USD challenge price directly to INR using the daily USD/INR quote
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+
+test("normalizes the documented Sunpay pay-in lifecycle into ACG payment states", () => {
+  assert.equal(normalizeSunpayStatus("pending"), "WAITING");
+  assert.equal(normalizeSunpayStatus("processing"), "CONFIRMING");
+  assert.equal(normalizeSunpayStatus("success"), "PAID");
+  assert.equal(normalizeSunpayStatus("failed"), "FAILED");
+  assert.equal(normalizeSunpayStatus("expired"), "EXPIRED");
+  assert.equal(normalizeSunpayStatus("unknown"), "WAITING");
 });
