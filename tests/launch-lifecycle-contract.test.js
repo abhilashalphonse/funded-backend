@@ -302,3 +302,32 @@ test("17 paid Phase 2 provisioning remains CHALLENGE", () => {
   assert.equal(phaseAccountType(account({ accountMode: "CHALLENGE" })), "CHALLENGE");
 });
 
+
+
+test("18 target balance alone does not pass while equity is below target", () => {
+  const a = account({
+    balance: 110000,
+    equity: 107500,
+    projections: { profit: 10000, dailyLoss: 0, totalLoss: 0, tradingDays: 5 },
+  });
+  const rules = evaluateRules(a);
+  assert.equal(rules.profitTargetHit, false);
+  assert.deepEqual(resolveDecision(a, rules), {
+    shouldUpdate: false,
+    newStatus: "ACTIVE",
+    command: null,
+  });
+});
+
+test("19 target passes only when both realized balance and equity satisfy the phase target", () => {
+  const a = account({
+    balance: 110000,
+    equity: 110250,
+    projections: { profit: 10000, dailyLoss: 0, totalLoss: 0, tradingDays: 5 },
+  });
+  assert.deepEqual(resolveDecision(a, evaluateRules(a)), {
+    shouldUpdate: true,
+    newStatus: "PASSED",
+    command: "CREATE_PHASE_2_ACCOUNT",
+  });
+});
