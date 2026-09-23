@@ -41,6 +41,18 @@ const PaymentSchema = new mongoose.Schema(
       error: { type: String, default: null },
       attemptedAt: { type: Date, default: null },
     },
+    activationEmail: {
+      status: {
+        type: String,
+        enum: ["NOT_SENT", "PENDING", "SENT", "FAILED"],
+        default: "NOT_SENT",
+        index: true,
+      },
+      attempts: { type: Number, default: 0 },
+      attemptedAt: { type: Date, default: null },
+      sentAt: { type: Date, default: null },
+      error: { type: String, default: null },
+    },
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
     paidAt: Date,
   },
