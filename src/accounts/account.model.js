@@ -60,6 +60,7 @@ const AccountSchema = new mongoose.Schema(
         accountId: { type: String, required: true, unique: true },
         ownerExternalRef: { type: String, index: true },
         customerId: { type: String, index: true, sparse: true },
+        activeTrialKey: { type: String, default: null },
         version: { type: Number, default: 0 },
         lastSequence: { type: Number, default: 0 },
         lastProcessedEventId: { type: String },
@@ -104,6 +105,10 @@ const AccountSchema = new mongoose.Schema(
         customerAccessBlocked: { type: Boolean, default: false },
         statusBeforeLock: { type: String, default: null },
         fundedApprovedAt: { type: Date, default: null },
+        lifecycleOperationId: { type: String, default: null },
+        lifecycleOperationType: { type: String, default: null },
+        lifecycleOperationStartedAt: { type: Date, default: null },
+        lifecycleOperationError: { type: String, default: null },
 
         breach: { type: BreachSchema, default: null },
 
@@ -172,5 +177,12 @@ AccountSchema.index(
 AccountSchema.index({ status: 1 });
 AccountSchema.index({ ownerExternalRef: 1, accountMode: 1, createdAt: -1 });
 AccountSchema.index({ customerId: 1, accountMode: 1, createdAt: -1 });
+AccountSchema.index(
+    { activeTrialKey: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { activeTrialKey: { $type: "string" } }
+    }
+);
 
 export default mongoose.model("Account", AccountSchema);
