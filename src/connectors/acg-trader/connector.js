@@ -16,6 +16,7 @@ export class ACGTraderConnector extends TradingProviderConnector {
       currency: input.currency || "USD",
       leverage: Number(input.leverage || 100),
       initialBalance: String(input.initialBalance),
+      activate: input.activate !== false,
       ...(input.accountCode ? { accountCode: String(input.accountCode) } : {}),
       ...(input.riskPolicy ? { riskPolicy: input.riskPolicy } : {}),
       ...(input.riskTimezone ? { riskTimezone: input.riskTimezone } : {}),
@@ -44,6 +45,14 @@ export class ACGTraderConnector extends TradingProviderConnector {
 
   async pauseAccount({ platformAccountId, reason = "ACG_FUNDED_PAUSE", cancelPending = false }) {
     return this.client.pauseAccount(required(platformAccountId, "platformAccountId"), { reason, cancelPending });
+  }
+
+  async stageAccount({ platformAccountId, reason = "ACG_FUNDED_STAGE", cancelPending = true }) {
+    return this.client.stageAccount(required(platformAccountId, "platformAccountId"), { reason, cancelPending });
+  }
+
+  async activateAccount({ platformAccountId, reason = "ACG_FUNDED_ACTIVATE" }) {
+    return this.client.activateAccount(required(platformAccountId, "platformAccountId"), { reason });
   }
 
   async resumeAccount({ platformAccountId, reason = "ACG_FUNDED_RESUME" }) {
