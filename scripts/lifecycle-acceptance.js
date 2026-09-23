@@ -222,6 +222,21 @@ async function expectTradingRejected(platformAccountId, token, label) {
   return { status: response.status, code: response.body?.code || null, message: response.body?.message || null };
 }
 
+async function abortIfLastScenarioFailed() {
+  const last = report.scenarios.at(-1);
+  if (last?.status !== "FAIL") return;
+  report.finish({ requireAll: config.requireAll });
+  const files = await report.write(config.reportDir);
+  console.error(JSON.stringify({
+    runId: report.runId,
+    status: report.status,
+    summary: report.summary,
+    stoppedAfter: last.name,
+    reports: files,
+  }, null, 2));
+  process.exit(1);
+}
+
 async function maybeCloseExistingTrial() {
   const workspace = await loadCustomer();
   const active = (workspace?.accounts || []).filter(item =>
@@ -274,6 +289,7 @@ await report.run("1. Deployed health, identity, and fixture preflight", async ()
   };
   return { summary: "Both deployed services healthy; dedicated fixtures verified." };
 });
+await abortIfLastScenarioFailed();
 
 if (!config.dryRun) {
   await report.run("2. Concurrent Trial creation enforces exactly one active Trial", async () => {
@@ -321,6 +337,7 @@ if (!config.dryRun) {
     };
     return { summary: "One Trial created; concurrent request rejected." };
   });
+  await abortIfLastScenarioFailed();
 
   await report.run("3. One federated Trader session grants Trial + multiple Challenges", async () => {
     assert(state.trial?.accountId, "Trial scenario did not complete.");
@@ -338,6 +355,7 @@ if (!config.dryRun) {
     };
     return { summary: "Single session grants all currently tradable acceptance accounts." };
   });
+  await abortIfLastScenarioFailed();
 
   await report.run("4. Multi-account switching/order routing stays on the selected account", async () => {
     assert(state.traderToken, "Federated session token is missing.");
@@ -350,6 +368,7 @@ if (!config.dryRun) {
     report.evidence.routing = routed;
     return { summary: "Every open/close order and durable history row matched the runner-selected platform account." };
   });
+  await abortIfLastScenarioFailed();
 
   await report.run("5. Trial reaches target, becomes PASSED, and cannot relaunch", async () => {
     const trial = await loadChallenge(state.trial.accountId);
@@ -376,6 +395,7 @@ if (!config.dryRun) {
     };
     return { summary: "Trial terminal completion propagated to Funded and Trader." };
   });
+  await abortIfLastScenarioFailed();
 
   await report.run("6. Challenge A Phase 1 passes into a distinct active Phase 2 account", async () => {
     const before = await loadChallenge(config.challengeAId);
@@ -412,6 +432,7 @@ if (!config.dryRun) {
     };
     return { summary: "Phase 2 is a new account; Phase 1 was revoked and rejects new exposure." };
   });
+  await abortIfLastScenarioFailed();
 
   await report.run("7. Breach racing a promotion wins and no active successor survives", async () => {
     const before = await loadChallenge(config.challengeBId);
@@ -447,6 +468,7 @@ if (!config.dryRun) {
     };
     return { summary: "Breach won the transition race; no active Phase 2 successor survived." };
   });
+  await abortIfLastScenarioFailed();
 
   await report.run("8. Challenge A Phase 2 passes to non-tradable Funded Review", async () => {
     const before = await loadChallenge(config.challengeAId);
@@ -484,6 +506,7 @@ if (!config.dryRun) {
     };
     return { summary: "Funded Review is non-tradable and exposes no Master account." };
   });
+  await abortIfLastScenarioFailed();
 
   await report.run("9. Concurrent Master approval creates exactly one active Master", async () => {
     const path = "/api/admin/challenges/" + encodeURIComponent(config.challengeAId) + "/action";
@@ -522,6 +545,7 @@ if (!config.dryRun) {
     };
     return { summary: "Double approval was serialized and produced one active Master." };
   });
+  await abortIfLastScenarioFailed();
 
   await report.run("10. Master routing stays correct and reconciliation survives a restart hook", async () => {
     const masterSession = await exchangeLaunch(config.challengeAId);
