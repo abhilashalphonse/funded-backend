@@ -375,6 +375,8 @@ export async function createUpiPayment({
       orderId,
       redirectUrl: callbackUrl,
       customerMobile,
+      customerEmail: normalizedEmail,
+      paymentId: payment._id,
       remark1: `ACG Funded ${challengeDefinition.step} ${Number(challengeDefinition.accountSize).toLocaleString()} challenge`,
     });
 
@@ -437,13 +439,20 @@ async function markUpiPayment(payment, providerData) {
 
   const expectedAmount = Number(payment.providerAmount);
   const returnedAmount = Number(providerData?.amount);
-  const providerPaymentStatus = String(providerData?.payment_status || "").trim().toUpperCase();
+  const providerPaymentStatus = String(providerData?.payment_status || providerData?.status || "").trim().toUpperCase();
   const returnedMethod = String(providerData?.method || "").trim().toUpperCase();
+  const returnedCurrency = String(providerData?.currency || "").trim().toUpperCase();
 
   if (providerPaymentStatus === "SUCCESS" && returnedMethod !== "UPI") {
     const error = new Error("Unexpected UPI payment method.");
     error.status = 400;
     error.code = "UPI_METHOD_MISMATCH";
+    throw error;
+  }
+  if (returnedCurrency && returnedCurrency !== "INR") {
+    const error = new Error("Unexpected UPI settlement currency.");
+    error.status = 400;
+    error.code = "UPI_CURRENCY_MISMATCH";
     throw error;
   }
   if (!Number.isFinite(returnedAmount) || Math.abs(returnedAmount - expectedAmount) > 0.01) {
@@ -461,7 +470,9 @@ async function markUpiPayment(payment, providerData) {
   payment.providerStatus = String(providerData?.payment_status || providerData?.status || "");
   payment.providerLastCheckedAt = new Date();
   payment.utr = providerData?.utr ? String(providerData.utr) : payment.utr;
-  if (providerData?.payment_token) payment.providerPaymentId = String(providerData.payment_token);
+  if (providerData?.payment_token || providerData?.id) {
+    payment.providerPaymentId = String(providerData.payment_token || providerData.id);
+  }
   payment.status = nextStatus;
 
   if (nextStatus === "PAID") {
@@ -500,6 +511,10 @@ export async function refreshUpiPayment(payment, { force = false } = {}) {
   if (["PAID", "REFUNDED"].includes(payment.status)) return payment;
 
   const gateway = getUpiGateway(payment.provider || DEFAULT_UPI_GATEWAY_ID);
+  if (!gateway.supportsStatusPolling || typeof gateway.getOrderStatus !== "function") {
+    return payment;
+  }
+
   const lastCheckedAt = payment.providerLastCheckedAt ? new Date(payment.providerLastCheckedAt).getTime() : 0;
   if (!force && lastCheckedAt && Date.now() - lastCheckedAt < UPI_PROVIDER_POLL_INTERVAL_MS) {
     return payment;
@@ -512,7 +527,11 @@ export async function refreshUpiPayment(payment, { force = false } = {}) {
   return markUpiPayment(payment, providerData);
 }
 
-export async function processUpiCallback(payload = {}, callbackGatewayId = DEFAULT_UPI_GATEWAY_ID) {
+export async function processUpiCallback(
+  payload = {},
+  callbackGatewayId = DEFAULT_UPI_GATEWAY_ID,
+  { rawBody = null, signature = null } = {},
+) {
   const orderId = String(payload?.order_id || "").trim();
   if (!orderId) {
     const error = new Error("UPI callback is missing order_id.");
@@ -522,6 +541,16 @@ export async function processUpiCallback(payload = {}, callbackGatewayId = DEFAU
   }
 
   const callbackGateway = getUpiGateway(callbackGatewayId);
+
+  if (typeof callbackGateway.verifyWebhook === "function") {
+    if (!callbackGateway.verifyWebhook(rawBody, signature)) {
+      const error = new Error("Invalid UPI webhook signature.");
+      error.status = 401;
+      error.code = "UPI_WEBHOOK_SIGNATURE_INVALID";
+      throw error;
+    }
+  }
+
   const payment = await Payment.findOne({ orderId, paymentMethod: "UPI" });
   if (!payment) {
     const error = new Error("Payment order not found.");
@@ -538,7 +567,12 @@ export async function processUpiCallback(payload = {}, callbackGatewayId = DEFAU
   }
 
   if (payment.status === "PAID" || payment.status === "REFUNDED") return payment;
-  return refreshUpiPayment(payment, { force: true });
+
+  if (callbackGateway.supportsStatusPolling) {
+    return refreshUpiPayment(payment, { force: true });
+  }
+
+  return markUpiPayment(payment, payload);
 }
 
 function recursivelySort(value) {
