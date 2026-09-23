@@ -67,18 +67,21 @@ export class LifecycleReconciliationWorker {
         });
         if (!current) continue;
 
+        const terminal = ["BREACHED", "CLOSED"].includes(String(current.status || "").toUpperCase());
         const record = current.platformAccounts?.find(item =>
           String(item.platformAccountId || "") === String(current.platformAccountId || "")
         );
         if (record && !["BREACHED", "CLOSED", "DISABLED"].includes(String(record.status || "").toUpperCase())) {
           record.status = "PAUSED";
         }
-        current.status = "FUNDED_REVIEW";
+        if (!terminal) current.status = "FUNDED_REVIEW";
         current.enabled = false;
         current.lifecycleOperationId = null;
         current.lifecycleOperationType = null;
         current.lifecycleOperationStartedAt = null;
-        current.lifecycleOperationError = "Recovered stale Master activation.";
+        current.lifecycleOperationError = terminal
+          ? "Cleared stale Master activation after terminal lifecycle state."
+          : "Recovered stale Master activation.";
         await current.save();
       } catch (error) {
         console.error("[LIFECYCLE RECONCILIATION] Master recovery failed", account.accountId, error?.message || error);
