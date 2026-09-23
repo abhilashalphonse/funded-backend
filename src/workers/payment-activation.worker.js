@@ -2,6 +2,7 @@ import Payment from "../models/payment.model.js";
 import { activatePaidPayment } from "../apis/services/payment.service.js";
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
 import { PAYMENT_ACTIVATION_QUEUE, enqueuePaymentActivation } from "./payment-activation.queue.js";
+import { enqueueChallengeActivationEmail } from "./challenge-activation-email.queue.js";
 
 export class PaymentActivationWorker {
   constructor(boss) {
@@ -43,7 +44,12 @@ export class PaymentActivationWorker {
 
     const payment = await Payment.findById(paymentId);
     if (!payment || payment.status !== "PAID") return;
-    if (payment.accountId && payment.activation?.status === "ACTIVE") return;
+    if (payment.accountId && payment.activation?.status === "ACTIVE") {
+      if (payment.activationEmail?.status !== "SENT") {
+        await enqueueChallengeActivationEmail(this.boss, payment._id);
+      }
+      return;
+    }
 
     const accountId = await activatePaidPayment(payment);
     if (!accountId) {
@@ -53,6 +59,8 @@ export class PaymentActivationWorker {
       error.code = "PAYMENT_ACTIVATION_BUSY";
       throw error;
     }
+
+    await enqueueChallengeActivationEmail(this.boss, payment._id);
 
     await recordAnalyticsEventOnce({
       event: "challenge_activated",
