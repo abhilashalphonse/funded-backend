@@ -26,6 +26,7 @@ secrets/
 logs/
 *.log
 coverage/
+artifacts/
 .tmp/
 tmp/
 
