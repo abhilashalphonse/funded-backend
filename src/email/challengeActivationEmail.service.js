@@ -22,7 +22,7 @@ function escapeHtml(value) {
 
 function percent(value) {
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? \`\${numeric}%\` : "—";
+  return Number.isFinite(numeric) ? `${numeric}%` : "—";
 }
 
 function paymentMethodLabel(value) {
@@ -40,7 +40,7 @@ function programLabel(definition = {}) {
 function appUrl(path = "/") {
   const base = String(process.env.FRONTEND_URL || "").trim().replace(/\/$/, "");
   if (!base) return "";
-  return \`\${base}\${path.startsWith("/") ? path : \`/\${path}\`}\`;
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export async function sendChallengeActivationEmail({ to, payment, registered = false }) {
@@ -71,7 +71,7 @@ export async function sendChallengeActivationEmail({ to, payment, registered = f
     accountId,
     email,
   });
-  const primaryUrl = appUrl(\`/?\${params.toString()}\`);
+  const primaryUrl = appUrl(`/?${params.toString()}`);
   const rulesUrl = appUrl("/rules");
   const primaryLabel = registered ? "Open My Dashboard" : "Set Up My ACG Funded Account";
 
@@ -88,14 +88,14 @@ export async function sendChallengeActivationEmail({ to, payment, registered = f
     ["Weekend Holding", commercial.weekendHolding === true ? "Allowed" : commercial.weekendHolding === false ? "Not allowed" : "—"],
   ];
 
-  const ruleHtml = ruleRows.map(([label, value]) => \`
+  const ruleHtml = ruleRows.map(([label, value]) => `
     <tr>
-      <td style="padding:8px 0;color:#8a8a8a;font-size:13px">\${escapeHtml(label)}</td>
-      <td style="padding:8px 0;text-align:right;color:#f5f5f5;font-size:13px;font-weight:700">\${escapeHtml(value)}</td>
+      <td style="padding:8px 0;color:#8a8a8a;font-size:13px">${escapeHtml(label)}</td>
+      <td style="padding:8px 0;text-align:right;color:#f5f5f5;font-size:13px;font-weight:700">${escapeHtml(value)}</td>
     </tr>
-  \`).join("");
+  `).join("");
 
-  const html = \`<!doctype html>
+  const html = `<!doctype html>
 <html>
   <body style="margin:0;background:#050505;color:#f5f5f5;font-family:Arial,sans-serif">
     <div style="max-width:600px;margin:0 auto;padding:36px 20px">
@@ -104,53 +104,53 @@ export async function sendChallengeActivationEmail({ to, payment, registered = f
       <p style="color:#a3a3a3;font-size:14px;line-height:1.65;margin:0 0 24px">Your ACG Funded Challenge has been activated and your ACG Trader account is ready.</p>
 
       <div style="border:1px solid #262626;border-radius:14px;background:#0a0a0a;padding:20px;margin-bottom:18px">
-        <div style="font-size:28px;font-weight:800;margin-bottom:4px">$\${accountSize.toLocaleString("en-US")}</div>
-        <div style="color:#a3a3a3;font-size:14px;margin-bottom:18px">\${escapeHtml(program)}</div>
+        <div style="font-size:28px;font-weight:800;margin-bottom:4px">$${accountSize.toLocaleString("en-US")}</div>
+        <div style="color:#a3a3a3;font-size:14px;margin-bottom:18px">${escapeHtml(program)}</div>
         <div style="font-size:12px;color:#737373;margin-bottom:5px">Account ID</div>
-        <div style="font-family:monospace;font-size:16px;font-weight:800;margin-bottom:14px">\${escapeHtml(accountId)}</div>
+        <div style="font-family:monospace;font-size:16px;font-weight:800;margin-bottom:14px">${escapeHtml(accountId)}</div>
         <div style="font-size:12px;color:#737373;margin-bottom:5px">Platform</div>
         <div style="font-size:14px;font-weight:700">ACG Trader · Active</div>
       </div>
 
       <div style="border:1px solid #262626;border-radius:14px;background:#0a0a0a;padding:20px;margin-bottom:18px">
         <div style="font-size:14px;font-weight:800;margin-bottom:10px">Challenge Rules</div>
-        <table style="width:100%;border-collapse:collapse">\${ruleHtml}</table>
+        <table style="width:100%;border-collapse:collapse">${ruleHtml}</table>
       </div>
 
       <div style="border:1px solid #262626;border-radius:14px;background:#0a0a0a;padding:20px">
         <div style="font-size:14px;font-weight:800;margin-bottom:10px">Purchase</div>
         <table style="width:100%;border-collapse:collapse">
-          <tr><td style="padding:8px 0;color:#8a8a8a;font-size:13px">Challenge Fee</td><td style="padding:8px 0;text-align:right;font-size:13px;font-weight:700">$\${Number(payment.amount || 0).toFixed(2)}</td></tr>
-          <tr><td style="padding:8px 0;color:#8a8a8a;font-size:13px">Payment Method</td><td style="padding:8px 0;text-align:right;font-size:13px;font-weight:700">\${escapeHtml(paymentMethodLabel(payment.paymentMethod))}</td></tr>
-          <tr><td style="padding:8px 0;color:#8a8a8a;font-size:13px">Payment Date</td><td style="padding:8px 0;text-align:right;font-size:13px;font-weight:700">\${escapeHtml(purchaseDate)}</td></tr>
-          <tr><td style="padding:8px 0;color:#8a8a8a;font-size:13px">Payment Reference</td><td style="padding:8px 0;text-align:right;font-family:monospace;font-size:12px;font-weight:700">\${escapeHtml(paymentId)}</td></tr>
+          <tr><td style="padding:8px 0;color:#8a8a8a;font-size:13px">Challenge Fee</td><td style="padding:8px 0;text-align:right;font-size:13px;font-weight:700">$${Number(payment.amount || 0).toFixed(2)}</td></tr>
+          <tr><td style="padding:8px 0;color:#8a8a8a;font-size:13px">Payment Method</td><td style="padding:8px 0;text-align:right;font-size:13px;font-weight:700">${escapeHtml(paymentMethodLabel(payment.paymentMethod))}</td></tr>
+          <tr><td style="padding:8px 0;color:#8a8a8a;font-size:13px">Payment Date</td><td style="padding:8px 0;text-align:right;font-size:13px;font-weight:700">${escapeHtml(purchaseDate)}</td></tr>
+          <tr><td style="padding:8px 0;color:#8a8a8a;font-size:13px">Payment Reference</td><td style="padding:8px 0;text-align:right;font-family:monospace;font-size:12px;font-weight:700">${escapeHtml(paymentId)}</td></tr>
         </table>
       </div>
 
-      \${!registered ? \`<p style="color:#a3a3a3;font-size:13px;line-height:1.6;margin:22px 0 0">Your purchase is secured to <strong style="color:#f5f5f5">\${escapeHtml(email)}</strong>. Set up your ACG Funded account using this email to access the Challenge.</p>\` : ""}
+      ${!registered ? `<p style="color:#a3a3a3;font-size:13px;line-height:1.6;margin:22px 0 0">Your purchase is secured to <strong style="color:#f5f5f5">${escapeHtml(email)}</strong>. Set up your ACG Funded account using this email to access the Challenge.</p>` : ""}
 
-      \${primaryUrl ? \`<a href="\${escapeHtml(primaryUrl)}" style="display:block;text-align:center;margin-top:22px;background:#fff;color:#000;text-decoration:none;font-size:14px;font-weight:800;padding:14px 18px;border-radius:9px">\${escapeHtml(primaryLabel)}</a>\` : ""}
-      \${rulesUrl ? \`<a href="\${escapeHtml(rulesUrl)}" style="display:block;text-align:center;margin-top:10px;color:#b5b5b5;text-decoration:none;font-size:12px;font-weight:700;padding:10px">View Challenge Rules</a>\` : ""}
+      ${primaryUrl ? `<a href="${escapeHtml(primaryUrl)}" style="display:block;text-align:center;margin-top:22px;background:#fff;color:#000;text-decoration:none;font-size:14px;font-weight:800;padding:14px 18px;border-radius:9px">${escapeHtml(primaryLabel)}</a>` : ""}
+      ${rulesUrl ? `<a href="${escapeHtml(rulesUrl)}" style="display:block;text-align:center;margin-top:10px;color:#b5b5b5;text-decoration:none;font-size:12px;font-weight:700;padding:10px">View Challenge Rules</a>` : ""}
 
       <p style="color:#626262;font-size:11px;line-height:1.6;margin-top:26px">Need help? Contact support@acgfunded.com. Keep your trading credentials private.</p>
     </div>
   </body>
-</html>\`;
+</html>`;
 
-  const subject = \`Congratulations — your $\${accountSize.toLocaleString("en-US")} \${program} is ready\`;
+  const subject = `Congratulations — your $${accountSize.toLocaleString("en-US")} ${program} is ready`;
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
-      Authorization: \`Bearer \${apiKey}\`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "Idempotency-Key": \`challenge-activation-\${paymentId}\`,
+      "Idempotency-Key": `challenge-activation-${paymentId}`,
     },
     body: JSON.stringify({ from, to: [recipient], subject, html }),
   });
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(payload?.message || \`Email provider failed (\${response.status}).\`);
+    const error = new Error(payload?.message || `Email provider failed (${response.status}).`);
     error.code = "EMAIL_SEND_FAILED";
     error.status = response.status;
     throw error;
