@@ -394,10 +394,38 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
       if (account.status !== "FUNDED_REVIEW") return res.status(409).json({ success: false, message: "Only accounts in funded review can be approved." });
       const customer = account.customerId ? await Customer.findOne({ customerId: account.customerId }).lean() : null;
       if (customer?.status === "BLOCKED") return res.status(409).json({ success: false, message: "Blocked customers cannot be approved for a funded account." });
-      await provisionTradingAccount(account, { phase: Number(account.currentPhase || 1), accountType: "FUNDED" });
-      await ensureTradingCredential(account, { queueEmail: true, platformAccountId: account.platformAccountId });
-      resetAccountForMaster(account);
-      account.fundedApprovedAt = new Date();
+
+      let fundedPlatformAccountId = null;
+      try {
+        await provisionTradingAccount(account, { phase: Number(account.currentPhase || 1), accountType: "FUNDED" });
+        fundedPlatformAccountId = account.platformAccountId;
+        await ensureTradingCredential(account, { queueEmail: true, platformAccountId: fundedPlatformAccountId });
+        await connector.resumeAccount({
+          externalRef: account.accountId,
+          platformAccountId: fundedPlatformAccountId,
+          reason: "ACG_FUNDED_MASTER_APPROVED",
+        });
+        const fundedRecord = platformRecord(account);
+        if (fundedRecord) fundedRecord.status = "ACTIVE";
+        resetAccountForMaster(account);
+        account.fundedApprovedAt = new Date();
+        await account.save();
+      } catch (error) {
+        if (fundedPlatformAccountId) {
+          await connector.pauseAccount({
+            externalRef: account.accountId,
+            platformAccountId: fundedPlatformAccountId,
+            reason: "ACG_FUNDED_MASTER_APPROVAL_INCOMPLETE",
+            cancelPending: true,
+          }).catch(() => {});
+          const fundedRecord = platformRecord(account);
+          if (fundedRecord) fundedRecord.status = "PAUSED";
+          account.status = "FUNDED_REVIEW";
+          account.enabled = false;
+          await account.save().catch(() => {});
+        }
+        throw error;
+      }
     }
 
     await account.save();
