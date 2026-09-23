@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import Payment from "../../models/payment.model.js";
 import Account from "../../accounts/account.model.js";
+import Customer from "../../customers/customer.model.js";
 import { calculatePrice } from "../../pricing/pricingEngine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
@@ -662,6 +663,15 @@ export async function activatePaidPayment(payment) {
 
   try {
     const definition = claimed.challengeDefinition;
+    if (claimed.customerId) {
+      const customer = await Customer.findOne({ customerId: claimed.customerId }).select("status").lean();
+      if (String(customer?.status || "").toUpperCase() === "BLOCKED") {
+        const blocked = new Error("Blocked customers cannot activate a trading account.");
+        blocked.status = 403;
+        blocked.code = "CUSTOMER_BLOCKED";
+        throw blocked;
+      }
+    }
     const accountId = `ACG-${String(claimed._id).slice(-16).toUpperCase()}`;
     const accountSize = Number(definition.accountSize);
     const rules = buildAccountRules(definition);
@@ -742,8 +752,13 @@ export async function activatePaidPayment(payment) {
         await stageTradingAccount(account, {
           reason: "ACG_FUNDED_PAID_CHALLENGE_ACTIVATION_FAILED",
         }).catch(() => {});
-        account.enabled = false;
-        await account.save().catch(() => {});
+        await Account.updateOne(
+          {
+            _id: account._id,
+            status: "ACTIVE",
+          },
+          { $set: { enabled: false } },
+        ).catch(() => {});
         throw error;
       }
     }
