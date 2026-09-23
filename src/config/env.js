@@ -61,8 +61,9 @@ const rupexBaseUrl = String(process.env.RUPEX_BASE_URL || process.env.UPI_GATEWA
 const rupexApiToken = String(process.env.RUPEX_API_TOKEN || process.env.UPI_GATEWAY_API_TOKEN || "").trim() || undefined;
 const rupexCallbackUrl = String(process.env.RUPEX_CALLBACK_URL || process.env.UPI_GATEWAY_CALLBACK_URL || "").trim() || undefined;
 
-const sunpayBaseUrl = String(process.env.SUNPAY_BASE_URL || "").trim() || undefined;
-const sunpayApiToken = String(process.env.SUNPAY_API_TOKEN || "").trim() || undefined;
+const sunpayBaseUrl = String(process.env.SUNPAY_BASE_URL || "https://ttpay.business").trim() || undefined;
+const sunpayApiKey = String(process.env.SUNPAY_API_KEY || "").trim() || undefined;
+const sunpayApiSecret = String(process.env.SUNPAY_API_SECRET || "").trim() || undefined;
 const sunpayCallbackUrl = String(process.env.SUNPAY_CALLBACK_URL || "").trim() || undefined;
 
 const env = Object.freeze({
@@ -126,9 +127,9 @@ const env = Object.freeze({
   RUPEX_API_TOKEN: isProduction ? requiredResolved("RUPEX_API_TOKEN", rupexApiToken) : rupexApiToken,
   RUPEX_CALLBACK_URL: validUrl("RUPEX_CALLBACK_URL", isProduction ? requiredResolved("RUPEX_CALLBACK_URL", rupexCallbackUrl) : rupexCallbackUrl),
 
-  // Sunpay is registered in the gateway selector but remains optional until its adapter is integrated.
   SUNPAY_BASE_URL: validUrl("SUNPAY_BASE_URL", sunpayBaseUrl),
-  SUNPAY_API_TOKEN: sunpayApiToken,
+  SUNPAY_API_KEY: sunpayApiKey,
+  SUNPAY_API_SECRET: sunpayApiSecret,
   SUNPAY_CALLBACK_URL: validUrl("SUNPAY_CALLBACK_URL", sunpayCallbackUrl),
 
   ENABLE_SIMULATOR_ROUTES: bool("ENABLE_SIMULATOR_ROUTES", !isProduction),
