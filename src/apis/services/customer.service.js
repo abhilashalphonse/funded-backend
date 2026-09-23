@@ -223,10 +223,20 @@ export async function ensureDemoAccount(customer, input = {}) {
     await stageTradingAccount(account, {
       reason: "ACG_FUNDED_TRIAL_ACTIVATION_FAILED",
     }).catch(() => {});
-    account.status = "CLOSED";
-    account.enabled = false;
-    account.activeTrialKey = null;
-    await account.save().catch(() => {});
+    await Account.updateOne(
+      {
+        _id: account._id,
+        status: { $in: ["NEW", "ACTIVE"] },
+        activeTrialKey: customer.customerId,
+      },
+      {
+        $set: {
+          status: "CLOSED",
+          enabled: false,
+          activeTrialKey: null,
+        },
+      },
+    ).catch(() => {});
     throw error;
   }
 }
