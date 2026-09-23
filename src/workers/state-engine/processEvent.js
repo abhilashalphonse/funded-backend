@@ -170,35 +170,6 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
     }, { accountId: account.accountId }).catch(() => {});
   }
 
-  if (account.accountMode !== "DEMO" && decision.command === "CREATE_PHASE_2_ACCOUNT") {
-    await recordAnalyticsEventOnce({
-      event: "phase_1_passed",
-      sessionId: `account:${account.accountId}`,
-      accountId: account.accountId,
-      source: "server",
-      properties: {
-        ownerExternalRef: account.ownerExternalRef,
-        accountSize: account.accountSize,
-        challengeType: account.challengeType,
-      },
-    }, { accountId: account.accountId }).catch(() => {});
-  }
-
-  if (account.accountMode !== "DEMO" && decision.command === "ENTER_FUNDED_REVIEW") {
-    await recordAnalyticsEventOnce({
-      event: "evaluation_passed",
-      sessionId: `account:${account.accountId}`,
-      accountId: account.accountId,
-      source: "server",
-      properties: {
-        ownerExternalRef: account.ownerExternalRef,
-        accountSize: account.accountSize,
-        challengeType: account.challengeType,
-        completedPhase: account.currentPhase,
-      },
-    }, { accountId: account.accountId }).catch(() => {});
-  }
-
   if (account.accountMode === "DEMO" && decision.newStatus === "BREACHED") {
     await recordAnalyticsEventOnce({
       event: "trial_failed",
