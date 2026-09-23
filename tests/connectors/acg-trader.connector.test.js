@@ -44,7 +44,9 @@ test("ACG Trader connector returns provider-neutral federated session", async ()
   const connector = new ACGTraderConnector({ client, frontendUrl: "https://trade.example.test/" });
   const session = await connector.createTradingSession({
     ownerExternalRef: "user-1",
-    platformAccountIds: ["66aa00112233445566778899"],
+    ownerExternalRefs: ["user-1", "legacy-user-1"],
+    platformAccountIds: ["66aa00112233445566778899", "66aa00112233445566778898"],
+    selectedAccountId: "66aa00112233445566778898",
     metadata: { source: "dashboard" },
   });
 
@@ -53,8 +55,12 @@ test("ACG Trader connector returns provider-neutral federated session", async ()
     type: "FEDERATED",
     ticket: "one-time-ticket",
     expiresAt: "2026-09-17T10:00:00.000Z",
+    selectedAccountId: "66aa00112233445566778898",
     launchUrl: "https://trade.example.test",
   });
+  assert.deepEqual(client.calls[0][1].accountIds, ["66aa00112233445566778899", "66aa00112233445566778898"]);
+  assert.deepEqual(client.calls[0][1].ownerExternalRefs, ["user-1", "legacy-user-1"]);
+  assert.equal(client.calls[0][1].selectedAccountId, "66aa00112233445566778898");
 });
 
 test("ACG Trader connector routes pause and resume to the same provider account", async () => {
