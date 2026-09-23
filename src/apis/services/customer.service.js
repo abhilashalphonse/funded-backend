@@ -183,8 +183,33 @@ export async function ensureDemoAccount(customer, input = {}) {
       await activateTradingAccount(account, {
         reason: "ACG_FUNDED_TRIAL_LIFECYCLE_COMMITTED",
       });
-      account.enabled = true;
-      await account.save();
+      const activated = await Account.findOneAndUpdate(
+        {
+          _id: account._id,
+          status: "ACTIVE",
+          activeTrialKey: customer.customerId,
+          customerAccessBlocked: { $ne: true },
+        },
+        {
+          $set: {
+            enabled: true,
+            "platformAccounts.$[target].status": "ACTIVE",
+          },
+        },
+        {
+          new: true,
+          arrayFilters: [{ "target.platformAccountId": account.platformAccountId }],
+        },
+      );
+      if (!activated) {
+        await stageTradingAccount(account, {
+          reason: "ACG_FUNDED_TRIAL_ACTIVATION_SUPERSEDED",
+        }).catch(() => {});
+        const error = new Error("Trial activation was superseded by a newer lifecycle state.");
+        error.code = "TRIAL_ACTIVATION_SUPERSEDED";
+        throw error;
+      }
+      account = activated;
     }
 
     await ensureTradingCredential(account, {
