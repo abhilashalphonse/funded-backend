@@ -62,7 +62,8 @@ app.get("/health", (req, res) => res.json({
   supportModel: env.OPENAI_SUPPORT_MODEL,
   tradingCredentialVaultConfigured: Boolean(process.env.TRADING_CREDENTIAL_ENCRYPTION_KEY),
   tradingCredentialEmailConfigured: Boolean(process.env.RESEND_API_KEY && process.env.TRADING_EMAIL_FROM),
-  upiPaymentsConfigured: Boolean(env.UPI_GATEWAY_BASE_URL && env.UPI_GATEWAY_API_TOKEN && env.UPI_GATEWAY_CALLBACK_URL),
+  rupexConfigured: Boolean(env.RUPEX_BASE_URL && env.RUPEX_API_TOKEN && env.RUPEX_CALLBACK_URL),
+  sunpayConfigured: false,
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
   localAdminRoutesEnabled: env.ENABLE_LOCAL_ADMIN_ROUTES,
 }));
