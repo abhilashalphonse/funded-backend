@@ -66,6 +66,24 @@ export async function normalizePaymentCurrencyLabels() {
   );
 }
 
+export async function normalizeUpiProviderLabels() {
+  await Payment.updateMany(
+    {
+      paymentMethod: "UPI",
+      provider: { $in: ["upi-gateway", "upi_gateway", "upi_gateway_1"] },
+    },
+    { $set: { provider: "rupex" } },
+  );
+
+  await Payment.updateMany(
+    {
+      paymentMethod: "UPI",
+      provider: "upi_gateway_2",
+    },
+    { $set: { provider: "sunpay" } },
+  );
+}
+
 export async function ensurePaymentProviderIndex() {
   const indexName = "provider_1_providerPaymentId_1";
   const indexes = await Payment.collection.indexes();
