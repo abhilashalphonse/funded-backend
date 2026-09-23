@@ -26,6 +26,12 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
     return;
   }
 
+  if (String(event.eventType || "").startsWith("ACG_TRADER_") && !isEventForCurrentPlatformAccount(account, event)) {
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
   if (event.eventType === CONTROL_EVENT) {
     applyControlEvent(account, event);
     account.lastProcessedEventId = event.eventId;
@@ -190,6 +196,13 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
     const commandQueue = new CommandQueue(boss);
     await commandQueue.enqueueCommand(decision.command, account);
   }
+}
+
+export function isEventForCurrentPlatformAccount(account, event) {
+  const incoming = String(event?.payload?.platformAccountId || "").trim();
+  const current = String(account?.platformAccountId || "").trim();
+  if (!incoming || !current) return true;
+  return incoming === current;
 }
 
 export function isAuthoritativeTraderSnapshot(event) {
