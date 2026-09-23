@@ -26,11 +26,26 @@ export function commaList(value) {
   return String(value || "").split(",").map(item => item.trim()).filter(Boolean);
 }
 
+function stripTrailingSlash(value) {
+  let text = String(value || "").trim();
+  while (text.endsWith("/")) text = text.slice(0, -1);
+  return text;
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function loadAcceptanceConfig(env = process.env, argv = process.argv.slice(2)) {
   const dryRun = argv.includes("--dry-run");
   const requireAll = !argv.includes("--allow-skip") && !envFlag(env.ACCEPTANCE_ALLOW_SKIP);
-  const fundedBaseUrl = String(env.ACCEPTANCE_FUNDED_BASE_URL || "https://funded-backend-production.up.railway.app").replace(/\\/+$/, "");
-  const traderBaseUrl = String(env.ACCEPTANCE_TRADER_BASE_URL || env.ACG_TRADER_BASE_URL || "").replace(/\\/+$/, "");
+  const fundedBaseUrl = stripTrailingSlash(env.ACCEPTANCE_FUNDED_BASE_URL || "https://funded-backend-production.up.railway.app");
+  const traderBaseUrl = stripTrailingSlash(env.ACCEPTANCE_TRADER_BASE_URL || env.ACG_TRADER_BASE_URL || "");
   const challengeAId = String(env.ACCEPTANCE_CHALLENGE_A_ID || "").trim();
   const challengeBId = String(env.ACCEPTANCE_CHALLENGE_B_ID || "").trim();
   const confirmedIds = commaList(env.ACCEPTANCE_CONFIRM_ACCOUNT_IDS);
@@ -68,8 +83,8 @@ export function loadAcceptanceConfig(env = process.env, argv = process.argv.slic
 
 export function validateAcceptanceConfig(config) {
   const errors = [];
-  if (!/^https?:\\/\\//i.test(config.fundedBaseUrl)) errors.push("ACCEPTANCE_FUNDED_BASE_URL must be an http(s) URL.");
-  if (!/^https?:\\/\\//i.test(config.traderBaseUrl)) errors.push("ACCEPTANCE_TRADER_BASE_URL or ACG_TRADER_BASE_URL is required.");
+  if (!isHttpUrl(config.fundedBaseUrl)) errors.push("ACCEPTANCE_FUNDED_BASE_URL must be an http(s) URL.");
+  if (!isHttpUrl(config.traderBaseUrl)) errors.push("ACCEPTANCE_TRADER_BASE_URL or ACG_TRADER_BASE_URL is required.");
   if (!config.customerId) errors.push("ACCEPTANCE_CUSTOMER_ID is required.");
   if (!config.customerBearer) errors.push("ACCEPTANCE_CUSTOMER_BEARER is required.");
   if (!config.adminBearer) errors.push("ACCEPTANCE_ADMIN_BEARER is required.");
