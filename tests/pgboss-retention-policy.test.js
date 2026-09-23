@@ -7,6 +7,7 @@ test("pg-boss launch queues all have bounded retention", () => {
     [...PG_BOSS_QUEUE_NAMES].sort(),
     [
       "account-commands",
+      "challenge-activation-email",
       "incoming-events",
       "payment-activation",
       "state-events",
