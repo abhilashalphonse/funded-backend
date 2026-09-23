@@ -1,6 +1,6 @@
 import Payment from "../models/payment.model.js";
 import Customer from "../customers/customer.model.js";
-import { sendChallengeActivationEmail } from "../email/email.service.js";
+import { sendChallengeActivationEmail } from "../email/challengeActivationEmail.service.js";
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
 import { CHALLENGE_ACTIVATION_EMAIL_QUEUE, enqueueChallengeActivationEmail } from "./challenge-activation-email.queue.js";
 
