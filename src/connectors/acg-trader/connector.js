@@ -54,6 +54,10 @@ export class ACGTraderConnector extends TradingProviderConnector {
     return this.client.breachAccount(required(platformAccountId, "platformAccountId"), { reason, action });
   }
 
+  async flattenAccount({ platformAccountId, reason = "ACCOUNT_FLATTENED_FOR_REVIEW" }) {
+    return this.client.flattenAccount(required(platformAccountId, "platformAccountId"), { reason });
+  }
+
   async disableAccount({ platformAccountId, reason = "ACCOUNT_DISABLED", liquidate = false, cancelPending = true }) {
     return this.client.disableAccount(required(platformAccountId, "platformAccountId"), { reason, liquidate, cancelPending });
   }
