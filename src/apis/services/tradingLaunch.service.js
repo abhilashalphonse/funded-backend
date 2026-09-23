@@ -33,7 +33,7 @@ export function currentPlatformAccount(account) {
 
 function platformAccountIdFor(account) {
   const current = currentPlatformAccount(account);
-  return String(current?.platformAccountId || account?.platformAccountId || "").trim() || null;
+  return String(current?.platformAccountId || "").trim() || null;
 }
 
 function launchableAccount(account) {
