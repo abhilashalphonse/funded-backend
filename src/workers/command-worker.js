@@ -67,15 +67,12 @@ export class CommandWorker {
 
         const phaseOne = account.platformAccounts.find(item => Number(item.phase) === 1);
         if (phaseOne?.status !== "COMPLETED") {
-          await connector.disableAccount({
-            externalRef: `${account.accountId}:phase:1`,
-            platformAccountId: phaseOne?.platformAccountId || account.platformAccountId,
-            reason: "ACG_FUNDED_PHASE_1_COMPLETED",
-            liquidate: true,
-            cancelPending: true,
+          const check = await finalizeCurrentPhase(account, connector, {
+            phase: 1,
+            record: phaseOne,
+            reason: "ACG_FUNDED_PHASE_1_COMPLETION_CHECK",
           });
-          if (phaseOne) phaseOne.status = "COMPLETED";
-          await account.save();
+          if (!check.passed) return check;
         }
 
         const nextPhaseAccountType = phaseAccountType(account);
