@@ -96,7 +96,7 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
     return;
   }
 
-  if (["CLOSED", "FUNDED"].includes(account.status)) {
+  if (account.status === "CLOSED") {
     account.lastProcessedEventId = event.eventId;
     await account.save();
     return;
@@ -123,6 +123,13 @@ export async function processEvent(event, boss, { accountModel = Account } = {})
     const sequence = snapshotSequence(event);
     if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
   }
+
+  if (account.status === "FUNDED") {
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
   const rules = evaluateRules(account);
   const decision = resolveDecision(account, rules);
 
