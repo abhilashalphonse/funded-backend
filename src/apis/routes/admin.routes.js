@@ -335,9 +335,26 @@ router.get("/challenges/:accountId", async (req, res, next) => {
   try {
     const account = await Account.findOne({ accountId: req.params.accountId }).lean();
     if (!account) return res.status(404).json({ success: false, message: "Challenge not found." });
-    const customer = account.customerId ? await Customer.findOne({ customerId: account.customerId }).lean() : null;
-    const payment = await Payment.findOne({ accountId: account.accountId }).select(PAYMENT_ADMIN_FIELDS).lean();
-    res.json({ success: true, data: { account, customer, payment } });
+    const [customer, payment] = await Promise.all([
+      account.customerId ? Customer.findOne({ customerId: account.customerId }).lean() : null,
+      Payment.findOne({ accountId: account.accountId }).select(PAYMENT_ADMIN_FIELDS).lean(),
+    ]);
+
+    let trading = null;
+    let tradingError = null;
+    if (account.platform === "acg-trader" && account.platformAccountId) {
+      try {
+        const connector = getTradingConnector(account.platform);
+        trading = await connector.adminObservability({ platformAccountId: account.platformAccountId, limit: 100 });
+      } catch (error) {
+        tradingError = {
+          code: error?.code || "TRADING_OBSERVABILITY_UNAVAILABLE",
+          message: String(error?.message || "Trading history is temporarily unavailable."),
+        };
+      }
+    }
+
+    res.json({ success: true, data: { account, customer, payment, trading, tradingError } });
   } catch (error) { next(error); }
 });
 
@@ -711,6 +728,23 @@ router.get("/funnel", async (req, res, next) => {
   try {
     const data = await getFunnelSummary({ days: req.query.days });
     res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.get("/trades", async (req, res, next) => {
+  try {
+    const connector = getTradingConnector("acg-trader");
+    const data = await connector.adminTrades({
+      limit: Math.min(Math.max(Number(req.query.limit) || 100, 1), 200),
+      ...(req.query.cursor ? { cursor: req.query.cursor } : {}),
+      ...(req.query.accountId ? { accountId: req.query.accountId } : {}),
+      ...(req.query.symbol ? { symbol: req.query.symbol } : {}),
+      ...(req.query.side ? { side: String(req.query.side).toUpperCase() } : {}),
+      ...(req.query.type ? { type: String(req.query.type).toUpperCase() } : {}),
+      ...(req.query.from ? { from: req.query.from } : {}),
+      ...(req.query.to ? { to: req.query.to } : {}),
+    });
+    res.json({ success: true, data: data || { items: [], page: { hasMore: false, nextCursor: null } } });
   } catch (error) { next(error); }
 });
 
