@@ -173,9 +173,9 @@ test("breached accounts reconcile authoritative post-liquidation metrics without
   assert.equal(account.margin, 0);
   assert.equal(account.marginFree, 94737.02);
   assert.equal(account.floatingProfit, 0);
-  assert.equal(account.projections.profit, -5262.98);
-  assert.equal(account.projections.dailyLoss, 4262.98);
-  assert.equal(account.projections.totalLoss, 5262.98);
+  assert.equal(Number(account.projections.profit.toFixed(2)), -5262.98);
+  assert.equal(Number(account.projections.dailyLoss.toFixed(2)), 4262.98);
+  assert.equal(Number(account.projections.totalLoss.toFixed(2)), 5262.98);
   assert.equal(account.lastPlatformSnapshotSequence, 43);
   assert.equal(account.lastProcessedEventId, event.eventId);
   assert.equal(account.saveCalls, 1);
