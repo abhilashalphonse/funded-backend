@@ -1,5 +1,34 @@
 import mongoose from "mongoose";
 
+const MarketingTouchSchema = new mongoose.Schema(
+  {
+    utmSource: String,
+    utmMedium: String,
+    utmCampaign: String,
+    utmContent: String,
+    utmTerm: String,
+    referral: String,
+    affiliate: String,
+    landingVariant: String,
+    creatorId: String,
+    creativeId: String,
+    market: String,
+    language: String,
+    hook: String,
+    capturedAt: Date,
+  },
+  { _id: false },
+);
+
+const MarketingAttributionSchema = new mongoose.Schema(
+  {
+    anonymousId: String,
+    firstTouch: { type: MarketingTouchSchema, default: undefined },
+    lastTouch: { type: MarketingTouchSchema, default: undefined },
+  },
+  { _id: false },
+);
+
 const CustomerSchema = new mongoose.Schema(
   {
     customerId: { type: String, required: true, unique: true, immutable: true, index: true },
@@ -10,6 +39,7 @@ const CustomerSchema = new mongoose.Schema(
     mergedIntoCustomerId: { type: String, default: undefined, index: true },
     authLinkedAt: { type: Date, default: null },
     lastAuthenticatedAt: { type: Date, default: null },
+    marketingAttribution: { type: MarketingAttributionSchema, default: undefined },
   },
   { timestamps: true, versionKey: false },
 );
