@@ -116,14 +116,17 @@ router.post("/accounts/:accountId/trading-launch", async (req, res, next) => {
 
 router.post("/demo-account", async (req, res, next) => {
   try {
-    const data = await ensureDemoAccount(req.customer, req.body || {});
+    const { analyticsAttribution = {}, ...demoPayload } = req.body || {};
+    const data = await ensureDemoAccount(req.customer, demoPayload);
     await recordAnalyticsEvent({
       event: "trial_created",
       sessionId: req.get("x-acg-session-id") || `user:${req.customer.id}`,
       customer: req.customer,
       accountId: data.accountId,
       source: "server",
+      attribution: analyticsAttribution,
       properties: {
+        customerId: req.customer.customerId,
         accountSize: data.accountSize,
         challengeType: data.challengeType,
       },
