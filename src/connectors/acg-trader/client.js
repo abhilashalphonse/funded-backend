@@ -26,6 +26,14 @@ export class ACGTraderClient {
   createFederationTicket(command) { return this.requestWithTransientRetry("/v1/internal/auth/federation/tickets", { method: "POST", body: command }); }
   createNativeCredential(accountId, command = {}) { return this.request(`/v1/internal/auth/accounts/${encodeURIComponent(accountId)}/credentials`, { method: "POST", body: command }); }
   operationsHealth() { return this.request("/v1/internal/operations/health"); }
+  listAdminTrades(query = {}) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query || {})) {
+      if (value !== undefined && value !== null && String(value).trim() !== "") params.set(key, String(value));
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.request(`/v1/internal/operations/trades${suffix}`);
+  }
   healthReady() { return this.publicRequest("/health/ready"); }
 
   async requestWithTransientRetry(path, options = {}) {
