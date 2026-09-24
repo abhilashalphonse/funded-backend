@@ -37,15 +37,16 @@ export async function processEvent(event, boss, {
   }
 
   if (event.eventType === CONTROL_EVENT) {
-    if (hasControlMetrics(event.payload)) applySnapshotEvent(account, event);
+    const incomingStatus = String(event.payload?.status || "").toUpperCase();
+    const controlMetricsStale = isControlMetricsOlderThanLastAuthoritativeSnapshot(account, event);
+    if (hasControlMetrics(event.payload) && !controlMetricsStale) applySnapshotEvent(account, event);
     applyControlEvent(account, event);
-    if (
-      String(event.payload?.status || "").toUpperCase() === "BREACHED"
-      && !["BREACHED", "CLOSED"].includes(String(account.status || "").toUpperCase())
-    ) {
-      // Trader breach is terminal across Trial, Challenge, and Master. It also
-      // invalidates any lifecycle command that was queued from an earlier
-      // target snapshot.
+
+    if (incomingStatus === "BREACHED" && String(account.status || "").toUpperCase() !== "CLOSED") {
+      // A Trader breach is terminal. Exact Trader trigger evidence is allowed
+      // to enrich an earlier Funded-side breach decision, but a late control
+      // event must not roll current account metrics back behind a newer
+      // post-liquidation valuation.
       account.status = "BREACHED";
       account.enabled = false;
       account.commandPending = null;
@@ -53,19 +54,21 @@ export async function processEvent(event, boss, {
       account.lifecycleOperationType = null;
       account.lifecycleOperationStartedAt = null;
       if (account.accountMode === "DEMO") account.activeTrialKey = null;
-      if (!account.breach?.breachedAt) {
-        const breach = buildControlBreachRecord(account, event);
+
+      const breach = buildControlBreachRecord(account, event);
+      if (shouldReplaceBreachRecord(account.breach, breach)) {
         account.breach = breach;
         account.projections = account.projections || {};
         account.projections.breachedAt = breach.breachedAt;
       }
     }
+
     account.lastProcessedEventId = event.eventId;
     await account.save();
 
     if (
       account.accountMode === "DEMO"
-      && String(event.payload?.status || "").toUpperCase() === "BREACHED"
+      && incomingStatus === "BREACHED"
     ) {
       await recordAnalyticsEventOnce({
         event: "trial_failed",
@@ -319,6 +322,10 @@ export function buildBreachRecord(account, decision, event) {
   const limitAmount = primaryReason === "MAX_DRAWDOWN" ? maxLimit : dailyLimit;
   const breachedAt = snapshotTime(event);
 
+  const referenceEquity = primaryReason === "MAX_DRAWDOWN"
+    ? initialBalance
+    : Number(account.dailyStartEquity || initialBalance);
+
   return {
     primaryReason,
     triggeredRules: Array.isArray(decision?.triggeredRules) ? [...decision.triggeredRules] : [primaryReason],
@@ -333,6 +340,15 @@ export function buildBreachRecord(account, decision, event) {
     limitAmount: finiteOrNull(limitAmount),
     actualLoss: finiteOrNull(actualLoss),
     breachAmount: finiteOrNull(Math.max(0, actualLoss - limitAmount)),
+    thresholdEquity: finiteOrNull(referenceEquity - limitAmount),
+    riskDayKey: account.riskDayKey || event?.payload?.riskDayKey || null,
+    valuationSequence: snapshotSequence(event),
+    valuedAt: breachedAt,
+    reasonCode: "FUNDED_RULE_EVALUATION",
+    evidenceSource: "FUNDED_SNAPSHOT",
+    floatingPnl: finiteOrNull(account.floatingProfit),
+    usedMargin: finiteOrNull(account.margin),
+    freeMargin: finiteOrNull(account.marginFree),
   };
 }
 
@@ -356,6 +372,8 @@ function updateLossProjections(account) {
   const initialBalance = Number(account.initialDeposit || account.accountSize || 0);
   const equity = Number(account.equity || 0);
   const dailyStart = Number(account.dailyStartEquity || initialBalance);
+  const balance = Number(account.balance || 0);
+  account.projections.profit = balance - initialBalance;
   account.projections.dailyLoss = Math.max(0, dailyStart - equity);
   account.projections.totalLoss = Math.max(0, initialBalance - equity);
 }
@@ -459,9 +477,12 @@ export function buildControlBreachRecord(account, event) {
   const primaryReason = evidence?.rule === "MAX_DRAWDOWN" || reason.includes("MAX")
     ? "MAX_DRAWDOWN"
     : "DAILY_DRAWDOWN";
-  const occurredAt = evidence?.valuedAtMs
+  const breachedAtCandidate = new Date(event?.payload?.breachedAt || event?.occurredAt || event?.timestamp || Date.now());
+  const valuedAtCandidate = evidence?.valuedAtMs != null
     ? new Date(Number(evidence.valuedAtMs))
-    : new Date(event?.payload?.breachedAt || event?.occurredAt || event?.timestamp || Date.now());
+    : breachedAtCandidate;
+  const breachedAt = Number.isNaN(breachedAtCandidate.getTime()) ? snapshotTime(event) : breachedAtCandidate;
+  const valuedAt = Number.isNaN(valuedAtCandidate.getTime()) ? null : valuedAtCandidate;
 
   if (evidence) {
     const initialBalance = finiteOrNull(evidence.initialBalance ?? account.initialDeposit ?? account.accountSize);
@@ -474,11 +495,15 @@ export function buildControlBreachRecord(account, event) {
     const thresholdEquity = finiteOrNull(evidence.thresholdEquity);
     const dailyLoss = dailyStartEquity != null && equity != null ? Math.max(0, dailyStartEquity - equity) : null;
     const totalLoss = initialBalance != null && equity != null ? Math.max(0, initialBalance - equity) : null;
+    const triggeredRules = Array.isArray(evidence.triggeredRules) && evidence.triggeredRules.length
+      ? [...new Set(evidence.triggeredRules.map(value => String(value).toUpperCase()))]
+      : [primaryReason];
+    if (!triggeredRules.includes(primaryReason)) triggeredRules.push(primaryReason);
 
     return {
       primaryReason,
-      triggeredRules: [primaryReason],
-      breachedAt: Number.isNaN(occurredAt.getTime()) ? snapshotTime(event) : occurredAt,
+      triggeredRules,
+      breachedAt,
       phase: Number(account.currentPhase || 1),
       balance,
       equity,
@@ -492,16 +517,55 @@ export function buildControlBreachRecord(account, event) {
       thresholdEquity,
       riskDayKey: evidence.riskDayKey || event?.payload?.riskDayKey || account.riskDayKey || null,
       valuationSequence: Number.isFinite(Number(evidence.valuationSequence)) ? Number(evidence.valuationSequence) : null,
-      valuedAt: Number.isNaN(occurredAt.getTime()) ? null : occurredAt,
+      valuedAt,
       reasonCode: evidence.reason || reason || null,
+      evidenceSource: "TRADER_TRIGGER",
+      floatingPnl: finiteOrNull(evidence.floatingPnl),
+      usedMargin: finiteOrNull(evidence.usedMargin),
+      freeMargin: finiteOrNull(evidence.freeMargin),
     };
   }
 
-  return buildBreachRecord(
-    account,
-    { primaryReason, triggeredRules: [primaryReason] },
-    { ...event, occurredAt },
-  );
+  return {
+    ...buildBreachRecord(
+      account,
+      { primaryReason, triggeredRules: [primaryReason] },
+      { ...event, occurredAt: breachedAt },
+    ),
+    breachedAt,
+    valuedAt: null,
+    valuationSequence: null,
+    reasonCode: reason || null,
+    evidenceSource: "CONTROL_FALLBACK",
+  };
+}
+
+export function shouldReplaceBreachRecord(existing, candidate) {
+  if (!candidate) return false;
+  if (!existing?.breachedAt) return true;
+  const existingSource = String(existing?.evidenceSource || "").toUpperCase();
+  const candidateSource = String(candidate?.evidenceSource || "").toUpperCase();
+  if (candidateSource === "TRADER_TRIGGER" && existingSource !== "TRADER_TRIGGER") return true;
+  return false;
+}
+
+export function isControlMetricsOlderThanLastAuthoritativeSnapshot(account, event) {
+  if (!account?.lastPlatformSnapshotAt) return false;
+  const evidence = event?.payload?.breachEvidence || null;
+  const candidateTime = evidence?.valuedAtMs != null
+    ? new Date(Number(evidence.valuedAtMs))
+    : new Date(event?.payload?.breachedAt || event?.occurredAt || event?.timestamp || 0);
+  if (Number.isNaN(candidateTime.getTime())) return false;
+
+  const currentTime = new Date(account.lastPlatformSnapshotAt);
+  if (Number.isNaN(currentTime.getTime())) return false;
+  if (candidateTime.getTime() < currentTime.getTime()) return true;
+  if (candidateTime.getTime() > currentTime.getTime()) return false;
+
+  const incomingSequence = Number(evidence?.valuationSequence);
+  const currentSequence = Number(account.lastPlatformSnapshotSequence);
+  if (!Number.isFinite(incomingSequence) || !Number.isFinite(currentSequence)) return false;
+  return incomingSequence <= currentSequence;
 }
 
 function hasControlMetrics(payload = {}) {
