@@ -62,6 +62,27 @@ export async function processEvent(event, boss, {
     }
     account.lastProcessedEventId = event.eventId;
     await account.save();
+
+    if (
+      account.accountMode === "DEMO"
+      && String(event.payload?.status || "").toUpperCase() === "BREACHED"
+    ) {
+      await recordAnalyticsEventOnce({
+        event: "trial_failed",
+        sessionId: `account:${account.accountId}`,
+        customer: account.customerId ? { customerId: account.customerId } : null,
+        accountId: account.accountId,
+        source: "server",
+        properties: {
+          customerId: account.customerId || undefined,
+          ownerExternalRef: account.ownerExternalRef,
+          accountSize: account.accountSize,
+          challengeType: account.challengeType,
+          breachReason: account.breach?.primaryReason || null,
+          triggeredRules: account.breach?.triggeredRules || [],
+        },
+      }, { accountId: account.accountId }).catch(() => {});
+    }
     return;
   }
 
@@ -69,17 +90,33 @@ export async function processEvent(event, boss, {
     await applyDealEvent(account, event, tradingDayModel);
     account.lastProcessedEventId = event.eventId;
     await account.save();
+    const analyticsCustomer = account.customerId ? { customerId: account.customerId } : null;
+    const tradeProperties = {
+      customerId: account.customerId || undefined,
+      ownerExternalRef: account.ownerExternalRef,
+      accountMode: account.accountMode,
+      challengeType: account.challengeType,
+    };
+
     await recordAnalyticsEventOnce({
       event: "first_trade",
       sessionId: `account:${account.accountId}`,
+      customer: analyticsCustomer,
       accountId: account.accountId,
       source: "server",
-      properties: {
-        ownerExternalRef: account.ownerExternalRef,
-        accountMode: account.accountMode,
-        challengeType: account.challengeType,
-      },
+      properties: tradeProperties,
     }, { accountId: account.accountId }).catch(() => {});
+
+    if (account.accountMode === "DEMO") {
+      await recordAnalyticsEventOnce({
+        event: "trial_first_trade",
+        sessionId: `account:${account.accountId}`,
+        customer: analyticsCustomer,
+        accountId: account.accountId,
+        source: "server",
+        properties: tradeProperties,
+      }, { accountId: account.accountId }).catch(() => {});
+    }
     return;
   }
 
@@ -187,16 +224,18 @@ export async function processEvent(event, boss, {
     await recordAnalyticsEventOnce({
       event: "trial_passed",
       sessionId: `account:${account.accountId}`,
+      customer: account.customerId ? { customerId: account.customerId } : null,
       accountId: account.accountId,
       source: "server",
-      properties,
+      properties: { ...properties, customerId: account.customerId || undefined },
     }, { accountId: account.accountId }).catch(() => {});
     await recordAnalyticsEventOnce({
       event: "trial_completed",
       sessionId: `account:${account.accountId}`,
+      customer: account.customerId ? { customerId: account.customerId } : null,
       accountId: account.accountId,
       source: "server",
-      properties,
+      properties: { ...properties, customerId: account.customerId || undefined },
     }, { accountId: account.accountId }).catch(() => {});
   }
 
@@ -204,9 +243,11 @@ export async function processEvent(event, boss, {
     await recordAnalyticsEventOnce({
       event: "trial_failed",
       sessionId: `account:${account.accountId}`,
+      customer: account.customerId ? { customerId: account.customerId } : null,
       accountId: account.accountId,
       source: "server",
       properties: {
+        customerId: account.customerId || undefined,
         ownerExternalRef: account.ownerExternalRef,
         accountSize: account.accountSize,
         challengeType: account.challengeType,
