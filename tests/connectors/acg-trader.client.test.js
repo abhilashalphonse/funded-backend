@@ -105,3 +105,22 @@ test("ACG Trader client calls the flatten lifecycle endpoint", async () => {
   assert.equal(calls[0].url, "http://localhost:4000/v1/internal/trading/accounts/66aa00112233445566778899/flatten");
   assert.equal(JSON.parse(calls[0].options.body).reason, "PHASE_CHECK");
 });
+
+
+test("ACG Trader health readiness preserves a 503 health payload for diagnostics", async () => {
+  const client = new ACGTraderClient({
+    baseUrl: "http://localhost:4000",
+    clientId: "funded-backend",
+    apiKey: "secret-key",
+    fetchImpl: async () => response(503, {
+      status: "not_ready",
+      checks: { tradingRuntimeReady: false, platformEventsOperational: true },
+      market: { enabled: true, state: "LIVE" },
+    }),
+  });
+
+  const result = await client.healthReady();
+  assert.equal(result.status, "not_ready");
+  assert.equal(result.market.state, "LIVE");
+  assert.equal(result.checks.tradingRuntimeReady, false);
+});

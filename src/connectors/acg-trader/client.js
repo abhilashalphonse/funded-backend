@@ -34,7 +34,7 @@ export class ACGTraderClient {
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return this.request(`/v1/internal/operations/trades${suffix}`);
   }
-  healthReady() { return this.publicRequest("/health/ready"); }
+  healthReady() { return this.publicRequest("/health/ready", { acceptedStatuses: [503] }); }
 
   async requestWithTransientRetry(path, options = {}) {
     try {
@@ -46,13 +46,14 @@ export class ACGTraderClient {
     }
   }
 
-  async publicRequest(path) {
+  async publicRequest(path, { acceptedStatuses = [] } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetch(`${this.baseUrl}${path}`, { signal: controller.signal });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw responseError(response, payload);
+      const accepted = new Set(acceptedStatuses.map(Number));
+      if (!response.ok && !accepted.has(Number(response.status))) throw responseError(response, payload);
       return payload;
     } catch (error) {
       if (error?.name === "AbortError") {
