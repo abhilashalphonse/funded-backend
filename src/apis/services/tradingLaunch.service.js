@@ -3,6 +3,7 @@ import { getTradingConnector } from "../../connectors/trading/registry.js";
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
 
 const TRADABLE_STATUSES = new Set(["ACTIVE", "PHASE_2", "FUNDED"]);
+const VIEWABLE_STATUSES = new Set([...TRADABLE_STATUSES, "BREACHED"]);
 
 function ownershipQuery(customer) {
   const customerIds = [...new Set([customer.customerId, ...(customer.customerIds || [])].filter(Boolean))];
@@ -18,16 +19,21 @@ function ownershipQuery(customer) {
 export function currentPlatformAccount(account) {
   if (!account) return null;
   const currentPhase = Number(account.currentPhase || 1);
-  if (String(account.status || "").toUpperCase() === "FUNDED") {
+  const accountStatus = String(account.status || "").toUpperCase();
+  const allowedPlatformStatuses = accountStatus === "BREACHED"
+    ? new Set(["BREACHED", "ACTIVE"])
+    : new Set(["ACTIVE"]);
+
+  if (accountStatus === "FUNDED") {
     return (account.platformAccounts || []).find(item =>
       String(item.accountType || "").toUpperCase() === "FUNDED"
-      && String(item.status || "").toUpperCase() === "ACTIVE"
+      && allowedPlatformStatuses.has(String(item.status || "").toUpperCase())
     ) || null;
   }
   return (account.platformAccounts || []).find(item =>
     Number(item.phase) === currentPhase
     && String(item.accountType || "CHALLENGE").toUpperCase() !== "FUNDED"
-    && String(item.status || "").toUpperCase() === "ACTIVE"
+    && allowedPlatformStatuses.has(String(item.status || "").toUpperCase())
   ) || null;
 }
 
@@ -36,14 +42,12 @@ function platformAccountIdFor(account) {
   return String(current?.platformAccountId || "").trim() || null;
 }
 
-function launchableAccount(account) {
-  return Boolean(
-    account
-    && account.platform === "acg-trader"
-    && account.enabled
-    && TRADABLE_STATUSES.has(String(account.status || "").toUpperCase())
-    && platformAccountIdFor(account)
-  );
+function viewableAccount(account) {
+  if (!account || account.platform !== "acg-trader") return false;
+  const status = String(account.status || "").toUpperCase();
+  if (!VIEWABLE_STATUSES.has(status)) return false;
+  if (status !== "BREACHED" && !account.enabled) return false;
+  return Boolean(platformAccountIdFor(account));
 }
 
 export async function createCustomerTradingLaunch(customer, accountId) {
@@ -58,8 +62,9 @@ export async function createCustomerTradingLaunch(customer, accountId) {
     error.status = 404;
     throw error;
   }
-  if (!TRADABLE_STATUSES.has(String(account.status || "").toUpperCase()) || !account.enabled) {
-    const error = new Error("This trading account is not currently available for trading.");
+  const accountStatus = String(account.status || "").toUpperCase();
+  if (!VIEWABLE_STATUSES.has(accountStatus) || (accountStatus !== "BREACHED" && !account.enabled)) {
+    const error = new Error("This trading account is not currently available in ACG Trader.");
     error.status = 409;
     throw error;
   }
@@ -83,7 +88,7 @@ export async function createCustomerTradingLaunch(customer, accountId) {
 
   const platformAccountIds = [...new Set(
     ownedAccounts
-      .filter(launchableAccount)
+      .filter(viewableAccount)
       .map(platformAccountIdFor)
       .filter(Boolean)
       .concat(selectedAccountId)
@@ -127,6 +132,10 @@ export async function createCustomerTradingLaunch(customer, accountId) {
   if (!session.ticket || !session.launchUrl) throw new Error("ACG Trader did not return a valid launch session.");
   const launch = new URL(session.launchUrl);
   launch.searchParams.set("ticket", session.ticket);
+  if (accountStatus === "BREACHED") {
+    launch.searchParams.set("view", "history");
+    launch.searchParams.set("readonly", "1");
+  }
 
   await recordAnalyticsEventOnce({
     event: "trader_session_ready",
@@ -140,6 +149,7 @@ export async function createCustomerTradingLaunch(customer, accountId) {
       challengeType: account.challengeType,
       phase: account.currentPhase,
       grantedAccounts: platformAccountIds.length,
+      readOnly: accountStatus === "BREACHED",
     },
   }, { accountId: account.accountId }).catch(() => {});
 
@@ -149,5 +159,6 @@ export async function createCustomerTradingLaunch(customer, accountId) {
     grantedAccounts: platformAccountIds.length,
     launchUrl: launch.toString(),
     expiresAt: session.expiresAt || null,
+    readOnly: accountStatus === "BREACHED",
   };
 }
