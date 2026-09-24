@@ -53,6 +53,11 @@ const BreachSchema = new mongoose.Schema({
     limitAmount: { type: Number, default: null },
     actualLoss: { type: Number, default: null },
     breachAmount: { type: Number, default: null },
+    thresholdEquity: { type: Number, default: null },
+    riskDayKey: { type: String, default: null },
+    valuationSequence: { type: Number, default: null },
+    valuedAt: { type: Date, default: null },
+    reasonCode: { type: String, default: null },
 }, { _id: false });
 
 const AccountSchema = new mongoose.Schema(
