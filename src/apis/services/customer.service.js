@@ -3,8 +3,8 @@ import Account from "../../accounts/account.model.js";
 import simulatorEngine from "../../simulator/engine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
-import { requireTradingReadiness } from "./tradingReadiness.service.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
+import { activeDemoAccountQuery, customerFacingTrialProvisioningError } from "./freeTrialPolicy.js";
 
 function ownerQuery(customer) {
   const customerIds = [...new Set([customer.customerId, ...(customer.customerIds || [])].filter(Boolean))];
@@ -88,14 +88,7 @@ export async function getCustomerWorkspace(customer) {
 }
 
 export async function ensureDemoAccount(customer, input = {}) {
-  await requireTradingReadiness();
-
-  const active = await Account.findOne({
-    ...ownerQuery(customer),
-    accountMode: "DEMO",
-    status: { $in: ["NEW", "ACTIVE", "PHASE_2"] },
-    enabled: true,
-  }).sort({ createdAt: -1 });
+  const active = await Account.findOne(activeDemoAccountQuery(ownerQuery(customer))).sort({ createdAt: -1 });
 
   if (active) {
     const error = new Error("You already have an active free trial. Finish or close it before starting another.");
@@ -237,7 +230,7 @@ export async function ensureDemoAccount(customer, input = {}) {
         },
       },
     ).catch(() => {});
-    throw error;
+    throw customerFacingTrialProvisioningError(error);
   }
 }
 
