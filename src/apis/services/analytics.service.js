@@ -405,15 +405,24 @@ export async function getFunnelSummary({ days = 30 } = {}) {
 }
 
 export async function recordAnalyticsEventOnce(args, dedupe = {}) {
+  const legacyFilter = {
+    event: args.event,
+    ...(dedupe.paymentId ? { paymentId: String(dedupe.paymentId) } : {}),
+    ...(dedupe.accountId ? { accountId: String(dedupe.accountId) } : {}),
+    ...(dedupe.sessionId ? { sessionId: String(dedupe.sessionId) } : {}),
+  };
+  const hasDedupeScope = Boolean(dedupe.paymentId || dedupe.accountId || dedupe.sessionId);
+  if (!hasDedupeScope) return recordAnalyticsEvent(args);
+
+  // Preserve compatibility with rows created before eventKey existed.
+  const existing = await AnalyticsEvent.findOne(legacyFilter).select("_id eventKey").lean();
+  if (existing) return existing;
+
   const scope = dedupe.paymentId
     ? `payment:${String(dedupe.paymentId)}`
     : dedupe.accountId
       ? `account:${String(dedupe.accountId)}`
-      : dedupe.sessionId
-        ? `session:${String(dedupe.sessionId)}`
-        : null;
-
-  if (!scope) return recordAnalyticsEvent(args);
+      : `session:${String(dedupe.sessionId)}`;
 
   const eventKey = `${String(args.event)}:${scope}`;
   try {
