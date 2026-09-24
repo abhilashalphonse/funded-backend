@@ -43,6 +43,15 @@ export class ACGTraderConnector extends TradingProviderConnector {
     return { provider: this.name, platformAccountId: String(result.account.id), raw: result.account };
   }
 
+  async adminObservability({ platformAccountId, limit = 100 }) {
+    const result = await this.client.getAdminObservability(required(platformAccountId, "platformAccountId"), { limit });
+    return {
+      provider: this.name,
+      platformAccountId: String(platformAccountId),
+      ...result,
+    };
+  }
+
   async pauseAccount({ platformAccountId, reason = "ACG_FUNDED_PAUSE", cancelPending = false }) {
     return this.client.pauseAccount(required(platformAccountId, "platformAccountId"), { reason, cancelPending });
   }
