@@ -52,6 +52,10 @@ export class ACGTraderConnector extends TradingProviderConnector {
     };
   }
 
+  async adminTrades(query = {}) {
+    return this.client.listAdminTrades(query);
+  }
+
   async pauseAccount({ platformAccountId, reason = "ACG_FUNDED_PAUSE", cancelPending = false }) {
     return this.client.pauseAccount(required(platformAccountId, "platformAccountId"), { reason, cancelPending });
   }
