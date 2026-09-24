@@ -7,6 +7,7 @@ export class TradingProviderConnector {
   async provisionAccount() { throw unsupported(this.name, "provisionAccount"); }
   async getAccount() { throw unsupported(this.name, "getAccount"); }
   async adminObservability() { throw unsupported(this.name, "adminObservability"); }
+  async adminTrades() { throw unsupported(this.name, "adminTrades"); }
   async pauseAccount() { throw unsupported(this.name, "pauseAccount"); }
   async stageAccount() { throw unsupported(this.name, "stageAccount"); }
   async activateAccount() { throw unsupported(this.name, "activateAccount"); }
