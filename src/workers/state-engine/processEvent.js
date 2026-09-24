@@ -39,7 +39,15 @@ export async function processEvent(event, boss, {
   if (event.eventType === CONTROL_EVENT) {
     const incomingStatus = String(event.payload?.status || "").toUpperCase();
     const controlMetricsStale = isControlMetricsOlderThanLastAuthoritativeSnapshot(account, event);
-    if (hasControlMetrics(event.payload) && !controlMetricsStale) applySnapshotEvent(account, event);
+    if (hasControlMetrics(event.payload) && !controlMetricsStale) {
+      applySnapshotEvent(account, event);
+      if (event?.payload?.breachEvidence) {
+        const valuationTime = controlValuationTime(event);
+        if (valuationTime) account.lastPlatformSnapshotAt = valuationTime;
+        const valuationSequence = Number(event.payload.breachEvidence.valuationSequence);
+        if (Number.isFinite(valuationSequence)) account.lastPlatformSnapshotSequence = valuationSequence;
+      }
+    }
     applyControlEvent(account, event);
 
     if (incomingStatus === "BREACHED" && String(account.status || "").toUpperCase() !== "CLOSED") {
@@ -549,13 +557,19 @@ export function shouldReplaceBreachRecord(existing, candidate) {
   return false;
 }
 
+export function controlValuationTime(event) {
+  const evidence = event?.payload?.breachEvidence || null;
+  const candidate = evidence?.valuedAtMs != null
+    ? new Date(Number(evidence.valuedAtMs))
+    : new Date(event?.payload?.breachedAt || event?.occurredAt || event?.timestamp || 0);
+  return Number.isNaN(candidate.getTime()) ? null : candidate;
+}
+
 export function isControlMetricsOlderThanLastAuthoritativeSnapshot(account, event) {
   if (!account?.lastPlatformSnapshotAt) return false;
   const evidence = event?.payload?.breachEvidence || null;
-  const candidateTime = evidence?.valuedAtMs != null
-    ? new Date(Number(evidence.valuedAtMs))
-    : new Date(event?.payload?.breachedAt || event?.occurredAt || event?.timestamp || 0);
-  if (Number.isNaN(candidateTime.getTime())) return false;
+  const candidateTime = controlValuationTime(event);
+  if (!candidateTime) return false;
 
   const currentTime = new Date(account.lastPlatformSnapshotAt);
   if (Number.isNaN(currentTime.getTime())) return false;
