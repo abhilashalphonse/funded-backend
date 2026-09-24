@@ -140,6 +140,7 @@ export async function processEvent(event, boss, {
       && !isOlderThanLastAuthoritativeSnapshot(account, event)
     ) {
       applySnapshotMetrics(account, event);
+      updateLossProjections(account);
       account.lastPlatformSnapshotAt = snapshotTime(event);
       const sequence = snapshotSequence(event);
       if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
@@ -350,6 +351,15 @@ function applySnapshotMetrics(account, event) {
   assignFinite(account, "floatingProfit", p.floatingProfit);
 }
 
+function updateLossProjections(account) {
+  account.projections = account.projections || {};
+  const initialBalance = Number(account.initialDeposit || account.accountSize || 0);
+  const equity = Number(account.equity || 0);
+  const dailyStart = Number(account.dailyStartEquity || initialBalance);
+  account.projections.dailyLoss = Math.max(0, dailyStart - equity);
+  account.projections.totalLoss = Math.max(0, initialBalance - equity);
+}
+
 function applySnapshotEvent(account, event) {
   const p = event.payload || {};
   const eventDate = new Date(event.occurredAt || event.receivedAt || Date.now());
@@ -445,8 +455,48 @@ export async function recordTradingDay(account, event, tradingDay, executedAt, t
 
 export function buildControlBreachRecord(account, event) {
   const reason = String(event?.payload?.reason || "").toUpperCase();
-  const primaryReason = reason.includes("MAX") ? "MAX_DRAWDOWN" : "DAILY_DRAWDOWN";
-  const occurredAt = event?.payload?.breachedAt || event?.occurredAt || event?.timestamp || new Date();
+  const evidence = event?.payload?.breachEvidence || null;
+  const primaryReason = evidence?.rule === "MAX_DRAWDOWN" || reason.includes("MAX")
+    ? "MAX_DRAWDOWN"
+    : "DAILY_DRAWDOWN";
+  const occurredAt = evidence?.valuedAtMs
+    ? new Date(Number(evidence.valuedAtMs))
+    : new Date(event?.payload?.breachedAt || event?.occurredAt || event?.timestamp || Date.now());
+
+  if (evidence) {
+    const initialBalance = finiteOrNull(evidence.initialBalance ?? account.initialDeposit ?? account.accountSize);
+    const dailyStartEquity = finiteOrNull(evidence.dailyStartEquity ?? account.dailyStartEquity);
+    const equity = finiteOrNull(evidence.equity);
+    const balance = finiteOrNull(evidence.balance);
+    const limitAmount = finiteOrNull(evidence.limitAmount);
+    const actualLoss = finiteOrNull(evidence.actualLoss);
+    const breachAmount = finiteOrNull(evidence.breachAmount);
+    const thresholdEquity = finiteOrNull(evidence.thresholdEquity);
+    const dailyLoss = dailyStartEquity != null && equity != null ? Math.max(0, dailyStartEquity - equity) : null;
+    const totalLoss = initialBalance != null && equity != null ? Math.max(0, initialBalance - equity) : null;
+
+    return {
+      primaryReason,
+      triggeredRules: [primaryReason],
+      breachedAt: Number.isNaN(occurredAt.getTime()) ? snapshotTime(event) : occurredAt,
+      phase: Number(account.currentPhase || 1),
+      balance,
+      equity,
+      dailyStartEquity,
+      initialBalance,
+      dailyLoss,
+      totalLoss,
+      limitAmount,
+      actualLoss,
+      breachAmount,
+      thresholdEquity,
+      riskDayKey: evidence.riskDayKey || event?.payload?.riskDayKey || account.riskDayKey || null,
+      valuationSequence: Number.isFinite(Number(evidence.valuationSequence)) ? Number(evidence.valuationSequence) : null,
+      valuedAt: Number.isNaN(occurredAt.getTime()) ? null : occurredAt,
+      reasonCode: evidence.reason || reason || null,
+    };
+  }
+
   return buildBreachRecord(
     account,
     { primaryReason, triggeredRules: [primaryReason] },
