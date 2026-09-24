@@ -525,4 +525,6 @@ test("exact breach evidence preserves simultaneous daily and maximum drawdown ru
   assert.equal(account.breach.primaryReason, "MAX_DRAWDOWN");
   assert.deepEqual(account.breach.triggeredRules, ["DAILY_DRAWDOWN", "MAX_DRAWDOWN"]);
   assert.equal(account.breach.evidenceSource, "TRADER_TRIGGER");
+  assert.equal(account.lastPlatformSnapshotAt.toISOString(), "2026-09-24T12:00:00.000Z");
+  assert.equal(account.lastPlatformSnapshotSequence, 7);
 });
