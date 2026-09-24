@@ -58,6 +58,10 @@ const BreachSchema = new mongoose.Schema({
     valuationSequence: { type: Number, default: null },
     valuedAt: { type: Date, default: null },
     reasonCode: { type: String, default: null },
+    evidenceSource: { type: String, default: null },
+    floatingPnl: { type: Number, default: null },
+    usedMargin: { type: Number, default: null },
+    freeMargin: { type: Number, default: null },
 }, { _id: false });
 
 const AccountSchema = new mongoose.Schema(
