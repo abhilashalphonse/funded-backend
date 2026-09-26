@@ -56,6 +56,17 @@ export class ACGTraderConnector extends TradingProviderConnector {
     return this.client.listAdminTrades(query);
   }
 
+  async syncChallenge({ platformAccountId, riskPolicy, riskPolicyVersion, phase, challengeStatus, challengeId, payoutStatus } = {}) {
+    return this.client.syncChallenge(required(platformAccountId, "platformAccountId"), {
+      ...(riskPolicy ? { riskPolicy } : {}),
+      ...(riskPolicyVersion !== undefined ? { riskPolicyVersion } : {}),
+      ...(phase !== undefined ? { phase } : {}),
+      ...(challengeStatus !== undefined ? { challengeStatus } : {}),
+      ...(challengeId !== undefined ? { challengeId } : {}),
+      ...(payoutStatus !== undefined ? { payoutStatus } : {}),
+    });
+  }
+
   async pauseAccount({ platformAccountId, reason = "ACG_FUNDED_PAUSE", cancelPending = false }) {
     return this.client.pauseAccount(required(platformAccountId, "platformAccountId"), { reason, cancelPending });
   }
