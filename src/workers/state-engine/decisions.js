@@ -1,6 +1,6 @@
 export function resolveDecision(account, rules) {
   // Transitional/final states do not emit duplicate commands on every snapshot.
-  if (["BREACHED", "LOCKED", "PASSED", "FUNDED_REVIEW", "CLOSED", "FUNDED"].includes(account.status)) {
+  if (["BREACHED", "LOCKED", "PASSED", "FUNDED_REVIEW", "EXPIRED", "CLOSED", "FUNDED"].includes(account.status)) {
     return { shouldUpdate: false, newStatus: account.status, command: null };
   }
 
