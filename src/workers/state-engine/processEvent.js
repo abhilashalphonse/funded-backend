@@ -183,7 +183,7 @@ export async function processEvent(event, boss, {
     return;
   }
 
-  if (account.status === "CLOSED") {
+  if (["CLOSED", "EXPIRED"].includes(account.status)) {
     account.lastProcessedEventId = event.eventId;
     await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
