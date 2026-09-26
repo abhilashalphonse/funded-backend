@@ -4,6 +4,7 @@ import simulatorEngine from "../../simulator/engine.js";
 import { configuredTradingProvider, getTradingConnector } from "../../connectors/trading/registry.js";
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
+import { recordAnalyticsEventOnce } from "./analytics.service.js";
 import {
   ACTIVE_DEMO_STATUSES,
   activeDemoAccountQuery,
@@ -318,6 +319,19 @@ export async function cancelDemoAccount(customer, accountId) {
     }
   }
   await cancelled.save().catch(() => {});
+
+  await recordAnalyticsEventOnce({
+    event: "trial_cancelled",
+    sessionId: `account:${cancelled.accountId}`,
+    customer,
+    accountId: cancelled.accountId,
+    source: "server",
+    properties: {
+      customerId: customer.customerId,
+      accountSize: cancelled.accountSize,
+      challengeType: cancelled.challengeType,
+    },
+  }, { accountId: cancelled.accountId }).catch(() => {});
 
   if (closeErrors.length) {
     const error = new Error("Trial cancellation was recorded, but trading shutdown is still being retried.");
