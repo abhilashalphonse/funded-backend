@@ -253,8 +253,13 @@ export async function ensureDemoAccount(customer, input = {}) {
   }
 }
 
-export async function cancelDemoAccount(customer, accountId) {
-  const account = await Account.findOne({
+export async function cancelDemoAccount(customer, accountId, {
+  accountModel = Account,
+  connectorResolver = getTradingConnector,
+  analyticsRecorder = recordAnalyticsEventOnce,
+  now = () => new Date(),
+} = {}) {
+  const account = await accountModel.findOne({
     accountId: String(accountId),
     ...ownerQuery(customer),
     accountMode: "DEMO",
@@ -275,12 +280,12 @@ export async function cancelDemoAccount(customer, accountId) {
     throw error;
   }
 
-  const now = new Date();
+  const cancelledAt = now();
   const trial = {
-    ...trialMetadata(account, "CANCELLED", now),
-    cancelledAt: now,
+    ...trialMetadata(account, "CANCELLED", cancelledAt),
+    cancelledAt,
   };
-  const cancelled = await Account.findOneAndUpdate(
+  const cancelled = await accountModel.findOneAndUpdate(
     {
       _id: account._id,
       accountMode: "DEMO",
@@ -305,7 +310,7 @@ export async function cancelDemoAccount(customer, accountId) {
     throw error;
   }
 
-  const connector = getTradingConnector(cancelled.platform);
+  const connector = connectorResolver(cancelled.platform);
   const closeErrors = [];
   for (const record of cancelled.platformAccounts || []) {
     if (!["ACTIVE", "PAUSED"].includes(String(record.status || "").toUpperCase())) continue;
@@ -323,7 +328,7 @@ export async function cancelDemoAccount(customer, accountId) {
   }
   await cancelled.save().catch(() => {});
 
-  await recordAnalyticsEventOnce({
+  await analyticsRecorder({
     event: "trial_cancelled",
     sessionId: `account:${cancelled.accountId}`,
     customer,
