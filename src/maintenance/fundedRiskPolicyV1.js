@@ -13,7 +13,7 @@ export async function auditAndMigrateFundedRiskPolicyV1({
   apply = false,
 } = {}) {
   const accounts = await accountModel.find({ platform: "acg-trader" })
-    .select("accountId status platformAccountId platformAccounts")
+    .select("accountId status currentPhase platformAccountId platformAccounts")
     .lean();
 
   const targets = collectTraderTargets(accounts);
