@@ -1,5 +1,17 @@
 import { getTradingConnector } from "./registry.js";
 
+export const ACG_FUNDED_EXECUTION_POLICY = Object.freeze({
+  maxRiskPerTradePercent: 1,
+  maxAggregateRiskPercent: 2,
+  maxMarginUsagePercent: 50,
+  maxSingleOrderMarginPercentOfFree: 20,
+  maxSymbolMarginPercentOfPermitted: 30,
+  maxOpenPositions: 10,
+  maxPositionsPerSymbol: 3,
+  maxPendingOrders: 10,
+  maxPendingOrdersPerSymbol: 3,
+});
+
 export async function provisionTradingAccount(account, { phase = account.currentPhase || 1, accountType = "CHALLENGE", activate = true } = {}) {
   const provider = account.platform;
   const connector = getTradingConnector(provider);
@@ -107,8 +119,7 @@ export function buildRiskPolicy(account, phase = account.currentPhase || 1, { in
     dailyLoss: { limit: percentAmount(balance, account.rules?.dailyDrawdown), reference: "DAILY_START_EQUITY" },
     maxLoss: { limit: percentAmount(balance, account.rules?.maxDrawdown), reference: "INITIAL_BALANCE" },
     ...(includeProfitTarget ? { profitTarget: percentAmount(balance, phaseRule?.profitTarget) } : {}),
-    maxRiskPerTradePercent: null,
-    maxAggregateRiskPercent: null,
+    ...ACG_FUNDED_EXECUTION_POLICY,
     breachAction: "LIQUIDATE_AND_LOCK",
   };
 }
