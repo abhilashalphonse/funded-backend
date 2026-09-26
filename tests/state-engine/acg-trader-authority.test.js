@@ -585,3 +585,113 @@ test("legacy unauthenticated events cannot mutate or breach ACG Trader accounts"
   assert.equal(account.lastProcessedEventId, "mt5:ACG-SECURITY-1:TRADE_RECEIVED:forged-1");
   assert.equal(account.saveCalls, 1);
 });
+
+
+test("stale snapshot cannot overwrite a concurrent terminal breach or enqueue promotion", async () => {
+  const staleAccount = {
+    _id: "account-object-id",
+    accountId: "ACG-RACE-1",
+    version: 7,
+    platform: "acg-trader",
+    platformAccountId: "trader-race-1",
+    status: "ACTIVE",
+    enabled: true,
+    accountMode: "CHALLENGE",
+    challengeType: "ONE_STEP",
+    currentPhase: 1,
+    initialDeposit: 100000,
+    accountSize: 100000,
+    dailyStartEquity: 100000,
+    balance: 100000,
+    equity: 100000,
+    margin: 0,
+    marginFree: 100000,
+    marginLevel: 0,
+    floatingProfit: 0,
+    commandPending: null,
+    lastProcessedEventId: null,
+    lastPlatformSnapshotAt: null,
+    lastPlatformSnapshotSequence: null,
+    projections: {
+      highestBalance: 100000,
+      highestEquity: 100000,
+      profit: 0,
+      dailyLoss: 0,
+      totalLoss: 0,
+      tradingDays: 1,
+    },
+    rules: {
+      dailyDrawdown: 3,
+      maxDrawdown: 6,
+      minimumTradingDays: 0,
+      phases: [{ phase: 1, profitTarget: 10 }],
+    },
+    getChanges() {
+      return {
+        $set: {
+          status: this.status,
+          enabled: this.enabled,
+          commandPending: this.commandPending,
+          balance: this.balance,
+          equity: this.equity,
+          projections: this.projections,
+          lastProcessedEventId: this.lastProcessedEventId,
+          lastPlatformSnapshotAt: this.lastPlatformSnapshotAt,
+          lastPlatformSnapshotSequence: this.lastPlatformSnapshotSequence,
+        },
+      };
+    },
+  };
+
+  let observedFilter = null;
+  let observedUpdate = null;
+  const accountModel = {
+    async findOne() {
+      // This is the stale ACTIVE/version=7 copy loaded before a control event
+      // committed BREACHED/version=8 in another worker.
+      return staleAccount;
+    },
+    async updateOne(filter, update) {
+      observedFilter = filter;
+      observedUpdate = update;
+      return { matchedCount: 0, modifiedCount: 0 };
+    },
+  };
+
+  const boss = {
+    sendCalls: 0,
+    async send() {
+      this.sendCalls += 1;
+      return "should-not-be-enqueued";
+    },
+  };
+
+  const snapshot = {
+    eventId: "acg-trader:race-winning-snapshot",
+    aggregateId: staleAccount.accountId,
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    occurredAt: new Date("2026-09-26T10:00:01.000Z"),
+    metadata: { provider: "acg-trader" },
+    payload: {
+      platformAccountId: staleAccount.platformAccountId,
+      complete: true,
+      valuationStatus: "LIVE",
+      valuationSequence: 101,
+      balance: 110000,
+      equity: 110000,
+      dailyStartEquity: 100000,
+      riskDayKey: "2026-09-26",
+    },
+  };
+
+  await assert.rejects(
+    () => processEvent(snapshot, boss, { accountModel }),
+    error => error?.code === "ACCOUNT_LIFECYCLE_WRITE_CONFLICT" && error?.retryable === true,
+  );
+
+  assert.equal(observedFilter.accountId, staleAccount.accountId);
+  assert.equal(observedFilter.status, "ACTIVE");
+  assert.equal(observedFilter.version, 7);
+  assert.equal(observedUpdate.$inc.version, 1);
+  assert.equal(boss.sendCalls, 0);
+});
