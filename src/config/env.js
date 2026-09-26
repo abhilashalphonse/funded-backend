@@ -36,6 +36,11 @@ function validUrl(name, value) {
   catch { throw new Error(`${name} must be a valid URL.`); }
 }
 
+const fundedRiskPolicyVersion = String(process.env.ACG_FUNDED_RISK_POLICY_VERSION || "ACG_FUNDED_V1").trim().toUpperCase();
+if (!["ACG_FUNDED_V1", "ACG_FUNDED_V2"].includes(fundedRiskPolicyVersion)) {
+  throw new Error("ACG_FUNDED_RISK_POLICY_VERSION must be ACG_FUNDED_V1 or ACG_FUNDED_V2.");
+}
+
 const tradingProvider = String(process.env.TRADING_PROVIDER || (isProduction ? "acg-trader" : "simulator")).trim().toLowerCase();
 if (!["acg-trader", "simulator"].includes(tradingProvider)) throw new Error("TRADING_PROVIDER must be acg-trader or simulator.");
 if (isProduction && tradingProvider !== "acg-trader") throw new Error("Production TRADING_PROVIDER must be acg-trader.");
@@ -106,6 +111,7 @@ const env = Object.freeze({
   OPENAI_SUPPORT_TIMEOUT_MS: positiveInt("OPENAI_SUPPORT_TIMEOUT_MS", 12000),
 
   TRADING_PROVIDER: tradingProvider,
+  ACG_FUNDED_RISK_POLICY_VERSION: fundedRiskPolicyVersion,
   ACG_TRADER_BASE_URL: validUrl("ACG_TRADER_BASE_URL", tradingProvider === "acg-trader" ? required("ACG_TRADER_BASE_URL") : process.env.ACG_TRADER_BASE_URL),
   ACG_TRADER_CLIENT_ID: tradingProvider === "acg-trader" ? required("ACG_TRADER_CLIENT_ID") : process.env.ACG_TRADER_CLIENT_ID,
   ACG_TRADER_API_KEY: tradingProvider === "acg-trader" ? required("ACG_TRADER_API_KEY") : process.env.ACG_TRADER_API_KEY,
