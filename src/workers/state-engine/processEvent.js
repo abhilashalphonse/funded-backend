@@ -22,6 +22,11 @@ export async function processEvent(event, boss, {
     return;
   }
 
+  // Every state-engine write is guarded by the lifecycle state that this
+  // worker actually read. Snapshot and control events are allowed to execute
+  // concurrently, but only one of them may commit from a given version/state.
+  const lifecycleWriteGuard = captureLifecycleWriteGuard(account);
+
   // ACG Trader account state is authoritative only when the event crossed the
   // signed ACG Trader webhook boundary. The removed legacy /api/trade-webhook
   // path never stamped this metadata, so this also neutralizes any legacy jobs
@@ -31,7 +36,7 @@ export async function processEvent(event, boss, {
     && event?.metadata?.provider !== "acg-trader"
   ) {
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
   }
 
@@ -45,7 +50,7 @@ export async function processEvent(event, boss, {
 
   if (String(event.eventType || "").startsWith("ACG_TRADER_") && !isEventForCurrentPlatformAccount(account, event)) {
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
   }
 
@@ -85,7 +90,7 @@ export async function processEvent(event, boss, {
     }
 
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
 
     if (
       account.accountMode === "DEMO"
@@ -113,7 +118,7 @@ export async function processEvent(event, boss, {
   if (event.eventType === DEAL_EVENT) {
     await applyDealEvent(account, event, tradingDayModel);
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     const analyticsCustomer = account.customerId ? { customerId: account.customerId } : null;
     const tradeProperties = {
       customerId: account.customerId || undefined,
@@ -148,7 +153,7 @@ export async function processEvent(event, boss, {
     // Legacy providers still use the generic projection contract.
     if (event.metadata?.provider === "acg-trader") {
       account.lastProcessedEventId = event.eventId;
-      await account.save();
+      await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
       return;
     }
   }
@@ -170,13 +175,13 @@ export async function processEvent(event, boss, {
       if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
     }
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
   }
 
   if (account.status === "CLOSED") {
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
   }
 
@@ -185,13 +190,13 @@ export async function processEvent(event, boss, {
     // They may be useful operationally, but risk/account projections only
     // follow complete LIVE ACG Trader valuations.
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
   }
 
   if (event.eventType === SNAPSHOT_EVENT && isOlderThanLastAuthoritativeSnapshot(account, event)) {
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
   }
 
@@ -204,7 +209,7 @@ export async function processEvent(event, boss, {
 
   if (account.status === "FUNDED") {
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
   }
 
@@ -213,7 +218,7 @@ export async function processEvent(event, boss, {
 
   if (!decision.shouldUpdate) {
     account.lastProcessedEventId = event.eventId;
-    await account.save();
+    await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
   }
 
@@ -237,7 +242,7 @@ export async function processEvent(event, boss, {
     account.commandPending = decision.command;
   }
   account.lastProcessedEventId = event.eventId;
-  await account.save();
+  await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
 
   if (account.accountMode === "DEMO" && decision.command === "COMPLETE_TRIAL") {
     const properties = {
@@ -286,6 +291,90 @@ export async function processEvent(event, boss, {
     const commandQueue = new CommandQueue(boss);
     await commandQueue.enqueueCommand(decision.command, account);
   }
+}
+
+export function captureLifecycleWriteGuard(account) {
+  const version = Number(account?.version ?? 0);
+  return {
+    version: Number.isFinite(version) && version >= 0 ? version : 0,
+    status: String(account?.status || ""),
+  };
+}
+
+export async function saveAccountConditional(account, accountModel, guard) {
+  // Unit tests and non-Mongoose test doubles intentionally keep the old save
+  // contract. Production Account documents always expose getChanges() and _id.
+  if (
+    typeof accountModel?.updateOne !== "function"
+    || typeof account?.getChanges !== "function"
+    || account?._id == null
+  ) {
+    await account.save();
+    guard.version = Number(account?.version ?? guard.version ?? 0);
+    guard.status = String(account?.status || "");
+    return;
+  }
+
+  const expectedVersion = Number(guard?.version ?? 0);
+  const expectedStatus = String(guard?.status || "");
+  const rawChanges = account.getChanges();
+  const update = {};
+
+  for (const [operator, payload] of Object.entries(rawChanges || {})) {
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      update[operator] = { ...payload };
+    } else {
+      update[operator] = payload;
+    }
+  }
+
+  // The state engine owns this monotonic lifecycle version. Never allow a
+  // document mutation to set/unset/increment it independently of the CAS.
+  for (const operator of ["$set", "$unset", "$inc", "$setOnInsert"]) {
+    if (!update[operator] || typeof update[operator] !== "object") continue;
+    delete update[operator].version;
+    if (Object.keys(update[operator]).length === 0) delete update[operator];
+  }
+  update.$inc = { ...(update.$inc || {}), version: 1 };
+
+  const filter = {
+    _id: account._id,
+    accountId: account.accountId,
+    status: expectedStatus,
+  };
+
+  // Older accounts may pre-date persistence of the explicit version field.
+  // Treat a missing version as version 0 exactly once; after the first guarded
+  // write every subsequent commit must match the stored integer.
+  if (expectedVersion === 0) {
+    filter.$or = [
+      { version: 0 },
+      { version: { $exists: false } },
+    ];
+  } else {
+    filter.version = expectedVersion;
+  }
+
+  const result = await accountModel.updateOne(filter, update, { runValidators: true });
+  const matchedCount = Number(
+    result?.matchedCount
+    ?? result?.n
+    ?? result?.modifiedCount
+    ?? 0
+  );
+
+  if (matchedCount !== 1) {
+    const error = new Error(
+      `Lifecycle write conflict for account ${account.accountId}: expected version ${expectedVersion} in state ${expectedStatus}.`
+    );
+    error.code = "ACCOUNT_LIFECYCLE_WRITE_CONFLICT";
+    error.retryable = true;
+    throw error;
+  }
+
+  account.version = expectedVersion + 1;
+  guard.version = account.version;
+  guard.status = String(account?.status || "");
 }
 
 export function isEventForCurrentPlatformAccount(account, event) {
