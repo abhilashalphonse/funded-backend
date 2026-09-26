@@ -107,6 +107,36 @@ export function resetAccountForMaster(account, now = new Date()) {
   return resetPerformance(account, now);
 }
 
+export function hasCompletedCurrentChallenge(account) {
+  const phase = Number(account?.currentPhase || 1);
+  return (account?.platformAccounts || []).some(item =>
+    Number(item?.phase) === phase
+    && String(item?.accountType || "").toUpperCase() === "CHALLENGE"
+    && String(item?.status || "").toUpperCase() === "COMPLETED"
+  );
+}
+
+export function masterApprovalClaimFilter(account) {
+  const phase = Number(account?.currentPhase || 1);
+  return {
+    accountId: account?.accountId,
+    status: "FUNDED_REVIEW",
+    currentPhase: phase,
+    commandPending: null,
+    platformAccounts: {
+      $elemMatch: {
+        phase,
+        accountType: "CHALLENGE",
+        status: "COMPLETED",
+      },
+    },
+    $or: [
+      { lifecycleOperationId: null },
+      { lifecycleOperationId: { $exists: false } },
+    ],
+  };
+}
+
 export function tradablePhaseStatus(account, phase = account?.currentPhase || 1) {
   return Number(phase) === 2 && String(account?.challengeType || "").toUpperCase() === "TWO_STEP"
     ? "PHASE_2"
