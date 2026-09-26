@@ -186,6 +186,7 @@ AccountSchema.index(
     }
 );
 AccountSchema.index({ status: 1 });
+AccountSchema.index({ commandPending: 1 });
 AccountSchema.index({ ownerExternalRef: 1, accountMode: 1, createdAt: -1 });
 AccountSchema.index({ customerId: 1, accountMode: 1, createdAt: -1 });
 AccountSchema.index(

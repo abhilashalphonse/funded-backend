@@ -42,10 +42,22 @@ export class CommandQueue {
     };
 
     try {
-      // Execute the job creation using the wrapper's runtime instance
-      const jobId = await this.boss.send(COMMAND_QUEUE_NAME, jobPayload, options);
-      
-      console.log(`[QUEUE] Enqueued ${commandType} for Account ${accountContext.accountId} | Job ID: ${jobId}`);
+      // Keep at most one queued/retry/active copy of the same lifecycle
+      // command per account. Periodic recovery can safely call this repeatedly.
+      const singletonKey = `${accountContext.accountId}:${commandType}`;
+      const jobId = typeof this.boss.sendOnce === "function"
+        ? await this.boss.sendOnce(COMMAND_QUEUE_NAME, jobPayload, options, singletonKey)
+        : await this.boss.send(
+            COMMAND_QUEUE_NAME,
+            jobPayload,
+            { ...options, singletonKey },
+          );
+
+      if (jobId) {
+        console.log(`[QUEUE] Enqueued ${commandType} for Account ${accountContext.accountId} | Job ID: ${jobId}`);
+      } else {
+        console.log(`[QUEUE] ${commandType} for Account ${accountContext.accountId} is already queued or active`);
+      }
       return jobId;
     } catch (error) {
       console.error(`[QUEUE FAIL] Failed to push command ${commandType} to pg-boss:`, error);

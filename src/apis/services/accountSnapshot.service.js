@@ -47,11 +47,13 @@ return {owned, latest}
 `;
 
 class SnapshotProjectionScheduler {
-  constructor({ project, concurrency = 32, logger = console } = {}) {
+  constructor({ project, concurrency = 32, retryDelayMs = 5000, logger = console } = {}) {
     this.project = project;
     this.concurrency = Math.max(1, Number(concurrency) || 1);
+    this.retryDelayMs = Math.max(1, Number(retryDelayMs) || 5000);
     this.logger = logger;
     this.pending = new Map();
+    this.retryTimers = new Map();
     this.runningAccounts = new Set();
     this.active = 0;
     this.scheduled = false;
@@ -62,6 +64,13 @@ class SnapshotProjectionScheduler {
   enqueue(event) {
     const accountId = String(event?.aggregateId || "").trim();
     if (!accountId) return;
+
+    const retry = this.retryTimers.get(accountId);
+    if (retry && compareSnapshotOrder(event, retry.event) >= 0) {
+      clearTimeout(retry.timer);
+      this.retryTimers.delete(accountId);
+    }
+
     const existing = this.pending.get(accountId);
     if (!existing || compareSnapshotOrder(event, existing) >= 0) {
       this.pending.set(accountId, event);
@@ -76,6 +85,7 @@ class SnapshotProjectionScheduler {
       active: this.active,
       processed: this.processed,
       failed: this.failed,
+      retrying: this.retryTimers.size,
     };
   }
 
@@ -106,14 +116,22 @@ class SnapshotProjectionScheduler {
       this.runningAccounts.add(accountId);
 
       Promise.resolve(this.project(event))
-        .then(() => { this.processed += 1; })
+        .then(() => {
+          this.processed += 1;
+          const retry = this.retryTimers.get(accountId);
+          if (retry && compareSnapshotOrder(event, retry.event) >= 0) {
+            clearTimeout(retry.timer);
+            this.retryTimers.delete(accountId);
+          }
+        })
         .catch(error => {
           this.failed += 1;
-          this.logger?.error?.("[snapshot-projector] projection failed", {
+          this.logger?.error?.("[snapshot-projector] projection failed; retry scheduled", {
             accountId,
             message: error?.message,
             code: error?.code,
           });
+          this.#scheduleRetry(accountId, event);
         })
         .finally(() => {
           this.active -= 1;
@@ -121,6 +139,19 @@ class SnapshotProjectionScheduler {
           if (this.pending.size) this.#scheduleDrain();
         });
     }
+  }
+
+  #scheduleRetry(accountId, event) {
+    const existing = this.retryTimers.get(accountId);
+    if (existing && compareSnapshotOrder(existing.event, event) >= 0) return;
+    if (existing) clearTimeout(existing.timer);
+
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(accountId);
+      this.enqueue(event);
+    }, this.retryDelayMs);
+    timer.unref?.();
+    this.retryTimers.set(accountId, { event, timer });
   }
 }
 
@@ -133,6 +164,7 @@ class AccountSnapshotService {
     bindingTtlSeconds = env.ACG_SNAPSHOT_BINDING_TTL_SECONDS,
     projectionConcurrency = env.ACG_SNAPSHOT_PROJECTION_CONCURRENCY,
     projectionLockMs = env.ACG_SNAPSHOT_PROJECTION_LOCK_MS,
+    projectionRetryMs = env.ACG_SNAPSHOT_PROJECTION_RETRY_MS,
     logger = console,
   } = {}) {
     this.redis = redisClient;
@@ -149,6 +181,7 @@ class AccountSnapshotService {
     this.bindingCacheHits = 0;
     this.scheduler = new SnapshotProjectionScheduler({
       concurrency: projectionConcurrency,
+      retryDelayMs: projectionRetryMs,
       logger,
       project: event => this.#projectLatest(event),
     });
