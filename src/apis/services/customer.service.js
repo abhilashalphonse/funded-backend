@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
 import Account from "../../accounts/account.model.js";
 import simulatorEngine from "../../simulator/engine.js";
-import { configuredTradingProvider } from "../../connectors/trading/registry.js";
+import { configuredTradingProvider, getTradingConnector } from "../../connectors/trading/registry.js";
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
-import { activeDemoAccountQuery, customerFacingTrialProvisioningError } from "./freeTrialPolicy.js";
+import {
+  ACTIVE_DEMO_STATUSES,
+  activeDemoAccountQuery,
+  customerFacingTrialProvisioningError,
+  freeTrialExpiry,
+  trialMetadata,
+} from "./freeTrialPolicy.js";
 
 function ownerQuery(customer) {
   const customerIds = [...new Set([customer.customerId, ...(customer.customerIds || [])].filter(Boolean))];
@@ -47,6 +53,7 @@ export function serializeCustomerAccount(account) {
     floatingProfit: account.floatingProfit,
     projections: account.projections,
     breach: account.breach || null,
+    trial: account.accountMode === "DEMO" ? (account.trial || null) : undefined,
     totalTrades: account.totalTrades,
     winningTrades: account.winningTrades,
     losingTrades: account.losingTrades,
@@ -116,6 +123,7 @@ export async function ensureDemoAccount(customer, input = {}) {
 
   const accountId = `TRIAL-${randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
   const platform = configuredTradingProvider();
+  const startedAt = new Date();
 
   let account;
   try {
@@ -125,6 +133,13 @@ export async function ensureDemoAccount(customer, input = {}) {
     customerId: customer.customerId,
     activeTrialKey: customer.customerId,
     accountMode: "DEMO",
+    trial: {
+      startedAt,
+      expiresAt: freeTrialExpiry(startedAt),
+      completedAt: null,
+      cancelledAt: null,
+      result: null,
+    },
     challengeType: step === "2step" ? "TWO_STEP" : "ONE_STEP",
     accountSize,
     initialDeposit: accountSize,
@@ -232,6 +247,87 @@ export async function ensureDemoAccount(customer, input = {}) {
     ).catch(() => {});
     throw customerFacingTrialProvisioningError(error);
   }
+}
+
+export async function cancelDemoAccount(customer, accountId) {
+  const account = await Account.findOne({
+    accountId: String(accountId),
+    ...ownerQuery(customer),
+    accountMode: "DEMO",
+  });
+
+  if (!account) {
+    const error = new Error("Demo account not found.");
+    error.status = 404;
+    error.code = "TRIAL_NOT_FOUND";
+    throw error;
+  }
+
+  const status = String(account.status || "").toUpperCase();
+  if (!ACTIVE_DEMO_STATUSES.includes(status)) {
+    const error = new Error("Only an active free trial can be cancelled.");
+    error.status = 409;
+    error.code = "TRIAL_NOT_ACTIVE";
+    throw error;
+  }
+
+  const now = new Date();
+  const trial = {
+    ...trialMetadata(account, "CANCELLED", now),
+    cancelledAt: now,
+  };
+  const cancelled = await Account.findOneAndUpdate(
+    {
+      _id: account._id,
+      accountMode: "DEMO",
+      status: { $in: [...ACTIVE_DEMO_STATUSES] },
+    },
+    {
+      $set: {
+        status: "CLOSED",
+        enabled: false,
+        activeTrialKey: null,
+        commandPending: null,
+        trial,
+      },
+    },
+    { new: true },
+  );
+
+  if (!cancelled) {
+    const error = new Error("The trial changed state while it was being cancelled.");
+    error.status = 409;
+    error.code = "TRIAL_STATE_CHANGED";
+    throw error;
+  }
+
+  const connector = getTradingConnector(cancelled.platform);
+  const closeErrors = [];
+  for (const record of cancelled.platformAccounts || []) {
+    if (!["ACTIVE", "PAUSED"].includes(String(record.status || "").toUpperCase())) continue;
+    try {
+      await connector.closeAccount({
+        externalRef: record.externalRef || cancelled.accountId,
+        platformAccountId: record.platformAccountId,
+        reason: "ACG_FUNDED_TRIAL_CANCELLED",
+        liquidate: true,
+      });
+      record.status = "CLOSED";
+    } catch (error) {
+      closeErrors.push(error);
+    }
+  }
+  await cancelled.save().catch(() => {});
+
+  if (closeErrors.length) {
+    const error = new Error("Trial cancellation was recorded, but trading shutdown is still being retried.");
+    error.status = 503;
+    error.code = "TRIAL_REMOTE_CLOSE_PENDING";
+    error.retryable = true;
+    throw error;
+  }
+
+  return serializeCustomerAccount(cancelled);
 }
 
 async function ownedDemoAccount(customer, accountId) {
