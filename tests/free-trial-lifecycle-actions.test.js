@@ -130,7 +130,11 @@ test("reconciliation expires due trials, releases the slot, and closes Trader", 
   await worker.expireDueTrials();
 
   assert.equal(findQuery.accountMode, "DEMO");
-  assert.deepEqual(findQuery.status.$in, ["NEW", "ACTIVE", "PHASE_2"]);
+  assert.deepEqual(findQuery.$and[0].$or[0].status.$in, ["NEW", "ACTIVE", "PHASE_2"]);
+  assert.deepEqual(findQuery.$and[0].$or[1], {
+    status: "PASSED",
+    commandPending: { $in: ["CREATE_PHASE_2_ACCOUNT", "COMPLETE_TRIAL"] },
+  });
   assert.equal(appliedUpdate.status, "EXPIRED");
   assert.equal(appliedUpdate.enabled, false);
   assert.equal(appliedUpdate.activeTrialKey, null);
@@ -179,4 +183,29 @@ test("expiry remains terminal when remote shutdown needs a retry", async () => {
   assert.equal(appliedUpdate.status, "EXPIRED");
   assert.equal(appliedUpdate.activeTrialKey, null);
   assert.equal(account.platformAccounts[0].status, "ACTIVE");
+});
+
+
+test("reconciliation never releases the Trial slot while pass finalization is pending", async () => {
+  let releaseQuery;
+  let releaseUpdate;
+  const accountModel = {
+    async updateMany(query, update) {
+      releaseQuery = query;
+      releaseUpdate = update;
+      return { matchedCount: 0, modifiedCount: 0 };
+    },
+  };
+
+  const worker = new LifecycleReconciliationWorker({ accountModel });
+  await worker.releaseTerminalTrialKeys();
+
+  assert.deepEqual(releaseQuery.$or[0], {
+    status: { $in: ["BREACHED", "EXPIRED", "CLOSED"] },
+  });
+  assert.deepEqual(releaseQuery.$or[1], {
+    status: "PASSED",
+    commandPending: { $nin: ["CREATE_PHASE_2_ACCOUNT", "COMPLETE_TRIAL"] },
+  });
+  assert.deepEqual(releaseUpdate, { $set: { activeTrialKey: null } });
 });

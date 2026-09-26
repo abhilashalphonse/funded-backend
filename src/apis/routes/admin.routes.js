@@ -17,6 +17,11 @@ import { ensureTradingCredential } from "../../trading-credentials/trading-crede
 import { hasCompletedCurrentChallenge, masterApprovalClaimFilter, resetAccountForMaster } from "../../accounts/account-lifecycle.js";
 import { sendSupportEmail, replySubject } from "../../email/resendSupport.service.js";
 import { listUpiGateways, setActiveUpiGateway } from "../services/paymentProviders/upiGateway.registry.js";
+import {
+  assertCustomerTradingAccessAllowed,
+  blockCustomerTradingAccounts,
+  reactivateCustomerTradingAccounts,
+} from "../services/customerTradingAccess.service.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -53,41 +58,6 @@ function platformRecord(account) {
   return (account.platformAccounts || []).find(item =>
     String(item.platformAccountId || "") === String(account.platformAccountId || "")
   ) || null;
-}
-
-async function pauseForCustomerBlock(account, reason) {
-  if (!account.platformAccountId) return;
-  const connector = getTradingConnector(account.platform);
-  await connector.pauseAccount({
-    externalRef: account.accountId,
-    platformAccountId: account.platformAccountId,
-    reason,
-    cancelPending: true,
-  });
-  const record = platformRecord(account);
-  if (record) record.status = "PAUSED";
-  account.enabled = false;
-  account.customerAccessBlocked = true;
-  await account.save();
-}
-
-async function resumeAfterCustomerBlock(account, reason) {
-  if (!account.platformAccountId) {
-    account.customerAccessBlocked = false;
-    await account.save();
-    return;
-  }
-  const connector = getTradingConnector(account.platform);
-  await connector.resumeAccount({
-    externalRef: account.accountId,
-    platformAccountId: account.platformAccountId,
-    reason,
-  });
-  const record = platformRecord(account);
-  if (record) record.status = "ACTIVE";
-  account.enabled = TRADABLE_ACCOUNT_STATUSES.has(account.status);
-  account.customerAccessBlocked = false;
-  await account.save();
 }
 
 router.get("/me", (req, res) => {
@@ -253,34 +223,10 @@ router.post("/users/:customerId/status", async (req, res, next) => {
     customer.status = status;
     await customer.save();
 
-    const platformErrors = [];
-    if (status === "BLOCKED") {
-      const accounts = await Account.find({
-        customerId: { $in: ownershipIds },
-        status: { $in: [...TRADABLE_ACCOUNT_STATUSES] },
-        enabled: true,
-        customerAccessBlocked: { $ne: true },
-      });
-      for (const account of accounts) {
-        try {
-          await pauseForCustomerBlock(account, "ACG_FUNDED_CUSTOMER_BLOCKED");
-        } catch (error) {
-          platformErrors.push({ accountId: account.accountId, message: String(error?.message || error) });
-        }
-      }
-    } else {
-      const accounts = await Account.find({
-        customerId: { $in: ownershipIds },
-        customerAccessBlocked: true,
-      });
-      for (const account of accounts) {
-        try {
-          await resumeAfterCustomerBlock(account, "ACG_FUNDED_CUSTOMER_REACTIVATED");
-        } catch (error) {
-          platformErrors.push({ accountId: account.accountId, message: String(error?.message || error) });
-        }
-      }
-    }
+    const accessResult = status === "BLOCKED"
+      ? await blockCustomerTradingAccounts(ownershipIds)
+      : await reactivateCustomerTradingAccounts(ownershipIds);
+    const platformErrors = accessResult.platformErrors || [];
 
     await writeAudit(req, {
       action: "CUSTOMER_STATUS_CHANGED",
@@ -478,20 +424,16 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
         await account.save();
 
         if (staged) {
+          const accessGuard = {
+            code: "CUSTOMER_BLOCKED_DURING_MASTER_ACTIVATION",
+            message: "Customer was blocked while Master activation was in progress.",
+          };
+          await assertCustomerTradingAccessAllowed(account, accessGuard);
           await activateTradingAccount(account, {
             platformAccountId: fundedPlatformAccountId,
             reason: "ACG_FUNDED_MASTER_LIFECYCLE_COMMITTED",
           });
-        }
-
-        const latestCustomer = account.customerId
-          ? await Customer.findOne({ customerId: account.customerId }).select("status").lean()
-          : null;
-        if (String(latestCustomer?.status || "").toUpperCase() === "BLOCKED") {
-          const blocked = new Error("Customer was blocked while Master activation was in progress.");
-          blocked.code = "CUSTOMER_BLOCKED_DURING_MASTER_ACTIVATION";
-          blocked.status = 409;
-          throw blocked;
+          await assertCustomerTradingAccessAllowed(account, accessGuard);
         }
 
         const activated = await Account.findOneAndUpdate(

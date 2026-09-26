@@ -6,7 +6,8 @@ import { ensureTradingCredential } from "../trading-credentials/trading-credenti
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
 import { applyPlatformAccountState, phaseCompletionState, resetAccountForPhaseTwo as resetPhaseTwoState, tradablePhaseStatus } from "../accounts/account-lifecycle.js";
 import env from "../config/env.js";
-import { trialMetadata } from "../apis/services/freeTrialPolicy.js";
+import { FREE_TRIAL_DURATION_DAYS, trialMetadata } from "../apis/services/freeTrialPolicy.js";
+import { assertCustomerTradingAccessAllowed } from "../apis/services/customerTradingAccess.service.js";
 
 export class CommandWorker {
   constructor(bossInstance, {
@@ -140,18 +141,48 @@ export class CommandWorker {
           activate: !staged,
         });
 
-        // Commit the new lifecycle generation before the Trader account becomes
-        // tradable or federation-visible.
-        resetAccountForPhaseTwo(account);
-        account.enabled = !staged;
-        if (staged) account.commandPending = "CREATE_PHASE_2_ACCOUNT";
-        await account.save();
+        // Commit the new lifecycle generation atomically before the Trader
+        // account becomes tradable or federation-visible. A concurrent Trial
+        // expiry/customer block must win instead of being overwritten by this
+        // worker's older in-memory account document.
+        const committedPhaseTwo = await commitPhaseTwoLifecycle(account, { staged });
+        if (!committedPhaseTwo) {
+          await stageTradingAccount(account, {
+            reason: "ACG_FUNDED_PHASE_2_COMMIT_SUPERSEDED",
+          }).catch(() => {});
+
+          const latest = await Account.findById(account._id)
+            .select("status commandPending accountMode trial.expiresAt createdAt customerId customerAccessBlocked")
+            .lean();
+          if (latest?.accountMode === "DEMO"
+            && latest?.status === "PASSED"
+            && latest?.commandPending === "CREATE_PHASE_2_ACCOUNT"
+            && !trialLifecycleIsLive(latest)) {
+            const expired = new Error("Trial expired before Phase 2 could be committed.");
+            expired.code = "TRIAL_EXPIRED_DURING_PHASE_2_TRANSITION";
+            throw expired;
+          }
+          await assertCustomerTradingAccessAllowed(latest || account, {
+            code: "CUSTOMER_BLOCKED_DURING_PHASE_2_ACTIVATION",
+            message: "Customer was blocked while Phase 2 activation was in progress.",
+          });
+
+          return { success: true, skipped: true, staleCommand: true, command };
+        }
+        account = committedPhaseTwo;
 
         if (staged) {
+          const accessGuard = {
+            code: "CUSTOMER_BLOCKED_DURING_PHASE_2_ACTIVATION",
+            message: "Customer was blocked while Phase 2 activation was in progress.",
+          };
           try {
+            await assertCustomerTradingAccessAllowed(account, accessGuard);
             await activateTradingAccount(account, {
               reason: "ACG_FUNDED_PHASE_2_LIFECYCLE_COMMITTED",
             });
+            await assertCustomerTradingAccessAllowed(account, accessGuard);
+
             const activated = await Account.findOneAndUpdate(
               {
                 _id: account._id,
@@ -171,6 +202,8 @@ export class CommandWorker {
               },
             );
             if (!activated) {
+              const latest = await Account.findById(account._id).select("customerId customerAccessBlocked").lean();
+              await assertCustomerTradingAccessAllowed(latest || account, accessGuard);
               const superseded = new Error("Phase 2 activation was superseded by a newer lifecycle state.");
               superseded.code = "PHASE_2_ACTIVATION_SUPERSEDED";
               throw superseded;
@@ -186,7 +219,14 @@ export class CommandWorker {
                 status: "PHASE_2",
                 commandPending: "CREATE_PHASE_2_ACCOUNT",
               },
-              { $set: { enabled: false } },
+              {
+                $set: {
+                  enabled: false,
+                  ...(error?.code === "CUSTOMER_BLOCKED_DURING_PHASE_2_ACTIVATION"
+                    ? { customerAccessBlocked: true }
+                    : {}),
+                },
+              },
             ).catch(() => {});
             throw error;
           }
@@ -255,12 +295,40 @@ export class CommandWorker {
           });
           if (!check.passed) return check;
         }
-        account.enabled = false;
-        account.status = "PASSED";
-        account.activeTrialKey = null;
-        account.trial = trialMetadata(account, "PASSED", new Date());
-        if (activeRecord) activeRecord.status = "COMPLETED";
-        await account.save();
+        const completedAt = account.trial?.completedAt || new Date();
+        const completedTrial = await Account.findOneAndUpdate(
+          {
+            _id: account._id,
+            accountMode: "DEMO",
+            status: "PASSED",
+            commandPending: "COMPLETE_TRIAL",
+            ...trialLifecycleLiveQuery(completedAt),
+          },
+          {
+            $set: {
+              enabled: false,
+              activeTrialKey: null,
+              trial: trialMetadata(account, "PASSED", completedAt),
+            },
+          },
+          { new: true },
+        );
+
+        if (!completedTrial) {
+          const latest = await Account.findById(account._id)
+            .select("status commandPending accountMode trial.expiresAt createdAt")
+            .lean();
+          if (latest?.accountMode === "DEMO"
+            && latest?.status === "PASSED"
+            && latest?.commandPending === "COMPLETE_TRIAL"
+            && !trialLifecycleIsLive(latest, completedAt)) {
+            const expired = new Error("Trial expired before final completion could be committed.");
+            expired.code = "TRIAL_EXPIRED_DURING_COMPLETION";
+            throw expired;
+          }
+          return { success: true, skipped: true, staleCommand: true, command };
+        }
+        account = completedTrial;
 
         const properties = {
           ownerExternalRef: account.ownerExternalRef,
@@ -370,6 +438,10 @@ async function finalizeCurrentPhase(account, connector, { phase, record, reason 
       error.code = "PHASE_FINALIZATION_STATE_CONFLICT";
       throw error;
     }
+    await assertCustomerTradingAccessAllowed(account, {
+      code: "CUSTOMER_BLOCKED_DURING_PHASE_RECHECK",
+      message: "Customer was blocked while a phase completion recheck was in progress.",
+    });
     await connector.resumeAccount({
       platformAccountId,
       reason: "ACG_FUNDED_PHASE_RECHECK_FAILED",
@@ -400,6 +472,85 @@ async function finalizeCurrentPhase(account, connector, { phase, record, reason 
     completion: check,
     idempotentRemoteFinalization: remoteStatus === "DISABLED",
   };
+}
+
+function phaseTwoResetFields(account, staged, now = new Date()) {
+  const startingBalance = Number(account?.initialDeposit || account?.accountSize || 0);
+  return {
+    currentPhase: 2,
+    status: "PHASE_2",
+    enabled: !staged,
+    commandPending: staged ? "CREATE_PHASE_2_ACCOUNT" : null,
+    balance: startingBalance,
+    equity: startingBalance,
+    margin: 0,
+    marginFree: startingBalance,
+    marginLevel: 0,
+    floatingProfit: 0,
+    dailyStartEquity: startingBalance,
+    dailyResetAt: now,
+    riskDayKey: null,
+    lastActiveDay: null,
+    lastTradingDay: null,
+    lastPlatformSnapshotAt: null,
+    lastPlatformSnapshotSequence: null,
+    totalTrades: 0,
+    winningTrades: 0,
+    losingTrades: 0,
+    breach: null,
+    projections: {
+      highestBalance: startingBalance,
+      highestEquity: startingBalance,
+      profit: 0,
+      dailyLoss: 0,
+      totalLoss: 0,
+      dailyStartBalance: startingBalance,
+      tradingDays: 0,
+    },
+  };
+}
+
+function trialLifecycleLiveQuery(now = new Date()) {
+  const point = new Date(now);
+  const legacyCutoff = new Date(point.getTime() - FREE_TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000);
+  return {
+    $or: [
+      { "trial.expiresAt": { $gt: point } },
+      {
+        "trial.expiresAt": { $exists: false },
+        createdAt: { $gt: legacyCutoff },
+      },
+    ],
+  };
+}
+
+export function trialLifecycleIsLive(account, now = new Date()) {
+  if (String(account?.accountMode || "").toUpperCase() !== "DEMO") return true;
+  const point = new Date(now).getTime();
+  const expiresAt = account?.trial?.expiresAt ? new Date(account.trial.expiresAt).getTime() : NaN;
+  if (Number.isFinite(expiresAt)) return expiresAt > point;
+
+  const createdAt = account?.createdAt ? new Date(account.createdAt).getTime() : NaN;
+  return Number.isFinite(createdAt)
+    && createdAt + FREE_TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000 > point;
+}
+
+async function commitPhaseTwoLifecycle(account, { staged, now = new Date() } = {}) {
+  const filter = {
+    _id: account._id,
+    status: "PASSED",
+    commandPending: "CREATE_PHASE_2_ACCOUNT",
+    customerAccessBlocked: { $ne: true },
+  };
+  if (String(account?.accountMode || "").toUpperCase() === "DEMO") {
+    Object.assign(filter, trialLifecycleLiveQuery(now));
+  }
+
+  return Account.findOneAndUpdate(
+    filter,
+    { $set: phaseTwoResetFields(account, staged, now) },
+    { new: true },
+  );
 }
 
 export function commandStillValid(account, command) {

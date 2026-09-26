@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   ACTIVE_DEMO_STATUSES,
   FREE_TRIAL_DURATION_DAYS,
+  TRIAL_TRANSITION_COMMANDS,
   activeDemoAccountQuery,
   customerFacingTrialProvisioningError,
   freeTrialExpiry,
+  isActiveDemoLifecycleState,
   trialMetadata,
   trialResultForStatus,
 } from "../src/apis/services/freeTrialPolicy.js";
@@ -14,9 +16,13 @@ import {
 test("breached and other terminal trials do not reserve the active free-trial slot", () => {
   const query = activeDemoAccountQuery({ customerId: "CUS-1" });
 
-  assert.equal(query.accountMode, "DEMO");
-  assert.equal(query.enabled, true);
-  assert.deepEqual(query.status.$in, ["NEW", "ACTIVE", "PHASE_2"]);
+  assert.deepEqual(query.$and[0], { customerId: "CUS-1" });
+  assert.deepEqual(query.$and[1], { accountMode: "DEMO" });
+  assert.deepEqual(query.$and[2].$or[0].status.$in, ["NEW", "ACTIVE", "PHASE_2"]);
+  assert.deepEqual(query.$and[2].$or[1], {
+    status: "PASSED",
+    commandPending: { $in: ["CREATE_PHASE_2_ACCOUNT", "COMPLETE_TRIAL"] },
+  });
   assert.equal(ACTIVE_DEMO_STATUSES.includes("BREACHED"), false);
   assert.equal(ACTIVE_DEMO_STATUSES.includes("LOCKED"), false);
   assert.equal(ACTIVE_DEMO_STATUSES.includes("EXPIRED"), false);
@@ -79,3 +85,15 @@ test("customer business conflicts are preserved instead of being masked", () => 
 
   assert.equal(customerFacingTrialProvisioningError(conflict), conflict);
 });
+
+
+test("pending Trial pass commands remain active and are not serialized as a final pass", () => {
+  assert.deepEqual([...TRIAL_TRANSITION_COMMANDS], ["CREATE_PHASE_2_ACCOUNT", "COMPLETE_TRIAL"]);
+  for (const commandPending of TRIAL_TRANSITION_COMMANDS) {
+    assert.equal(isActiveDemoLifecycleState({ status: "PASSED", commandPending }), true);
+    assert.equal(trialResultForStatus("PASSED", commandPending), null);
+  }
+  assert.equal(isActiveDemoLifecycleState({ status: "PASSED", commandPending: null }), false);
+  assert.equal(trialResultForStatus("PASSED", null), "PASSED");
+});
+

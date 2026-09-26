@@ -2,8 +2,9 @@ import Account from "../accounts/account.model.js";
 import { getTradingConnector } from "../connectors/trading/registry.js";
 import { stageTradingAccount } from "../connectors/trading/account-provisioning.js";
 import {
-  ACTIVE_DEMO_STATUSES,
   FREE_TRIAL_DURATION_DAYS,
+  TRIAL_TRANSITION_COMMANDS,
+  activeDemoLifecycleStateQuery,
   trialMetadata,
 } from "../apis/services/freeTrialPolicy.js";
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
@@ -137,12 +138,16 @@ export class LifecycleReconciliationWorker {
     const legacyCutoff = new Date(now.getTime() - FREE_TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000);
     const accounts = await this.accountModel.find({
       accountMode: "DEMO",
-      status: { $in: [...ACTIVE_DEMO_STATUSES] },
-      $or: [
-        { "trial.expiresAt": { $lte: now } },
+      $and: [
+        activeDemoLifecycleStateQuery(),
         {
-          "trial.expiresAt": { $exists: false },
-          createdAt: { $lte: legacyCutoff },
+          $or: [
+            { "trial.expiresAt": { $lte: now } },
+            {
+              "trial.expiresAt": { $exists: false },
+              createdAt: { $lte: legacyCutoff },
+            },
+          ],
         },
       ],
     }).limit(BATCH_LIMIT);
@@ -154,7 +159,7 @@ export class LifecycleReconciliationWorker {
           {
             _id: account._id,
             accountMode: "DEMO",
-            status: { $in: [...ACTIVE_DEMO_STATUSES] },
+            ...activeDemoLifecycleStateQuery(),
           },
           {
             $set: {
@@ -240,7 +245,13 @@ export class LifecycleReconciliationWorker {
       {
         accountMode: "DEMO",
         activeTrialKey: { $ne: null },
-        status: { $in: ["BREACHED", "PASSED", "EXPIRED", "CLOSED"] },
+        $or: [
+          { status: { $in: ["BREACHED", "EXPIRED", "CLOSED"] } },
+          {
+            status: "PASSED",
+            commandPending: { $nin: [...TRIAL_TRANSITION_COMMANDS] },
+          },
+        ],
       },
       { $set: { activeTrialKey: null } },
     );
