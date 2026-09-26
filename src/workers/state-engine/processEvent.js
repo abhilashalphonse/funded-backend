@@ -4,6 +4,7 @@ import { evaluateRules } from "./rules.js";
 import { resolveDecision } from "./decisions.js";
 import { CommandQueue } from "./commandQueue.js";
 import { recordAnalyticsEventOnce } from "../../apis/services/analytics.service.js";
+import { trialMetadata } from "../../apis/services/freeTrialPolicy.js";
 
 const SNAPSHOT_EVENT = "ACG_TRADER_ACCOUNT_SNAPSHOT";
 const DEAL_EVENT = "ACG_TRADER_DEAL_CREATED";
@@ -79,7 +80,10 @@ export async function processEvent(event, boss, {
       account.lifecycleOperationId = null;
       account.lifecycleOperationType = null;
       account.lifecycleOperationStartedAt = null;
-      if (account.accountMode === "DEMO") account.activeTrialKey = null;
+      if (account.accountMode === "DEMO") {
+        account.activeTrialKey = null;
+        account.trial = trialMetadata(account, "BREACHED", new Date(event?.payload?.breachedAt || event?.occurredAt || Date.now()));
+      }
 
       const breach = buildControlBreachRecord(account, event);
       if (shouldReplaceBreachRecord(account.breach, breach)) {
@@ -227,7 +231,10 @@ export async function processEvent(event, boss, {
     account.lifecycleOperationId = null;
     account.lifecycleOperationType = null;
     account.lifecycleOperationStartedAt = null;
-    if (account.accountMode === "DEMO") account.activeTrialKey = null;
+    if (account.accountMode === "DEMO") {
+      account.activeTrialKey = null;
+      account.trial = trialMetadata(account, "BREACHED", snapshotTime(event));
+    }
     if (!account.breach?.breachedAt) {
       const breach = buildBreachRecord(account, decision, event);
       account.breach = breach;
