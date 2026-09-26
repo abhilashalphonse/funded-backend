@@ -11,6 +11,7 @@ import {
   customerFacingTrialProvisioningError,
   freeTrialExpiry,
   trialMetadata,
+  trialResultForStatus,
 } from "./freeTrialPolicy.js";
 
 function ownerQuery(customer) {
@@ -54,7 +55,9 @@ export function serializeCustomerAccount(account) {
     floatingProfit: account.floatingProfit,
     projections: account.projections,
     breach: account.breach || null,
-    trial: account.accountMode === "DEMO" ? (account.trial || null) : undefined,
+    trial: account.accountMode === "DEMO"
+      ? trialMetadata(account, account.trial?.result || trialResultForStatus(account.status), account.trial?.completedAt)
+      : undefined,
     totalTrades: account.totalTrades,
     winningTrades: account.winningTrades,
     losingTrades: account.losingTrades,
