@@ -96,3 +96,4 @@ test("pending Trial pass commands remain active and are not serialized as a fina
   assert.equal(isActiveDemoLifecycleState({ status: "PASSED", commandPending: null }), false);
   assert.equal(trialResultForStatus("PASSED", null), "PASSED");
 });
+

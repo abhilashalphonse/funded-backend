@@ -5,7 +5,7 @@ import { getTradingConnector } from "../../connectors/trading/registry.js";
 export const CUSTOMER_ACCESS_TERMINAL_ACCOUNT_STATUSES = Object.freeze(["BREACHED", "EXPIRED", "CLOSED"]);
 
 const TRADABLE_ACCOUNT_STATUSES = new Set(["ACTIVE", "PHASE_2", "FUNDED"]);
-const TERMINAL_PLATFORM_STATUSES = new Set(["BREACHED", "CLOSED", "DISABLED"]);
+const TERMINAL_PLATFORM_STATUSES = new Set(["BREACHED", "CLOSED", "DISABLED", "COMPLETED"]);
 
 function ownershipIds(values = []) {
   return [...new Set((values || []).map(value => String(value || "").trim()).filter(Boolean))];

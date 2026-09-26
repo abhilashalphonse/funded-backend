@@ -7,11 +7,10 @@ import { ensureTradingCredential } from "../../trading-credentials/trading-crede
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
 import { assertCustomerTradingAccessAllowed } from "./customerTradingAccess.service.js";
 import {
+  ACTIVE_DEMO_STATUSES,
   activeDemoAccountQuery,
-  activeDemoLifecycleStateQuery,
   customerFacingTrialProvisioningError,
   freeTrialExpiry,
-  isActiveDemoLifecycleState,
   trialMetadata,
   trialResultForStatus,
 } from "./freeTrialPolicy.js";
@@ -292,7 +291,8 @@ export async function cancelDemoAccount(customer, accountId, {
     throw error;
   }
 
-  if (!isActiveDemoLifecycleState(account)) {
+  const status = String(account.status || "").toUpperCase();
+  if (!ACTIVE_DEMO_STATUSES.includes(status)) {
     const error = new Error("Only an active free trial can be cancelled.");
     error.status = 409;
     error.code = "TRIAL_NOT_ACTIVE";
@@ -308,7 +308,7 @@ export async function cancelDemoAccount(customer, accountId, {
     {
       _id: account._id,
       accountMode: "DEMO",
-      ...activeDemoLifecycleStateQuery(),
+      status: { $in: [...ACTIVE_DEMO_STATUSES] },
     },
     {
       $set: {
