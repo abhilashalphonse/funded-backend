@@ -17,6 +17,7 @@ class FakeClient {
   async breachAccount(accountId, options) { this.calls.push(["breach", accountId, options]); return { changed: true }; }
   async flattenAccount(accountId, options) { this.calls.push(["flatten", accountId, options]); return { changed: true }; }
   async syncChallenge(accountId, patch) { this.calls.push(["syncChallenge", accountId, patch]); return { operation: "CHALLENGE_SYNC" }; }
+  async transitionRiskPolicy(accountId, command) { this.calls.push(["transitionRiskPolicy", accountId, command]); return { operation: "POLICY_TRANSITION", idempotentReplay: false }; }
 }
 
 test("ACG Trader connector maps generic provisioning to Trader contract", async () => {
@@ -104,6 +105,42 @@ test("ACG Trader connector syncs the authoritative Funded risk policy version", 
     {
       riskPolicy: { maxRiskPerTradePercent: 1, maxAggregateRiskPercent: 2 },
       riskPolicyVersion: "ACG_FUNDED_V1",
+    },
+  ]);
+});
+
+
+test("ACG Trader connector routes authorized V2 policy transitions to the provider account", async () => {
+  const client = new FakeClient();
+  const connector = new ACGTraderConnector({ client });
+  await connector.transitionRiskPolicy({
+    platformAccountId: "66aa00112233445566778899",
+    migrationId: "v2-rollout:account",
+    fromVersion: "ACG_FUNDED_V1",
+    toVersion: "ACG_FUNDED_V2",
+    riskPolicy: {
+      maxRiskPerTradePercent: null,
+      maxAggregateRiskPercent: null,
+      maxMarginUsagePercent: null,
+      maxSingleOrderMarginPercentOfFree: null,
+      maxSymbolMarginPercentOfPermitted: null,
+    },
+  });
+
+  assert.deepEqual(client.calls[0], [
+    "transitionRiskPolicy",
+    "66aa00112233445566778899",
+    {
+      migrationId: "v2-rollout:account",
+      fromVersion: "ACG_FUNDED_V1",
+      toVersion: "ACG_FUNDED_V2",
+      riskPolicy: {
+        maxRiskPerTradePercent: null,
+        maxAggregateRiskPercent: null,
+        maxMarginUsagePercent: null,
+        maxSingleOrderMarginPercentOfFree: null,
+        maxSymbolMarginPercentOfPermitted: null,
+      },
     },
   ]);
 });
