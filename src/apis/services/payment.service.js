@@ -12,6 +12,7 @@ import boss from "../../config/boss.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import { usdToInrQuote } from "./paymentProviders/upiFx.service.js";
+import { assertCustomerTradingAccessAllowed } from "./customerTradingAccess.service.js";
 import {
   DEFAULT_UPI_GATEWAY_ID,
   getActiveUpiGateway,
@@ -722,10 +723,17 @@ export async function activatePaidPayment(payment) {
     await account.save();
 
     if (staged) {
+      const accessGuard = {
+        code: "CUSTOMER_BLOCKED_DURING_CHALLENGE_ACTIVATION",
+        message: "Customer was blocked while Challenge activation was in progress.",
+      };
       try {
+        await assertCustomerTradingAccessAllowed(account, accessGuard);
         await activateTradingAccount(account, {
           reason: "ACG_FUNDED_PAID_CHALLENGE_COMMITTED",
         });
+        await assertCustomerTradingAccessAllowed(account, accessGuard);
+
         const activated = await Account.findOneAndUpdate(
           {
             _id: account._id,
@@ -744,6 +752,8 @@ export async function activatePaidPayment(payment) {
           },
         );
         if (!activated) {
+          const latest = await Account.findById(account._id).select("customerId customerAccessBlocked").lean();
+          await assertCustomerTradingAccessAllowed(latest || account, accessGuard);
           const superseded = new Error("Challenge activation was superseded by a newer lifecycle state.");
           superseded.code = "CHALLENGE_ACTIVATION_SUPERSEDED";
           throw superseded;
@@ -758,7 +768,14 @@ export async function activatePaidPayment(payment) {
             _id: account._id,
             status: "ACTIVE",
           },
-          { $set: { enabled: false } },
+          {
+            $set: {
+              enabled: false,
+              ...(error?.code === "CUSTOMER_BLOCKED_DURING_CHALLENGE_ACTIVATION"
+                ? { customerAccessBlocked: true }
+                : {}),
+            },
+          },
         ).catch(() => {});
         throw error;
       }

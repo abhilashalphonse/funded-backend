@@ -7,6 +7,7 @@ import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js"
 import { applyPlatformAccountState, phaseCompletionState, resetAccountForPhaseTwo as resetPhaseTwoState, tradablePhaseStatus } from "../accounts/account-lifecycle.js";
 import env from "../config/env.js";
 import { trialMetadata } from "../apis/services/freeTrialPolicy.js";
+import { assertCustomerTradingAccessAllowed } from "../apis/services/customerTradingAccess.service.js";
 
 export class CommandWorker {
   constructor(bossInstance, {
@@ -148,10 +149,17 @@ export class CommandWorker {
         await account.save();
 
         if (staged) {
+          const accessGuard = {
+            code: "CUSTOMER_BLOCKED_DURING_PHASE_2_ACTIVATION",
+            message: "Customer was blocked while Phase 2 activation was in progress.",
+          };
           try {
+            await assertCustomerTradingAccessAllowed(account, accessGuard);
             await activateTradingAccount(account, {
               reason: "ACG_FUNDED_PHASE_2_LIFECYCLE_COMMITTED",
             });
+            await assertCustomerTradingAccessAllowed(account, accessGuard);
+
             const activated = await Account.findOneAndUpdate(
               {
                 _id: account._id,
@@ -171,6 +179,8 @@ export class CommandWorker {
               },
             );
             if (!activated) {
+              const latest = await Account.findById(account._id).select("customerId customerAccessBlocked").lean();
+              await assertCustomerTradingAccessAllowed(latest || account, accessGuard);
               const superseded = new Error("Phase 2 activation was superseded by a newer lifecycle state.");
               superseded.code = "PHASE_2_ACTIVATION_SUPERSEDED";
               throw superseded;
@@ -186,7 +196,14 @@ export class CommandWorker {
                 status: "PHASE_2",
                 commandPending: "CREATE_PHASE_2_ACCOUNT",
               },
-              { $set: { enabled: false } },
+              {
+                $set: {
+                  enabled: false,
+                  ...(error?.code === "CUSTOMER_BLOCKED_DURING_PHASE_2_ACTIVATION"
+                    ? { customerAccessBlocked: true }
+                    : {}),
+                },
+              },
             ).catch(() => {});
             throw error;
           }
@@ -370,6 +387,10 @@ async function finalizeCurrentPhase(account, connector, { phase, record, reason 
       error.code = "PHASE_FINALIZATION_STATE_CONFLICT";
       throw error;
     }
+    await assertCustomerTradingAccessAllowed(account, {
+      code: "CUSTOMER_BLOCKED_DURING_PHASE_RECHECK",
+      message: "Customer was blocked while a phase completion recheck was in progress.",
+    });
     await connector.resumeAccount({
       platformAccountId,
       reason: "ACG_FUNDED_PHASE_RECHECK_FAILED",

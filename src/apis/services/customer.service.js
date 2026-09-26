@@ -5,11 +5,13 @@ import { configuredTradingProvider, getTradingConnector } from "../../connectors
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
+import { assertCustomerTradingAccessAllowed } from "./customerTradingAccess.service.js";
 import {
-  ACTIVE_DEMO_STATUSES,
   activeDemoAccountQuery,
+  activeDemoLifecycleStateQuery,
   customerFacingTrialProvisioningError,
   freeTrialExpiry,
+  isActiveDemoLifecycleState,
   trialMetadata,
   trialResultForStatus,
 } from "./freeTrialPolicy.js";
@@ -56,7 +58,7 @@ export function serializeCustomerAccount(account) {
     projections: account.projections,
     breach: account.breach || null,
     trial: account.accountMode === "DEMO"
-      ? trialMetadata(account, account.trial?.result || trialResultForStatus(account.status), account.trial?.completedAt)
+      ? trialMetadata(account, account.trial?.result || trialResultForStatus(account.status, account.commandPending), account.trial?.completedAt)
       : undefined,
     totalTrades: account.totalTrades,
     winningTrades: account.winningTrades,
@@ -192,9 +194,16 @@ export async function ensureDemoAccount(customer, input = {}) {
     await account.save();
 
     if (staged) {
+      const accessGuard = {
+        code: "CUSTOMER_BLOCKED_DURING_TRIAL_ACTIVATION",
+        message: "Customer was blocked while Trial activation was in progress.",
+      };
+      await assertCustomerTradingAccessAllowed(account, accessGuard);
       await activateTradingAccount(account, {
         reason: "ACG_FUNDED_TRIAL_LIFECYCLE_COMMITTED",
       });
+      await assertCustomerTradingAccessAllowed(account, accessGuard);
+
       const activated = await Account.findOneAndUpdate(
         {
           _id: account._id,
@@ -214,6 +223,8 @@ export async function ensureDemoAccount(customer, input = {}) {
         },
       );
       if (!activated) {
+        const latest = await Account.findById(account._id).select("customerId customerAccessBlocked").lean();
+        await assertCustomerTradingAccessAllowed(latest || account, accessGuard);
         await stageTradingAccount(account, {
           reason: "ACG_FUNDED_TRIAL_ACTIVATION_SUPERSEDED",
         }).catch(() => {});
@@ -235,6 +246,15 @@ export async function ensureDemoAccount(customer, input = {}) {
     await stageTradingAccount(account, {
       reason: "ACG_FUNDED_TRIAL_ACTIVATION_FAILED",
     }).catch(() => {});
+
+    if (error?.code === "CUSTOMER_BLOCKED_DURING_TRIAL_ACTIVATION") {
+      await Account.updateOne(
+        { _id: account._id },
+        { $set: { enabled: false, customerAccessBlocked: true } },
+      ).catch(() => {});
+      throw customerFacingTrialProvisioningError(error);
+    }
+
     await Account.updateOne(
       {
         _id: account._id,
@@ -272,8 +292,7 @@ export async function cancelDemoAccount(customer, accountId, {
     throw error;
   }
 
-  const status = String(account.status || "").toUpperCase();
-  if (!ACTIVE_DEMO_STATUSES.includes(status)) {
+  if (!isActiveDemoLifecycleState(account)) {
     const error = new Error("Only an active free trial can be cancelled.");
     error.status = 409;
     error.code = "TRIAL_NOT_ACTIVE";
@@ -289,7 +308,7 @@ export async function cancelDemoAccount(customer, accountId, {
     {
       _id: account._id,
       accountMode: "DEMO",
-      status: { $in: [...ACTIVE_DEMO_STATUSES] },
+      ...activeDemoLifecycleStateQuery(),
     },
     {
       $set: {
