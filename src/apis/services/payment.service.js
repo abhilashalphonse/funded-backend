@@ -223,6 +223,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     commercialConfig,
     amount: pricing.finalPrice,
     currency: "USD",
+    providerCurrency: "USD",
     paymentMethod,
     statusTokenHash: statusAccess.hash,
     status: "CREATED",
@@ -811,6 +812,28 @@ export async function activatePaidPayment(payment) {
   }
 }
 
+export function isExpectedNowPaymentsFiatCurrency(payment, receivedCurrency) {
+  const received = String(receivedCurrency || "").trim().toUpperCase();
+  if (!received) return true;
+
+  const explicitProviderCurrency = String(payment?.providerCurrency || "").trim().toUpperCase();
+  if (explicitProviderCurrency) return received === explicitProviderCurrency;
+
+  const canonicalCurrency = String(payment?.currency || "USD").trim().toUpperCase();
+  const provider = String(payment?.provider || "nowpayments").trim().toLowerCase();
+  const method = String(payment?.paymentMethod || "").trim().toUpperCase();
+
+  // Compatibility for invoices created before providerCurrency was persisted.
+  // The USD standardization relabeled stored Payment.currency from EUR to USD,
+  // but already-created NOWPayments invoices kept their provider-side fiat.
+  // Only signed NOWPayments crypto callbacks get this narrow USD/EUR bridge.
+  if (provider === "nowpayments" && ["BTC", "USDT_TRX"].includes(method)) {
+    return received === canonicalCurrency || received === "EUR";
+  }
+
+  return received === canonicalCurrency;
+}
+
 export async function processIpn(payload, signature) {
   if (!verifyIpnSignature(payload, signature)) {
     const error = new Error("Invalid NOWPayments IPN signature.");
@@ -824,12 +847,22 @@ export async function processIpn(payload, signature) {
   const expectedCrypto = allowedMethods[payment.paymentMethod];
   const expectedFiat = Number(payment.amount);
   const receivedFiat = Number(payload.price_amount);
-  const expectedFiatCurrency = String(payment.currency || "USD").toLowerCase();
-  if (payload.price_currency && String(payload.price_currency).toLowerCase() !== expectedFiatCurrency) throw new Error("Unexpected payment fiat currency.");
+  const receivedFiatCurrency = String(payload.price_currency || "").trim().toUpperCase();
+  if (receivedFiatCurrency && !isExpectedNowPaymentsFiatCurrency(payment, receivedFiatCurrency)) {
+    const error = new Error("Unexpected payment fiat currency.");
+    error.code = "NOWPAYMENTS_FIAT_CURRENCY_MISMATCH";
+    throw error;
+  }
   if (Number.isFinite(receivedFiat) && Math.abs(receivedFiat - expectedFiat) > 0.01) throw new Error("Payment amount mismatch.");
   if (payload.pay_currency && String(payload.pay_currency).toLowerCase() !== expectedCrypto) throw new Error("Payment cryptocurrency mismatch.");
 
   payment.providerPaymentId = payload.payment_id ? String(payload.payment_id) : payment.providerPaymentId;
+  // Older NOWPayments invoices pre-date providerCurrency persistence. Once a
+  // signed callback identifies their fiat currency, pin it permanently so
+  // every subsequent callback is strict.
+  if (receivedFiatCurrency && !payment.providerCurrency) {
+    payment.providerCurrency = receivedFiatCurrency;
+  }
   payment.providerStatus = payload.payment_status;
   payment.paidAmount = Number(payload.actually_paid ?? payload.pay_amount ?? 0);
   payment.paidCurrency = payload.pay_currency;
