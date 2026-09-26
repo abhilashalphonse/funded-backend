@@ -67,6 +67,15 @@ export class ACGTraderConnector extends TradingProviderConnector {
     });
   }
 
+  async transitionRiskPolicy({ platformAccountId, migrationId, fromVersion, toVersion, riskPolicy } = {}) {
+    return this.client.transitionRiskPolicy(required(platformAccountId, "platformAccountId"), {
+      migrationId: required(migrationId, "migrationId"),
+      fromVersion: required(fromVersion, "fromVersion"),
+      toVersion: required(toVersion, "toVersion"),
+      riskPolicy,
+    });
+  }
+
   async pauseAccount({ platformAccountId, reason = "ACG_FUNDED_PAUSE", cancelPending = false }) {
     return this.client.pauseAccount(required(platformAccountId, "platformAccountId"), { reason, cancelPending });
   }
