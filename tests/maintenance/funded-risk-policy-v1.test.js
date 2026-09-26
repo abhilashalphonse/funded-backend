@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ACG_FUNDED_EXECUTION_POLICY,
-  ACG_FUNDED_RISK_POLICY_VERSION,
+  ACG_FUNDED_RISK_POLICY_V1_VERSION,
+  ACG_FUNDED_RISK_POLICY_V2_VERSION,
+  ACG_FUNDED_V1_EXECUTION_POLICY,
+  ACG_FUNDED_V2_EXECUTION_POLICY,
 } from "../../src/connectors/trading/account-provisioning.js";
 import {
   auditAndMigrateFundedRiskPolicyV1,
@@ -29,8 +31,8 @@ function accountModel(rows) {
 }
 
 function remoteAccount({
-  version = ACG_FUNDED_RISK_POLICY_VERSION,
-  policy = ACG_FUNDED_EXECUTION_POLICY,
+  version = ACG_FUNDED_RISK_POLICY_V1_VERSION,
+  policy = ACG_FUNDED_V1_EXECUTION_POLICY,
   openPositions = [],
 } = {}) {
   return {
@@ -64,7 +66,7 @@ test("collectTraderTargets audits every unique platform account, including histo
 
 test("policy comparison separates missing fields from non-null mismatches", () => {
   const result = compareExecutionPolicy({
-    ...ACG_FUNDED_EXECUTION_POLICY,
+    ...ACG_FUNDED_V1_EXECUTION_POLICY,
     maxRiskPerTradePercent: 5,
     maxAggregateRiskPercent: null,
   });
@@ -88,7 +90,7 @@ test("read-only audit flags policy drift and open positions without SL without m
       return remoteAccount({
         version: null,
         policy: {
-          ...ACG_FUNDED_EXECUTION_POLICY,
+          ...ACG_FUNDED_V1_EXECUTION_POLICY,
           maxRiskPerTradePercent: "7",
           maxAggregateRiskPercent: null,
         },
@@ -133,7 +135,7 @@ test("apply mode pushes the Funded V1 contract and verifies the persisted Trader
         return remoteAccount({
           version: null,
           policy: {
-            ...ACG_FUNDED_EXECUTION_POLICY,
+            ...ACG_FUNDED_V1_EXECUTION_POLICY,
             maxMarginUsagePercent: "75",
           },
         });
@@ -159,9 +161,44 @@ test("apply mode pushes the Funded V1 contract and verifies the persisted Trader
   });
 
   assert.equal(syncCalls.length, 1);
-  assert.deepEqual(syncCalls[0].riskPolicy, ACG_FUNDED_EXECUTION_POLICY);
-  assert.equal(syncCalls[0].riskPolicyVersion, ACG_FUNDED_RISK_POLICY_VERSION);
+  assert.deepEqual(syncCalls[0].riskPolicy, ACG_FUNDED_V1_EXECUTION_POLICY);
+  assert.equal(syncCalls[0].riskPolicyVersion, ACG_FUNDED_RISK_POLICY_V1_VERSION);
   assert.equal(result.summary.accountsMigrated, 1);
   assert.equal(result.summary.accountsWithPolicyMismatchAfter, 0);
   assert.equal(result.summary.accountsWithVersionMismatchAfter, 0);
+});
+
+
+test("V1 repair tooling protects V2 accounts and never reinstates removed restrictions", async () => {
+  let syncCalls = 0;
+  const connector = {
+    async adminObservability() {
+      return remoteAccount({
+        version: ACG_FUNDED_RISK_POLICY_V2_VERSION,
+        policy: ACG_FUNDED_V2_EXECUTION_POLICY,
+      });
+    },
+    async syncChallenge() {
+      syncCalls += 1;
+    },
+  };
+
+  const result = await auditAndMigrateFundedRiskPolicyV1({
+    accountModel: accountModel([{
+      accountId: "ACG-V2",
+      status: "ACTIVE",
+      currentPhase: 1,
+      platformAccountId: "trader-v2",
+      platformAccounts: [{ platformAccountId: "trader-v2", phase: 1, accountType: "CHALLENGE", status: "ACTIVE" }],
+    }]),
+    connector,
+    apply: true,
+  });
+
+  assert.equal(syncCalls, 0);
+  assert.equal(result.summary.accountsProtectedV2, 1);
+  assert.equal(result.summary.accountsMigrated, 0);
+  assert.equal(result.summary.accountsWithPolicyMismatchAfter, 0);
+  assert.equal(result.records[0].protectedV2, true);
+  assert.equal(needsMigration(result.records[0]), false);
 });
