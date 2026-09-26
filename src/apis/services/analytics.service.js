@@ -17,6 +17,8 @@ const ALLOWED_EVENTS = new Set([
   "trial_passed",
   "trial_completed",
   "trial_failed",
+  "trial_expired",
+  "trial_cancelled",
   "trader_opened",
   "trader_session_ready",
   "trader_launch_failed",

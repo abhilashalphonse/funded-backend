@@ -1,6 +1,7 @@
 import express from "express";
 import { requireCustomer } from "../../auth/supabaseAuth.js";
 import {
+  cancelDemoAccount,
   closeDemoPosition,
   ensureDemoAccount,
   getCustomerWorkspace,
@@ -132,6 +133,13 @@ router.post("/demo-account", async (req, res, next) => {
       },
     }).catch(() => {});
     res.status(201).json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/demo-account/:accountId/cancel", async (req, res, next) => {
+  try {
+    const data = await cancelDemoAccount(req.customer, req.params.accountId);
+    res.json({ success: true, data });
   } catch (error) { next(error); }
 });
 

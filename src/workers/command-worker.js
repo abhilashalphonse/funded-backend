@@ -6,6 +6,7 @@ import { ensureTradingCredential } from "../trading-credentials/trading-credenti
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
 import { applyPlatformAccountState, phaseCompletionState, resetAccountForPhaseTwo as resetPhaseTwoState, tradablePhaseStatus } from "../accounts/account-lifecycle.js";
 import env from "../config/env.js";
+import { trialMetadata } from "../apis/services/freeTrialPolicy.js";
 
 export class CommandWorker {
   constructor(bossInstance, {
@@ -257,6 +258,7 @@ export class CommandWorker {
         account.enabled = false;
         account.status = "PASSED";
         account.activeTrialKey = null;
+        account.trial = trialMetadata(account, "PASSED", new Date());
         if (activeRecord) activeRecord.status = "COMPLETED";
         await account.save();
 
@@ -342,7 +344,10 @@ async function finalizeCurrentPhase(account, connector, { phase, record, reason 
     account.status = "BREACHED";
     account.enabled = false;
     account.commandPending = null;
-    if (account.accountMode === "DEMO") account.activeTrialKey = null;
+    if (account.accountMode === "DEMO") {
+      account.activeTrialKey = null;
+      account.trial = trialMetadata(account, "BREACHED", new Date());
+    }
     await account.save();
     return { success: false, passed: false, breached: true, platformAccountId };
   }

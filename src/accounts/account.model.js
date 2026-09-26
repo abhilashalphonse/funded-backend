@@ -64,6 +64,14 @@ const BreachSchema = new mongoose.Schema({
     freeMargin: { type: Number, default: null },
 }, { _id: false });
 
+const TrialSchema = new mongoose.Schema({
+    startedAt: { type: Date, required: true },
+    expiresAt: { type: Date, required: true, index: true },
+    completedAt: { type: Date, default: null },
+    cancelledAt: { type: Date, default: null },
+    result: { type: String, enum: ["PASSED", "BREACHED", "EXPIRED", "CANCELLED"], default: null },
+}, { _id: false });
+
 const AccountSchema = new mongoose.Schema(
     {
         accountId: { type: String, required: true, unique: true },
@@ -108,7 +116,7 @@ const AccountSchema = new mongoose.Schema(
         status: {
             type: String,
             default: "NEW",
-            enum: ["NEW", "ACTIVE", "BREACHED", "LOCKED", "PASSED", "PHASE_2", "FUNDED_REVIEW", "FUNDED", "CLOSED"]
+            enum: ["NEW", "ACTIVE", "BREACHED", "LOCKED", "PASSED", "PHASE_2", "FUNDED_REVIEW", "FUNDED", "EXPIRED", "CLOSED"]
         },
         enabled: { type: Boolean, default: true },
         customerAccessBlocked: { type: Boolean, default: false },
@@ -122,6 +130,7 @@ const AccountSchema = new mongoose.Schema(
         credentialOperationStartedAt: { type: Date, default: null },
 
         breach: { type: BreachSchema, default: null },
+        trial: { type: TrialSchema, default: null },
 
         platform: { type: String, default: () => process.env.TRADING_PROVIDER || "simulator" },
         platformAccountId: { type: String, sparse: true },
