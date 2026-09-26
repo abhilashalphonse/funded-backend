@@ -5,7 +5,7 @@ import { evaluateRules } from "../src/workers/state-engine/rules.js";
 import { resolveDecision } from "../src/workers/state-engine/decisions.js";
 import { commandStillValid, resetAccountForPhaseTwo, isActivePhaseTwo, phaseAccountType } from "../src/workers/command-worker.js";
 import { buildBreachRecord, shouldReplayPendingCommand } from "../src/workers/state-engine/processEvent.js";
-import { phaseCompletionState, resetAccountForMaster } from "../src/accounts/account-lifecycle.js";
+import { hasCompletedCurrentChallenge, masterApprovalClaimFilter, phaseCompletionState, resetAccountForMaster } from "../src/accounts/account-lifecycle.js";
 
 function account(overrides = {}) {
   const projections = overrides.projections || {
@@ -416,3 +416,55 @@ test("24 terminal breach cannot be mistaken for a pending trial completion", () 
   });
   assert.equal(commandStillValid(a, "COMPLETE_TRIAL"), false);
 });
+
+test("25 Master approval claim blocks the queue-delay window before final challenge verification", () => {
+  const a = account({
+    currentPhase: 2,
+    status: "FUNDED_REVIEW",
+    enabled: false,
+    commandPending: "ENTER_FUNDED_REVIEW",
+    platformAccounts: [
+      { phase: 1, accountType: "CHALLENGE", platformAccountId: "p1", status: "COMPLETED" },
+      { phase: 2, accountType: "CHALLENGE", platformAccountId: "p2", status: "ACTIVE" },
+    ],
+  });
+
+  assert.equal(hasCompletedCurrentChallenge(a), false);
+
+  const filter = masterApprovalClaimFilter(a);
+  assert.equal(filter.status, "FUNDED_REVIEW");
+  assert.equal(filter.currentPhase, 2);
+  assert.equal(filter.commandPending, null);
+  assert.deepEqual(filter.platformAccounts.$elemMatch, {
+    phase: 2,
+    accountType: "CHALLENGE",
+    status: "COMPLETED",
+  });
+});
+
+test("26 Master approval claim still waits for command cleanup after the challenge record is completed", () => {
+  const a = account({
+    currentPhase: 2,
+    status: "FUNDED_REVIEW",
+    enabled: false,
+    commandPending: "ENTER_FUNDED_REVIEW",
+    platformAccounts: [
+      { phase: 1, accountType: "CHALLENGE", platformAccountId: "p1", status: "COMPLETED" },
+      { phase: 2, accountType: "CHALLENGE", platformAccountId: "p2", status: "COMPLETED" },
+    ],
+  });
+
+  assert.equal(hasCompletedCurrentChallenge(a), true);
+
+  const pendingFilter = masterApprovalClaimFilter(a);
+  assert.equal(pendingFilter.commandPending, null);
+
+  a.commandPending = null;
+  const readyFilter = masterApprovalClaimFilter(a);
+  assert.equal(readyFilter.commandPending, null);
+  assert.deepEqual(readyFilter.$or, [
+    { lifecycleOperationId: null },
+    { lifecycleOperationId: { $exists: false } },
+  ]);
+});
+
