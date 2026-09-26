@@ -1,8 +1,9 @@
 import { getTradingConnector } from "./registry.js";
 
-export const ACG_FUNDED_RISK_POLICY_VERSION = "ACG_FUNDED_V1";
+export const ACG_FUNDED_RISK_POLICY_V1_VERSION = "ACG_FUNDED_V1";
+export const ACG_FUNDED_RISK_POLICY_V2_VERSION = "ACG_FUNDED_V2";
 
-export const ACG_FUNDED_EXECUTION_POLICY = Object.freeze({
+export const ACG_FUNDED_V1_EXECUTION_POLICY = Object.freeze({
   maxRiskPerTradePercent: 1,
   maxAggregateRiskPercent: 2,
   maxMarginUsagePercent: 50,
@@ -14,14 +15,58 @@ export const ACG_FUNDED_EXECUTION_POLICY = Object.freeze({
   maxPendingOrdersPerSymbol: 3,
 });
 
-export async function provisionTradingAccount(account, { phase = account.currentPhase || 1, accountType = "CHALLENGE", activate = true } = {}) {
+export const ACG_FUNDED_V2_EXECUTION_POLICY = Object.freeze({
+  maxRiskPerTradePercent: null,
+  maxAggregateRiskPercent: null,
+  maxMarginUsagePercent: null,
+  maxSingleOrderMarginPercentOfFree: null,
+  maxSymbolMarginPercentOfPermitted: null,
+  maxOpenPositions: 10,
+  maxPositionsPerSymbol: 3,
+  maxPendingOrders: 10,
+  maxPendingOrdersPerSymbol: 3,
+});
+
+// Compatibility aliases represent the V2 contract. Production rollout remains
+// gated by resolveProvisioningRiskPolicyVersion() until staging validation passes.
+export const ACG_FUNDED_RISK_POLICY_VERSION = ACG_FUNDED_RISK_POLICY_V2_VERSION;
+export const ACG_FUNDED_EXECUTION_POLICY = ACG_FUNDED_V2_EXECUTION_POLICY;
+
+export function resolveProvisioningRiskPolicyVersion(env = process.env) {
+  const configured = String(env.ACG_FUNDED_RISK_POLICY_VERSION || ACG_FUNDED_RISK_POLICY_V1_VERSION).trim().toUpperCase();
+  if (![ACG_FUNDED_RISK_POLICY_V1_VERSION, ACG_FUNDED_RISK_POLICY_V2_VERSION].includes(configured)) {
+    const error = new Error("ACG_FUNDED_RISK_POLICY_VERSION must be ACG_FUNDED_V1 or ACG_FUNDED_V2.");
+    error.code = "INVALID_ACG_FUNDED_RISK_POLICY_VERSION";
+    throw error;
+  }
+  return configured;
+}
+
+export function executionPolicyForVersion(version) {
+  const normalized = String(version || "").trim().toUpperCase();
+  if (normalized === ACG_FUNDED_RISK_POLICY_V1_VERSION) return ACG_FUNDED_V1_EXECUTION_POLICY;
+  if (normalized === ACG_FUNDED_RISK_POLICY_V2_VERSION) return ACG_FUNDED_V2_EXECUTION_POLICY;
+  const error = new Error(`Unsupported ACG Funded risk policy version: ${version}`);
+  error.code = "UNSUPPORTED_ACG_FUNDED_RISK_POLICY_VERSION";
+  throw error;
+}
+
+export async function provisionTradingAccount(account, {
+  phase = account.currentPhase || 1,
+  accountType = "CHALLENGE",
+  activate = true,
+  riskPolicyVersion = resolveProvisioningRiskPolicyVersion(),
+} = {}) {
   const provider = account.platform;
   const connector = getTradingConnector(provider);
   const normalizedAccountType = String(accountType || "CHALLENGE").toUpperCase();
   const externalRef = normalizedAccountType === "FUNDED"
     ? `${account.accountId}:funded:${phase}`
     : `${account.accountId}:phase:${phase}`;
-  const riskPolicy = buildRiskPolicy(account, phase, { includeProfitTarget: normalizedAccountType !== "FUNDED" });
+  const riskPolicy = buildRiskPolicy(account, phase, {
+    includeProfitTarget: normalizedAccountType !== "FUNDED",
+    riskPolicyVersion,
+  });
 
   account.provisioning = { status: "PENDING", error: null, updatedAt: new Date() };
   await account.save();
@@ -42,7 +87,7 @@ export async function provisionTradingAccount(account, { phase = account.current
         phase: Number(phase),
         challengeType: account.challengeType,
         accountType: normalizedAccountType,
-        riskPolicyVersion: ACG_FUNDED_RISK_POLICY_VERSION,
+        riskPolicyVersion,
       },
     });
 
@@ -115,14 +160,17 @@ export async function stageTradingAccount(account, {
   return account;
 }
 
-export function buildRiskPolicy(account, phase = account.currentPhase || 1, { includeProfitTarget = true } = {}) {
+export function buildRiskPolicy(account, phase = account.currentPhase || 1, {
+  includeProfitTarget = true,
+  riskPolicyVersion = resolveProvisioningRiskPolicyVersion(),
+} = {}) {
   const balance = Number(account.initialDeposit || account.accountSize || 0);
   const phaseRule = account.rules?.phases?.find(item => Number(item.phase) === Number(phase));
   return {
     dailyLoss: { limit: percentAmount(balance, account.rules?.dailyDrawdown), reference: "DAILY_START_EQUITY" },
     maxLoss: { limit: percentAmount(balance, account.rules?.maxDrawdown), reference: "INITIAL_BALANCE" },
     ...(includeProfitTarget ? { profitTarget: percentAmount(balance, phaseRule?.profitTarget) } : {}),
-    ...ACG_FUNDED_EXECUTION_POLICY,
+    ...executionPolicyForVersion(riskPolicyVersion),
     breachAction: "LIQUIDATE_AND_LOCK",
   };
 }
