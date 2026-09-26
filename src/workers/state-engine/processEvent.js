@@ -22,6 +22,19 @@ export async function processEvent(event, boss, {
     return;
   }
 
+  // ACG Trader account state is authoritative only when the event crossed the
+  // signed ACG Trader webhook boundary. The removed legacy /api/trade-webhook
+  // path never stamped this metadata, so this also neutralizes any legacy jobs
+  // that were queued before the public endpoint was disabled.
+  if (
+    String(account.platform || "").toLowerCase() === "acg-trader"
+    && event?.metadata?.provider !== "acg-trader"
+  ) {
+    account.lastProcessedEventId = event.eventId;
+    await account.save();
+    return;
+  }
+
   if (account.lastProcessedEventId === event.eventId) {
     if (shouldReplayPendingCommand(account, event)) {
       const commandQueue = new CommandQueue(boss);
