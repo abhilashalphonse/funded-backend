@@ -13,9 +13,16 @@ const RECONCILE_INTERVAL_MS = 60 * 1000;
 const BATCH_LIMIT = 100;
 
 export class LifecycleReconciliationWorker {
-  constructor({ accountModel = Account, now = () => new Date() } = {}) {
+  constructor({
+    accountModel = Account,
+    now = () => new Date(),
+    connectorResolver = getTradingConnector,
+    analyticsRecorder = recordAnalyticsEventOnce,
+  } = {}) {
     this.accountModel = accountModel;
     this.now = now;
+    this.connectorResolver = connectorResolver;
+    this.analyticsRecorder = analyticsRecorder;
     this.timer = null;
     this.running = false;
   }
@@ -162,7 +169,7 @@ export class LifecycleReconciliationWorker {
         );
         if (!expired) continue;
 
-        const connector = getTradingConnector(expired.platform);
+        const connector = this.connectorResolver(expired.platform);
         let changed = false;
         for (const record of expired.platformAccounts || []) {
           if (!["ACTIVE", "PAUSED"].includes(String(record.status || "").toUpperCase())) continue;
@@ -181,7 +188,7 @@ export class LifecycleReconciliationWorker {
         }
         if (changed) await expired.save().catch(() => {});
 
-        await recordAnalyticsEventOnce({
+        await this.analyticsRecorder({
           event: "trial_expired",
           sessionId: `account:${expired.accountId}`,
           customer: expired.customerId ? { customerId: expired.customerId } : null,
@@ -207,7 +214,7 @@ export class LifecycleReconciliationWorker {
     }).limit(BATCH_LIMIT);
 
     for (const account of accounts) {
-      const connector = getTradingConnector(account.platform);
+      const connector = this.connectorResolver(account.platform);
       let changed = false;
       for (const record of account.platformAccounts || []) {
         if (!["ACTIVE", "PAUSED"].includes(String(record.status || "").toUpperCase())) continue;
