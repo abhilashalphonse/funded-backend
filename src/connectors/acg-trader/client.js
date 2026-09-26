@@ -15,6 +15,7 @@ export class ACGTraderClient {
   provisionAccount(command) { return this.request("/v1/internal/trading/accounts/provision", { method: "POST", body: command }); }
   getAccount(accountId) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}`); }
   getAdminObservability(accountId, { limit = 100 } = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/admin-observability?limit=${Math.max(1, Math.min(200, Number(limit) || 100))}`); }
+  syncChallenge(accountId, patch = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/challenge`, { method: "PATCH", body: patch }); }
   pauseAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/pause`, { method: "POST", body: options }); }
   stageAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/stage`, { method: "POST", body: options }); }
   activateAccount(accountId, options = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/activate`, { method: "POST", body: options }); }
