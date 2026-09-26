@@ -124,3 +124,26 @@ test("ACG Trader health readiness preserves a 503 health payload for diagnostics
   assert.equal(result.market.state, "LIVE");
   assert.equal(result.checks.tradingRuntimeReady, false);
 });
+
+
+test("ACG Trader client PATCHes account challenge policy state", async () => {
+  const calls = [];
+  const client = new ACGTraderClient({
+    baseUrl: "http://localhost:4000",
+    clientId: "funded-backend",
+    apiKey: "secret-key",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response(200, { operation: "CHALLENGE_SYNC" });
+    },
+  });
+
+  await client.syncChallenge("66aa00112233445566778899", {
+    riskPolicy: { maxRiskPerTradePercent: 1 },
+    riskPolicyVersion: "ACG_FUNDED_V1",
+  });
+
+  assert.equal(calls[0].url, "http://localhost:4000/v1/internal/trading/accounts/66aa00112233445566778899/challenge");
+  assert.equal(calls[0].options.method, "PATCH");
+  assert.equal(JSON.parse(calls[0].options.body).riskPolicyVersion, "ACG_FUNDED_V1");
+});

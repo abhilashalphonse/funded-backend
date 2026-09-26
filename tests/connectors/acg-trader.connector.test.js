@@ -16,6 +16,7 @@ class FakeClient {
   async resumeAccount(accountId, options) { this.calls.push(["resume", accountId, options]); return { changed: true }; }
   async breachAccount(accountId, options) { this.calls.push(["breach", accountId, options]); return { changed: true }; }
   async flattenAccount(accountId, options) { this.calls.push(["flatten", accountId, options]); return { changed: true }; }
+  async syncChallenge(accountId, patch) { this.calls.push(["syncChallenge", accountId, patch]); return { operation: "CHALLENGE_SYNC" }; }
 }
 
 test("ACG Trader connector maps generic provisioning to Trader contract", async () => {
@@ -85,4 +86,24 @@ test("ACG Trader connector routes reversible phase flatten to the provider accou
   const connector = new ACGTraderConnector({ client });
   await connector.flattenAccount({ platformAccountId: "66aa00112233445566778899", reason: "PHASE_CHECK" });
   assert.deepEqual(client.calls[0], ["flatten", "66aa00112233445566778899", { reason: "PHASE_CHECK" }]);
+});
+
+
+test("ACG Trader connector syncs the authoritative Funded risk policy version", async () => {
+  const client = new FakeClient();
+  const connector = new ACGTraderConnector({ client });
+  await connector.syncChallenge({
+    platformAccountId: "66aa00112233445566778899",
+    riskPolicy: { maxRiskPerTradePercent: 1, maxAggregateRiskPercent: 2 },
+    riskPolicyVersion: "ACG_FUNDED_V1",
+  });
+
+  assert.deepEqual(client.calls[0], [
+    "syncChallenge",
+    "66aa00112233445566778899",
+    {
+      riskPolicy: { maxRiskPerTradePercent: 1, maxAggregateRiskPercent: 2 },
+      riskPolicyVersion: "ACG_FUNDED_V1",
+    },
+  ]);
 });

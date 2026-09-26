@@ -1,5 +1,7 @@
 import { getTradingConnector } from "./registry.js";
 
+export const ACG_FUNDED_RISK_POLICY_VERSION = "ACG_FUNDED_V1";
+
 export const ACG_FUNDED_EXECUTION_POLICY = Object.freeze({
   maxRiskPerTradePercent: 1,
   maxAggregateRiskPercent: 2,
@@ -40,6 +42,7 @@ export async function provisionTradingAccount(account, { phase = account.current
         phase: Number(phase),
         challengeType: account.challengeType,
         accountType: normalizedAccountType,
+        riskPolicyVersion: ACG_FUNDED_RISK_POLICY_VERSION,
       },
     });
 
