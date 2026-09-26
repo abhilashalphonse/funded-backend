@@ -528,3 +528,60 @@ test("exact breach evidence preserves simultaneous daily and maximum drawdown ru
   assert.equal(account.lastPlatformSnapshotAt.toISOString(), "2026-09-24T12:00:00.000Z");
   assert.equal(account.lastPlatformSnapshotSequence, 7);
 });
+
+
+test("legacy unauthenticated events cannot mutate or breach ACG Trader accounts", async () => {
+  const account = {
+    accountId: "ACG-SECURITY-1",
+    platform: "acg-trader",
+    status: "ACTIVE",
+    enabled: true,
+    initialDeposit: 100000,
+    accountSize: 100000,
+    balance: 100000,
+    equity: 100000,
+    dailyStartEquity: 100000,
+    projections: {
+      highestBalance: 100000,
+      highestEquity: 100000,
+      profit: 0,
+      dailyLoss: 0,
+      totalLoss: 0,
+      tradingDays: 0,
+    },
+    rules: {
+      dailyDrawdown: 3,
+      maxDrawdown: 6,
+      minimumTradingDays: 0,
+      phases: [{ phase: 1, profitTarget: 10 }],
+    },
+    commandPending: null,
+    lastProcessedEventId: null,
+    saveCalls: 0,
+    async save() { this.saveCalls += 1; },
+  };
+  const accountModel = { async findOne() { return account; } };
+
+  await processEvent({
+    eventId: "mt5:ACG-SECURITY-1:TRADE_RECEIVED:forged-1",
+    aggregateId: "ACG-SECURITY-1",
+    eventType: "TRADE_RECEIVED",
+    timestamp: new Date("2026-09-26T10:00:00.000Z"),
+    payload: {
+      accountId: "ACG-SECURITY-1",
+      balance: 1,
+      equity: 1,
+      dailyStartEquity: 100000,
+    },
+  }, null, { accountModel });
+
+  assert.equal(account.status, "ACTIVE");
+  assert.equal(account.enabled, true);
+  assert.equal(account.balance, 100000);
+  assert.equal(account.equity, 100000);
+  assert.equal(account.projections.dailyLoss, 0);
+  assert.equal(account.projections.totalLoss, 0);
+  assert.equal(account.commandPending, null);
+  assert.equal(account.lastProcessedEventId, "mt5:ACG-SECURITY-1:TRADE_RECEIVED:forged-1");
+  assert.equal(account.saveCalls, 1);
+});
