@@ -5,13 +5,23 @@ import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } 
 import { ensureTradingCredential } from "../trading-credentials/trading-credential.service.js";
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
 import { applyPlatformAccountState, phaseCompletionState, resetAccountForPhaseTwo as resetPhaseTwoState, tradablePhaseStatus } from "../accounts/account-lifecycle.js";
+import env from "../config/env.js";
 
 export class CommandWorker {
-  constructor(bossInstance) {
+  constructor(bossInstance, {
+    accountModel = Account,
+    recoveryIntervalMs = env.ACG_COMMAND_RECOVERY_INTERVAL_MS,
+    logger = console,
+  } = {}) {
     if (!bossInstance) {
       throw new Error("[CommandWorker Error] Cannot instantiate CommandWorker without an active pg-boss instance.");
     }
     this.boss = bossInstance;
+    this.accountModel = accountModel;
+    this.recoveryIntervalMs = Math.max(1, Number(recoveryIntervalMs) || 30000);
+    this.logger = logger;
+    this.recoveryTimer = null;
+    this.recoveryRunning = false;
   }
 
   async start() {
@@ -24,7 +34,7 @@ export class CommandWorker {
         try {
           console.log(`[WORKER] Processing Job ${jobId} | Command: ${command} for Account: ${accountId}`);
           await this.executeExternalSideEffect(command, accountId, metadata);
-          await Account.updateOne(
+          await this.accountModel.updateOne(
             { accountId, commandPending: command },
             { $set: { commandPending: null } },
           );
@@ -35,18 +45,44 @@ export class CommandWorker {
         }
       }
     });
+
+    this.startPendingCommandRecovery();
+  }
+
+  stop() {
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    this.recoveryTimer = null;
+  }
+
+  startPendingCommandRecovery() {
+    if (this.recoveryTimer) return;
+    this.recoveryTimer = setInterval(() => {
+      this.recoverPendingCommands().catch(error => {
+        this.logger?.error?.("[WORKER RECOVERY] periodic lifecycle command recovery failed", error?.message || error);
+      });
+    }, this.recoveryIntervalMs);
+    this.recoveryTimer.unref?.();
   }
 
   async recoverPendingCommands() {
-    const pending = await Account.find({
-      commandPending: { $in: ["LOCK_ACCOUNT", "CREATE_PHASE_2_ACCOUNT", "COMPLETE_TRIAL", "ENTER_FUNDED_REVIEW"] },
-    }).select("accountId commandPending").limit(500).lean();
+    if (this.recoveryRunning) return { skipped: true, scanned: 0 };
+    this.recoveryRunning = true;
 
-    const queue = new CommandQueue(this.boss);
-    for (const account of pending) {
-      await queue.enqueueCommand(account.commandPending, account).catch(error => {
-        console.error("[WORKER RECOVERY] Failed to requeue lifecycle command", account.accountId, error?.message || error);
-      });
+    try {
+      const pending = await this.accountModel.find({
+        commandPending: { $in: ["LOCK_ACCOUNT", "CREATE_PHASE_2_ACCOUNT", "COMPLETE_TRIAL", "ENTER_FUNDED_REVIEW"] },
+      }).select("accountId commandPending").limit(500).lean();
+
+      const queue = new CommandQueue(this.boss);
+      for (const account of pending) {
+        await queue.enqueueCommand(account.commandPending, account).catch(error => {
+          this.logger?.error?.("[WORKER RECOVERY] Failed to requeue lifecycle command", account.accountId, error?.message || error);
+        });
+      }
+
+      return { skipped: false, scanned: pending.length };
+    } finally {
+      this.recoveryRunning = false;
     }
   }
 
