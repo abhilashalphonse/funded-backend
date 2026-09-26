@@ -1,11 +1,12 @@
 import Account from "../accounts/account.model.js";
 import { getTradingConnector } from "../connectors/trading/registry.js";
 import {
-  ACG_FUNDED_EXECUTION_POLICY,
-  ACG_FUNDED_RISK_POLICY_VERSION,
+  ACG_FUNDED_RISK_POLICY_V1_VERSION,
+  ACG_FUNDED_RISK_POLICY_V2_VERSION,
+  ACG_FUNDED_V1_EXECUTION_POLICY,
 } from "../connectors/trading/account-provisioning.js";
 
-export const ACG_FUNDED_RISK_POLICY_KEYS = Object.freeze(Object.keys(ACG_FUNDED_EXECUTION_POLICY));
+export const ACG_FUNDED_RISK_POLICY_KEYS = Object.freeze(Object.keys(ACG_FUNDED_V1_EXECUTION_POLICY));
 
 export async function auditAndMigrateFundedRiskPolicyV1({
   accountModel = Account,
@@ -24,11 +25,16 @@ export async function auditAndMigrateFundedRiskPolicyV1({
     let after = before;
     let migrated = false;
 
+    if (apply && before.protectedV2) {
+      records.push({ ...before, migrated: false, before });
+      continue;
+    }
+
     if (apply && needsMigration(before)) {
       await connector.syncChallenge({
         platformAccountId: target.platformAccountId,
-        riskPolicy: { ...ACG_FUNDED_EXECUTION_POLICY },
-        riskPolicyVersion: ACG_FUNDED_RISK_POLICY_VERSION,
+        riskPolicy: { ...ACG_FUNDED_V1_EXECUTION_POLICY },
+        riskPolicyVersion: ACG_FUNDED_RISK_POLICY_V1_VERSION,
       });
       migrated = true;
       after = await inspectTarget(connector, target);
@@ -51,7 +57,7 @@ export async function auditAndMigrateFundedRiskPolicyV1({
   }
 
   return {
-    version: ACG_FUNDED_RISK_POLICY_VERSION,
+    version: ACG_FUNDED_RISK_POLICY_V1_VERSION,
     apply,
     summary: summarize(records),
     records,
@@ -101,7 +107,7 @@ export function compareExecutionPolicy(remotePolicy = {}) {
   const missing = [];
   const mismatches = [];
 
-  for (const [key, expected] of Object.entries(ACG_FUNDED_EXECUTION_POLICY)) {
+  for (const [key, expected] of Object.entries(ACG_FUNDED_V1_EXECUTION_POLICY)) {
     const actual = scalar(remotePolicy?.[key]);
     if (actual == null) {
       missing.push({ key, expected: String(expected), actual: null });
@@ -116,10 +122,11 @@ export function compareExecutionPolicy(remotePolicy = {}) {
 }
 
 export function needsMigration(record = {}) {
+  if (record.protectedV2) return false;
   return Boolean(
     record.missing?.length
     || record.mismatches?.length
-    || String(record.riskPolicyVersion || "") !== ACG_FUNDED_RISK_POLICY_VERSION
+    || String(record.riskPolicyVersion || "") !== ACG_FUNDED_RISK_POLICY_V1_VERSION
   );
 }
 
@@ -140,10 +147,14 @@ async function inspectTarget(connector, target) {
       openVolume: scalar(position?.openVolume),
     }));
 
+  const riskPolicyVersion = remoteAccount?.challenge?.riskPolicyVersion || null;
+  const protectedV2 = String(riskPolicyVersion || "") === ACG_FUNDED_RISK_POLICY_V2_VERSION;
+
   return {
     ...target,
     traderStatus: String(remoteAccount?.status || "").toUpperCase(),
-    riskPolicyVersion: remoteAccount?.challenge?.riskPolicyVersion || null,
+    riskPolicyVersion,
+    protectedV2,
     missing: comparison.missing,
     mismatches: comparison.mismatches,
     openPositionCount: openPositions.length,
@@ -157,10 +168,11 @@ function summarize(records) {
     tradingAccountsAudited: records.length,
     accountsWithMissingPolicyFieldsBefore: before.filter(record => record.missing?.length).length,
     accountsWithNonNullPolicyMismatchBefore: before.filter(record => record.mismatches?.length).length,
-    accountsWithVersionMismatchBefore: before.filter(record => String(record.riskPolicyVersion || "") !== ACG_FUNDED_RISK_POLICY_VERSION).length,
+    accountsWithVersionMismatchBefore: before.filter(record => !record.protectedV2 && String(record.riskPolicyVersion || "") !== ACG_FUNDED_RISK_POLICY_V1_VERSION).length,
+    accountsProtectedV2: records.filter(record => record.protectedV2).length,
     accountsMigrated: records.filter(record => record.migrated).length,
-    accountsWithPolicyMismatchAfter: records.filter(record => record.missing?.length || record.mismatches?.length).length,
-    accountsWithVersionMismatchAfter: records.filter(record => String(record.riskPolicyVersion || "") !== ACG_FUNDED_RISK_POLICY_VERSION).length,
+    accountsWithPolicyMismatchAfter: records.filter(record => !record.protectedV2 && (record.missing?.length || record.mismatches?.length)).length,
+    accountsWithVersionMismatchAfter: records.filter(record => !record.protectedV2 && String(record.riskPolicyVersion || "") !== ACG_FUNDED_RISK_POLICY_V1_VERSION).length,
     accountsWithOpenPositionsWithoutStopLoss: records.filter(record => record.openWithoutStopLoss?.length).length,
     openPositionsWithoutStopLoss: records.reduce((sum, record) => sum + Number(record.openWithoutStopLoss?.length || 0), 0),
   };
