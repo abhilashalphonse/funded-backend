@@ -14,7 +14,7 @@ import { getTradingConnector } from "../../connectors/trading/registry.js";
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
 import { ensureTradingCredential } from "../../trading-credentials/trading-credential.service.js";
-import { resetAccountForMaster } from "../../accounts/account-lifecycle.js";
+import { hasCompletedCurrentChallenge, masterApprovalClaimFilter, resetAccountForMaster } from "../../accounts/account-lifecycle.js";
 import { sendSupportEmail, replySubject } from "../../email/resendSupport.service.js";
 import { listUpiGateways, setActiveUpiGateway } from "../services/paymentProviders/upiGateway.registry.js";
 
@@ -415,14 +415,7 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
 
       const operationId = randomUUID();
       const claimed = await Account.findOneAndUpdate(
-        {
-          accountId: account.accountId,
-          status: "FUNDED_REVIEW",
-          $or: [
-            { lifecycleOperationId: null },
-            { lifecycleOperationId: { $exists: false } },
-          ],
-        },
+        masterApprovalClaimFilter(account),
         {
           $set: {
             lifecycleOperationId: operationId,
@@ -437,13 +430,25 @@ router.post("/challenges/:accountId/action", async (req, res, next) => {
 
       if (!claimed) {
         const current = await Account.findOne({ accountId: account.accountId }).lean();
-        return res.status(409).json({
-          success: false,
-          message: current?.lifecycleOperationId
-            ? "Master approval is already in progress."
-            : "This account is no longer awaiting Master approval.",
-          code: current?.lifecycleOperationId ? "MASTER_APPROVAL_IN_PROGRESS" : "MASTER_APPROVAL_NOT_AVAILABLE",
-        });
+        const currentStatus = String(current?.status || "").toUpperCase();
+        const finalizationPending = Boolean(current?.commandPending);
+        const challengeCompleted = hasCompletedCurrentChallenge(current);
+
+        let message = "This account is no longer awaiting Master approval.";
+        let code = "MASTER_APPROVAL_NOT_AVAILABLE";
+
+        if (current?.lifecycleOperationId) {
+          message = "Master approval is already in progress.";
+          code = "MASTER_APPROVAL_IN_PROGRESS";
+        } else if (currentStatus === "FUNDED_REVIEW" && finalizationPending) {
+          message = "Final challenge verification is still in progress. Wait for finalization to complete before approving Master.";
+          code = "MASTER_APPROVAL_FINALIZATION_PENDING";
+        } else if (currentStatus === "FUNDED_REVIEW" && !challengeCompleted) {
+          message = "Final challenge verification has not completed successfully.";
+          code = "MASTER_APPROVAL_FINALIZATION_INCOMPLETE";
+        }
+
+        return res.status(409).json({ success: false, message, code });
       }
 
       account = claimed;
