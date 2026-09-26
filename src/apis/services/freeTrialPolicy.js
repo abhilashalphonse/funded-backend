@@ -38,6 +38,11 @@ export function trialMetadata(account, result = null, completedAt = null) {
   };
 }
 
+export function trialResultForStatus(status) {
+  const normalized = String(status || "").toUpperCase();
+  return ["PASSED", "BREACHED", "EXPIRED"].includes(normalized) ? normalized : null;
+}
+
 export function customerFacingTrialProvisioningError(error) {
   const status = Number(error?.status);
   const code = String(error?.code || "");
