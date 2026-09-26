@@ -136,7 +136,11 @@ async function inspectTarget(connector, target) {
     limit: 200,
   });
   const remoteAccount = observability?.account || {};
-  const comparison = compareExecutionPolicy(remoteAccount.riskPolicy || {});
+  const riskPolicyVersion = remoteAccount?.challenge?.riskPolicyVersion || null;
+  const protectedV2 = String(riskPolicyVersion || "") === ACG_FUNDED_RISK_POLICY_V2_VERSION;
+  const comparison = protectedV2
+    ? { missing: [], mismatches: [] }
+    : compareExecutionPolicy(remoteAccount.riskPolicy || {});
   const openPositions = Array.isArray(observability?.openPositions) ? observability.openPositions : [];
   const openWithoutStopLoss = openPositions
     .filter(position => position?.stopLoss === null || position?.stopLoss === undefined || position?.stopLoss === "")
@@ -146,9 +150,6 @@ async function inspectTarget(connector, target) {
       side: String(position?.side || "").toUpperCase(),
       openVolume: scalar(position?.openVolume),
     }));
-
-  const riskPolicyVersion = remoteAccount?.challenge?.riskPolicyVersion || null;
-  const protectedV2 = String(riskPolicyVersion || "") === ACG_FUNDED_RISK_POLICY_V2_VERSION;
 
   return {
     ...target,
