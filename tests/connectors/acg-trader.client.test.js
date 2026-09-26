@@ -147,3 +147,37 @@ test("ACG Trader client PATCHes account challenge policy state", async () => {
   assert.equal(calls[0].options.method, "PATCH");
   assert.equal(JSON.parse(calls[0].options.body).riskPolicyVersion, "ACG_FUNDED_V1");
 });
+
+
+test("ACG Trader client POSTs durable policy transition commands", async () => {
+  const calls = [];
+  const client = new ACGTraderClient({
+    baseUrl: "http://localhost:4000",
+    clientId: "funded-backend",
+    apiKey: "secret-key",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response(200, { operation: "POLICY_TRANSITION", idempotentReplay: false });
+    },
+  });
+
+  await client.transitionRiskPolicy("66aa00112233445566778899", {
+    migrationId: "v2-rollout:66aa00112233445566778899",
+    fromVersion: "ACG_FUNDED_V1",
+    toVersion: "ACG_FUNDED_V2",
+    riskPolicy: {
+      maxRiskPerTradePercent: null,
+      maxAggregateRiskPercent: null,
+      maxMarginUsagePercent: null,
+      maxSingleOrderMarginPercentOfFree: null,
+      maxSymbolMarginPercentOfPermitted: null,
+    },
+  });
+
+  assert.equal(calls[0].url, "http://localhost:4000/v1/internal/trading/accounts/66aa00112233445566778899/policy-transitions");
+  assert.equal(calls[0].options.method, "POST");
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.fromVersion, "ACG_FUNDED_V1");
+  assert.equal(body.toVersion, "ACG_FUNDED_V2");
+  assert.equal(body.riskPolicy.maxMarginUsagePercent, null);
+});
