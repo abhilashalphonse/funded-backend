@@ -4,8 +4,10 @@ node_modules/
 # Environment files / secrets
 .env
 .env.*
-.env.example
-.env.production.example
+*.env
+*.env.*
+.envrc
+.envrc.*
 
 # Credentials / private keys
 *.pem
