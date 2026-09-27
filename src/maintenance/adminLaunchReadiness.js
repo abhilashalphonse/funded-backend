@@ -677,6 +677,9 @@ export async function executeAcceptanceRun(runIdValue, {
   if (!adminBearer) throw acceptanceError("Admin bearer is required for lifecycle approval checks.", "ACCEPTANCE_ADMIN_SESSION_REQUIRED", 401);
   if (!fundedBaseUrl) throw acceptanceError("Funded API base URL is required.", "ACCEPTANCE_FUNDED_BASE_URL_REQUIRED");
 
+  const preflight = await preflightAcceptanceRun(runIdValue);
+  assert.equal(preflight.status, "PASS", "Preflight must pass before destructive acceptance.");
+
   let run = await AcceptanceRun.findOneAndUpdate(
     { runId: String(runIdValue), status: "READY" },
     {
@@ -701,9 +704,6 @@ export async function executeAcceptanceRun(runIdValue, {
   }
 
   try {
-    const preflight = await preflightAcceptanceRun(run.runId);
-    assert.equal(preflight.status, "PASS", "Preflight must pass before destructive acceptance.");
-
     const customerRecord = await loadCustomerForRun(run);
     const customer = customerContext(customerRecord);
     const state = {
@@ -747,6 +747,9 @@ export async function executeAcceptanceRun(runIdValue, {
       assert.equal(conflicts.length, 1, "Concurrent Trial requests did not produce exactly one conflict.");
 
       state.trial = successes[0].value;
+      const persistedTrial = await loadChallenge(state.trial.accountId);
+      assert(persistedTrial?.platformAccountId, "Created Trial is missing platformAccountId.");
+      state.trial = { ...state.trial, platformAccountId: persistedTrial.platformAccountId };
       run.fixture = {
         ...run.fixture,
         trialAccountId: state.trial.accountId,
