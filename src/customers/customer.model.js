@@ -32,7 +32,7 @@ const MarketingAttributionSchema = new mongoose.Schema(
 const CustomerSchema = new mongoose.Schema(
   {
     customerId: { type: String, required: true, unique: true, immutable: true, index: true },
-    supabaseUserId: { type: String, default: undefined, index: true },
+    supabaseUserId: { type: String, default: undefined },
     primaryEmail: { type: String, required: true, lowercase: true, trim: true, unique: true, index: true },
     emailAliases: { type: [String], default: [] },
     status: { type: String, enum: ["ACTIVE", "BLOCKED", "MERGED"], default: "ACTIVE", index: true },

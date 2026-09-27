@@ -310,10 +310,10 @@ export function captureLifecycleWriteGuard(account) {
 
 export async function saveAccountConditional(account, accountModel, guard) {
   // Unit tests and non-Mongoose test doubles intentionally keep the old save
-  // contract. Production Account documents always expose getChanges() and _id.
+  // contract. Production Mongoose documents expose $getChanges() and _id.
   if (
     typeof accountModel?.updateOne !== "function"
-    || typeof account?.getChanges !== "function"
+    || typeof account?.$getChanges !== "function"
     || account?._id == null
   ) {
     await account.save();
@@ -324,7 +324,7 @@ export async function saveAccountConditional(account, accountModel, guard) {
 
   const expectedVersion = Number(guard?.version ?? 0);
   const expectedStatus = String(guard?.status || "");
-  const rawChanges = account.getChanges();
+  const rawChanges = account.$getChanges();
   const update = {};
 
   for (const [operator, payload] of Object.entries(rawChanges || {})) {

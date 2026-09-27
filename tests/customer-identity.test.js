@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import Customer from "../src/customers/customer.model.js";
 import {
   getCustomerOwnershipIds,
   getOrCreateGuestCustomer,
@@ -177,4 +178,16 @@ test("guest identity merges into existing authenticated customer without changin
 
   const ownershipIds = await getCustomerOwnershipIds(customer, { customerModel });
   assert.deepEqual(new Set(ownershipIds), new Set(["CUS-AUTH", "CUS-GUEST"]));
+});
+
+
+test("Customer supabaseUserId has one unique partial index definition", () => {
+  const indexes = Customer.schema.indexes()
+    .filter(([keys]) => keys?.supabaseUserId === 1);
+  assert.equal(indexes.length, 1);
+  assert.deepEqual(indexes[0][0], { supabaseUserId: 1 });
+  assert.equal(indexes[0][1]?.unique, true);
+  assert.deepEqual(indexes[0][1]?.partialFilterExpression, {
+    supabaseUserId: { $type: "string" },
+  });
 });
