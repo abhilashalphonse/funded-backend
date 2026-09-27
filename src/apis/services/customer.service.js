@@ -99,7 +99,7 @@ export async function getCustomerWorkspace(customer) {
   };
 }
 
-export async function ensureDemoAccount(customer, input = {}) {
+export async function ensureDemoAccount(customer, input = {}, { queueCredentialEmail = true } = {}) {
   const active = await Account.findOne(activeDemoAccountQuery(ownerQuery(customer))).sort({ createdAt: -1 });
 
   if (active) {
@@ -236,7 +236,7 @@ export async function ensureDemoAccount(customer, input = {}) {
 
     await ensureTradingCredential(account, {
       email: customer.email,
-      queueEmail: true,
+      queueEmail: queueCredentialEmail,
       platformAccountId: account.platformAccountId,
     }).catch(() => {});
 
