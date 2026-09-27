@@ -626,7 +626,7 @@ test("stale snapshot cannot overwrite a concurrent terminal breach or enqueue pr
       minimumTradingDays: 0,
       phases: [{ phase: 1, profitTarget: 10 }],
     },
-    getChanges() {
+    $getChanges() {
       return {
         $set: {
           status: this.status,
