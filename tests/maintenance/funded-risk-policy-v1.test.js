@@ -11,6 +11,7 @@ import {
   collectTraderTargets,
   compareExecutionPolicy,
   needsMigration,
+  validateV1RepairSafety,
 } from "../../src/maintenance/fundedRiskPolicyV1.js";
 
 function accountModel(rows) {
@@ -201,4 +202,99 @@ test("V1 repair tooling protects V2 accounts and never reinstates removed restri
   assert.equal(result.summary.accountsWithPolicyMismatchAfter, 0);
   assert.equal(result.records[0].protectedV2, true);
   assert.equal(needsMigration(result.records[0]), false);
+});
+
+
+test("exact funded-account selector inspects only the requested legacy account", async () => {
+  const inspected = [];
+  const connector = {
+    async adminObservability({ platformAccountId }) {
+      inspected.push(platformAccountId);
+      return remoteAccount({ version: null });
+    },
+    async syncChallenge() {
+      throw new Error("dry-run must not mutate Trader");
+    },
+  };
+
+  const result = await auditAndMigrateFundedRiskPolicyV1({
+    accountModel: accountModel([
+      {
+        accountId: "ACG-1",
+        status: "ACTIVE",
+        currentPhase: 1,
+        platformAccountId: "trader-1",
+        platformAccounts: [{ platformAccountId: "trader-1", phase: 1, accountType: "CHALLENGE", status: "ACTIVE" }],
+      },
+      {
+        accountId: "ACG-2",
+        status: "ACTIVE",
+        currentPhase: 1,
+        platformAccountId: "trader-2",
+        platformAccounts: [{ platformAccountId: "trader-2", phase: 1, accountType: "CHALLENGE", status: "ACTIVE" }],
+      },
+    ]),
+    connector,
+    apply: false,
+    fundedAccountId: "ACG-2",
+  });
+
+  assert.deepEqual(inspected, ["trader-2"]);
+  assert.equal(result.fundedAccountId, "ACG-2");
+  assert.equal(result.platformAccountId, null);
+  assert.equal(result.summary.tradingAccountsAudited, 1);
+});
+
+test("V1 repair selectors conflict before Trader inspection", async () => {
+  let inspections = 0;
+  await assert.rejects(
+    () => auditAndMigrateFundedRiskPolicyV1({
+      accountModel: accountModel([{
+        accountId: "ACG-1",
+        status: "ACTIVE",
+        currentPhase: 1,
+        platformAccountId: "trader-1",
+        platformAccounts: [{ platformAccountId: "trader-1", phase: 1, accountType: "CHALLENGE", status: "ACTIVE" }],
+      }]),
+      connector: {
+        async adminObservability() {
+          inspections += 1;
+          return remoteAccount();
+        },
+      },
+      fundedAccountId: "ACG-1",
+      platformAccountId: "trader-1",
+    }),
+    error => error?.code === "ACG_FUNDED_V1_SELECTOR_CONFLICT",
+  );
+  assert.equal(inspections, 0);
+});
+
+test("V1 repair apply requires an exact selector and separate production acknowledgement", () => {
+  assert.throws(
+    () => validateV1RepairSafety({
+      apply: true,
+      environmentName: "production",
+    }),
+    error => error?.code === "ACG_FUNDED_V1_APPLY_REQUIRES_TARGET",
+  );
+
+  assert.throws(
+    () => validateV1RepairSafety({
+      apply: true,
+      environmentName: "production",
+      fundedAccountId: "ACG-1",
+    }),
+    error => error?.code === "ACG_FUNDED_V1_PRODUCTION_APPLY_BLOCKED",
+  );
+
+  const approved = validateV1RepairSafety({
+    apply: true,
+    environmentName: "production",
+    fundedAccountId: "ACG-1",
+    allowProduction: true,
+  });
+  assert.equal(approved.targeted, true);
+  assert.equal(approved.production, true);
+  assert.equal(approved.allowProduction, true);
 });

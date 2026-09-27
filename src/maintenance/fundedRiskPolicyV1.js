@@ -12,12 +12,29 @@ export async function auditAndMigrateFundedRiskPolicyV1({
   accountModel = Account,
   connector = getTradingConnector("acg-trader"),
   apply = false,
+  fundedAccountId = null,
+  platformAccountId = null,
 } = {}) {
   const accounts = await accountModel.find({ platform: "acg-trader" })
     .select("accountId status currentPhase platformAccountId platformAccounts")
     .lean();
 
-  const targets = collectTraderTargets(accounts);
+  let targets = collectTraderTargets(accounts);
+
+  const exactFundedAccountId = optionalSelector(fundedAccountId);
+  const exactPlatformAccountId = optionalSelector(platformAccountId);
+  if (exactFundedAccountId && exactPlatformAccountId) {
+    const error = new Error("Use only one exact V1 repair selector: fundedAccountId or platformAccountId.");
+    error.code = "ACG_FUNDED_V1_SELECTOR_CONFLICT";
+    throw error;
+  }
+  if (exactFundedAccountId) {
+    targets = targets.filter(target => String(target.fundedAccountId) === exactFundedAccountId);
+  }
+  if (exactPlatformAccountId) {
+    targets = targets.filter(target => String(target.platformAccountId) === exactPlatformAccountId);
+  }
+
   const records = [];
 
   for (const target of targets) {
@@ -59,6 +76,8 @@ export async function auditAndMigrateFundedRiskPolicyV1({
   return {
     version: ACG_FUNDED_RISK_POLICY_V1_VERSION,
     apply,
+    fundedAccountId: exactFundedAccountId,
+    platformAccountId: exactPlatformAccountId,
     summary: summarize(records),
     records,
   };
@@ -177,6 +196,56 @@ function summarize(records) {
     accountsWithOpenPositionsWithoutStopLoss: records.filter(record => record.openWithoutStopLoss?.length).length,
     openPositionsWithoutStopLoss: records.reduce((sum, record) => sum + Number(record.openWithoutStopLoss?.length || 0), 0),
   };
+}
+
+export function validateV1RepairSafety({
+  apply = false,
+  fundedAccountId = null,
+  platformAccountId = null,
+  allowProduction = false,
+  environmentName = "unknown",
+} = {}) {
+  const funded = optionalSelector(fundedAccountId);
+  const platform = optionalSelector(platformAccountId);
+
+  if (funded && platform) {
+    const error = new Error("Use only one exact V1 repair selector: --funded-account-id or --platform-account-id.");
+    error.code = "ACG_FUNDED_V1_SELECTOR_CONFLICT";
+    throw error;
+  }
+
+  const targeted = Boolean(funded || platform);
+  const normalizedEnvironment = String(environmentName || "unknown").trim().toLowerCase();
+  const production = normalizedEnvironment === "production"
+    || normalizedEnvironment === "prod"
+    || normalizedEnvironment.startsWith("production-");
+
+  if (apply && !targeted) {
+    const error = new Error("V1 repair apply requires an exact account selector.");
+    error.code = "ACG_FUNDED_V1_APPLY_REQUIRES_TARGET";
+    throw error;
+  }
+
+  if (apply && production && allowProduction !== true) {
+    const error = new Error("V1 repair apply is blocked in production without --allow-production.");
+    error.code = "ACG_FUNDED_V1_PRODUCTION_APPLY_BLOCKED";
+    throw error;
+  }
+
+  return {
+    apply: Boolean(apply),
+    fundedAccountId: funded,
+    platformAccountId: platform,
+    targeted,
+    allowProduction: allowProduction === true,
+    environmentName: normalizedEnvironment,
+    production,
+  };
+}
+
+function optionalSelector(value) {
+  const result = String(value || "").trim();
+  return result || null;
 }
 
 function scalar(value) {
