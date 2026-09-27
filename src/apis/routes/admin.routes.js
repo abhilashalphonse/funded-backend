@@ -22,6 +22,14 @@ import {
   blockCustomerTradingAccounts,
   reactivateCustomerTradingAccounts,
 } from "../services/customerTradingAccess.service.js";
+import {
+  cleanupAcceptanceRun,
+  createAcceptanceFixture,
+  executeAcceptanceRun,
+  getAcceptanceRun,
+  listAcceptanceRuns,
+  preflightAcceptanceRun,
+} from "../../maintenance/adminLaunchReadiness.js";
 
 const router = Router();
 router.use(requireAdmin);
@@ -668,6 +676,104 @@ router.post("/support/:conversationId/close", async (req, res, next) => {
       after: { status: conversation.status, handoffReason: conversation.handoffReason },
     });
     res.json({ success: true, data: { conversationId: conversation.conversationId, status: conversation.status } });
+  } catch (error) { next(error); }
+});
+
+router.get("/launch-readiness", async (req, res, next) => {
+  try {
+    const rows = await listAcceptanceRuns({ limit: req.query.limit });
+    res.json({ success: true, data: { rows } });
+  } catch (error) { next(error); }
+});
+
+router.get("/launch-readiness/:runId", async (req, res, next) => {
+  try {
+    const run = await getAcceptanceRun(req.params.runId);
+    res.json({ success: true, data: run });
+  } catch (error) { next(error); }
+});
+
+router.post("/launch-readiness/fixtures", async (req, res, next) => {
+  try {
+    const run = await createAcceptanceFixture({
+      createdBy: req.admin.email,
+      symbol: req.body?.symbol,
+      volume: req.body?.volume,
+    });
+
+    await writeAudit(req, {
+      action: "ACCEPTANCE_FIXTURE_CREATED",
+      entityType: "ACCEPTANCE_RUN",
+      entityId: run.runId,
+      reason: "Created dedicated launch-readiness fixture",
+      before: null,
+      after: {
+        status: run.status,
+        customerId: run.fixture?.customerId,
+        challengeAId: run.fixture?.challengeAId,
+        challengeBId: run.fixture?.challengeBId,
+        symbol: run.symbol,
+        volume: run.volume,
+      },
+    });
+
+    res.status(201).json({ success: true, data: run });
+  } catch (error) { next(error); }
+});
+
+router.post("/launch-readiness/:runId/preflight", async (req, res, next) => {
+  try {
+    const result = await preflightAcceptanceRun(req.params.runId);
+    res.json({ success: true, data: result });
+  } catch (error) { next(error); }
+});
+
+router.post("/launch-readiness/:runId/run", async (req, res, next) => {
+  try {
+    const authorization = String(req.headers.authorization || "");
+    const adminBearer = authorization.toLowerCase().startsWith("bearer ")
+      ? authorization.slice(7).trim()
+      : "";
+    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+    const protocol = forwardedProto || req.protocol || "https";
+    const fundedBaseUrl = `${protocol}://${req.get("host")}`;
+
+    const run = await executeAcceptanceRun(req.params.runId, {
+      confirmation: req.body?.confirmation,
+      reason: req.body?.reason,
+      adminBearer,
+      fundedBaseUrl,
+    });
+
+    await writeAudit(req, {
+      action: "ACCEPTANCE_RUN_EXECUTED",
+      entityType: "ACCEPTANCE_RUN",
+      entityId: run.runId,
+      reason: String(req.body?.reason || "").trim(),
+      before: { status: "READY" },
+      after: { status: run.status, summary: run.report?.summary || null },
+    });
+
+    res.json({ success: true, data: run });
+  } catch (error) { next(error); }
+});
+
+router.post("/launch-readiness/:runId/cleanup", async (req, res, next) => {
+  try {
+    const reason = String(req.body?.reason || "").trim();
+    const before = await getAcceptanceRun(req.params.runId);
+    const run = await cleanupAcceptanceRun(req.params.runId, { reason });
+
+    await writeAudit(req, {
+      action: "ACCEPTANCE_FIXTURE_CLEANED",
+      entityType: "ACCEPTANCE_RUN",
+      entityId: run.runId,
+      reason,
+      before: { status: before.status },
+      after: { status: run.status, cleanupError: run.error || null },
+    });
+
+    res.json({ success: true, data: run });
   } catch (error) { next(error); }
 });
 
