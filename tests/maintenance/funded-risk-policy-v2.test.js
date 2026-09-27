@@ -395,3 +395,88 @@ test("migration snapshots verify unchanged financial state, positions and pendin
 test("default rollout id remains stable for resumable staging runs", () => {
   assert.equal(ACG_FUNDED_V2_MIGRATION_ID, "ACG_FUNDED_V2_ROLLOUT_2026_09");
 });
+
+
+test("exact platform selector audits only the requested Trader account", async () => {
+  const rows = [
+    fundedRow({ accountId: "CH-1", platformAccountId: "trader-1" }),
+    fundedRow({ accountId: "CH-2", platformAccountId: "trader-2" }),
+  ];
+  const seen = [];
+  const connector = {
+    async adminObservability({ platformAccountId }) {
+      seen.push(platformAccountId);
+      return observability();
+    },
+    async transitionRiskPolicy() {
+      throw new Error("dry run must not transition");
+    },
+  };
+
+  const result = await auditAndMigrateFundedRiskPolicyV2({
+    accountModel: accountModel(rows),
+    connector,
+    apply: false,
+    migrationId: "staging-targeted",
+    platformAccountId: "trader-2",
+  });
+
+  assert.deepEqual(seen, ["trader-2"]);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].platformAccountId, "trader-2");
+  assert.equal(result.platformAccountId, "trader-2");
+  assert.equal(result.fundedAccountId, null);
+});
+
+test("exact funded selector audits every Trader account belonging to that funded lifecycle only", async () => {
+  const rows = [
+    fundedRow({ accountId: "CH-1", platformAccountId: "trader-1" }),
+    fundedRow({ accountId: "CH-2", platformAccountId: "trader-2" }),
+  ];
+  const seen = [];
+  const connector = {
+    async adminObservability({ platformAccountId }) {
+      seen.push(platformAccountId);
+      return observability();
+    },
+    async transitionRiskPolicy() {
+      throw new Error("dry run must not transition");
+    },
+  };
+
+  const result = await auditAndMigrateFundedRiskPolicyV2({
+    accountModel: accountModel(rows),
+    connector,
+    apply: false,
+    migrationId: "staging-funded-target",
+    fundedAccountId: "CH-1",
+  });
+
+  assert.deepEqual(seen, ["trader-1"]);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].fundedAccountId, "CH-1");
+  assert.equal(result.fundedAccountId, "CH-1");
+  assert.equal(result.platformAccountId, null);
+});
+
+test("conflicting exact selectors are rejected before Trader inspection", async () => {
+  let inspected = false;
+  const connector = {
+    async adminObservability() {
+      inspected = true;
+      return observability();
+    },
+  };
+
+  await assert.rejects(
+    () => auditAndMigrateFundedRiskPolicyV2({
+      accountModel: accountModel([fundedRow()]),
+      connector,
+      apply: false,
+      fundedAccountId: "ACG-1",
+      platformAccountId: "trader-1",
+    }),
+    error => error?.code === "ACG_FUNDED_V2_SELECTOR_CONFLICT",
+  );
+  assert.equal(inspected, false);
+});
