@@ -735,8 +735,8 @@ export async function executeAcceptanceRun(runIdValue, {
       };
 
       const settled = await Promise.allSettled([
-        ensureDemoAccount(customer, body),
-        ensureDemoAccount(customer, body),
+        ensureDemoAccount(customer, body, { queueCredentialEmail: false }),
+        ensureDemoAccount(customer, body, { queueCredentialEmail: false }),
       ]);
       const successes = settled.filter(item => item.status === "fulfilled");
       const conflicts = settled.filter(item =>
