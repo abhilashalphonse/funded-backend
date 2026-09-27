@@ -682,7 +682,15 @@ router.post("/support/:conversationId/close", async (req, res, next) => {
 router.get("/launch-readiness", async (req, res, next) => {
   try {
     const rows = await listAcceptanceRuns({ limit: req.query.limit });
-    res.json({ success: true, data: { rows } });
+    res.json({
+      success: true,
+      data: {
+        rows,
+        environment: env.NODE_ENV,
+        riskPolicyVersion: env.ACG_FUNDED_RISK_POLICY_VERSION,
+        tradingProvider: env.TRADING_PROVIDER,
+      },
+    });
   } catch (error) { next(error); }
 });
 
