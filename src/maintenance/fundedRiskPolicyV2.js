@@ -27,6 +27,8 @@ export async function auditAndMigrateFundedRiskPolicyV2({
   connector = getTradingConnector("acg-trader"),
   apply = false,
   migrationId = ACG_FUNDED_V2_MIGRATION_ID,
+  fundedAccountId = null,
+  platformAccountId = null,
   afterPlatformAccountId = null,
   limit = null,
 } = {}) {
@@ -37,6 +39,20 @@ export async function auditAndMigrateFundedRiskPolicyV2({
 
   let targets = collectTraderTargets(accounts)
     .sort((left, right) => String(left.platformAccountId).localeCompare(String(right.platformAccountId)));
+
+  const exactFundedAccountId = optionalSelector(fundedAccountId);
+  const exactPlatformAccountId = optionalSelector(platformAccountId);
+  if (exactFundedAccountId && exactPlatformAccountId) {
+    const error = new Error("Use only one exact V2 migration selector: fundedAccountId or platformAccountId.");
+    error.code = "ACG_FUNDED_V2_SELECTOR_CONFLICT";
+    throw error;
+  }
+  if (exactFundedAccountId) {
+    targets = targets.filter(target => String(target.fundedAccountId) === exactFundedAccountId);
+  }
+  if (exactPlatformAccountId) {
+    targets = targets.filter(target => String(target.platformAccountId) === exactPlatformAccountId);
+  }
 
   if (afterPlatformAccountId) {
     const cursor = String(afterPlatformAccountId);
@@ -121,6 +137,8 @@ export async function auditAndMigrateFundedRiskPolicyV2({
     fromVersion: ACG_FUNDED_RISK_POLICY_V1_VERSION,
     migrationId: rolloutId,
     apply,
+    fundedAccountId: exactFundedAccountId,
+    platformAccountId: exactPlatformAccountId,
     afterPlatformAccountId: afterPlatformAccountId || null,
     limit: Number.isInteger(limit) && limit > 0 ? limit : null,
     nextCursor: records.length ? records.at(-1).platformAccountId : null,
@@ -389,6 +407,11 @@ function accountMigrationId(rolloutId, platformAccountId) {
   if (raw.length <= 256) return raw;
   const digest = crypto.createHash("sha256").update(raw).digest("hex").slice(0, 24);
   return `${normalizeMigrationId(rolloutId).slice(0, 220)}:${digest}`;
+}
+
+function optionalSelector(value) {
+  const result = String(value || "").trim();
+  return result || null;
 }
 
 function normalizeMigrationId(value) {
