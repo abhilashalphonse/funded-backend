@@ -386,6 +386,14 @@ async function loadTraderAccount(platformAccountId) {
   return response.body?.account;
 }
 
+async function waitForTraderAccount(platformAccountId, predicate, description) {
+  return poll(
+    () => loadTraderAccount(platformAccountId),
+    account => predicate(account),
+    description,
+  );
+}
+
 async function poll(fn, predicate, description, {
   timeoutMs = RUN_TIMEOUT_MS,
   intervalMs = POLL_MS,
@@ -696,8 +704,11 @@ export async function executeAcceptanceRun(runIdValue, {
   );
   if (!run) {
     const current = await loadRun(runIdValue);
+    const replayHint = current.status === "FAIL"
+      ? " This fixture already executed destructively and cannot be replayed safely; create a fresh fixture."
+      : "";
     throw acceptanceError(
-      `Acceptance run must be READY before execution (current=${current.status}).`,
+      `Acceptance run must be READY before execution (current=${current.status}).${replayHint}`,
       "ACCEPTANCE_RUN_NOT_READY",
       409,
     );
@@ -817,8 +828,12 @@ export async function executeAcceptanceRun(runIdValue, {
         account => String(account?.status || "").toUpperCase() === "PASSED" && account?.enabled === false,
         "Trial PASSED terminal state",
       );
-      const remote = await loadTraderAccount(trial.platformAccountId);
-      assert(["DISABLED", "BREACHED", "CLOSED"].includes(String(remote?.status || "").toUpperCase()), "Passed Trial remained tradable.");
+      const remote = await waitForTraderAccount(
+        trial.platformAccountId,
+        account => ["DISABLED", "BREACHED", "CLOSED"].includes(String(account?.status || "").toUpperCase())
+          && account?.tradingEnabled !== true,
+        "Passed Trial Trader shutdown",
+      );
       let relaunchStatus = 200;
       try {
         await createCustomerTradingLaunch(customer, trial.accountId);
@@ -846,10 +861,18 @@ export async function executeAcceptanceRun(runIdValue, {
         "Challenge A Phase 2 activation",
       );
       state.phase2A = phase2.platformAccountId;
-      const [oldRemote, newRemote] = await Promise.all([loadTraderAccount(p1), loadTraderAccount(state.phase2A)]);
-      assert.equal(String(oldRemote?.status || "").toUpperCase(), "DISABLED", "Superseded Phase 1 was not disabled.");
-      assert.equal(String(newRemote?.status || "").toUpperCase(), "ACTIVE", "Phase 2 Trader account is not ACTIVE.");
-      assert.equal(newRemote?.tradingEnabled, true, "Phase 2 Trader account is not trading-enabled.");
+      const [oldRemote, newRemote] = await Promise.all([
+        waitForTraderAccount(
+          p1,
+          account => String(account?.status || "").toUpperCase() === "DISABLED" && account?.tradingEnabled !== true,
+          "superseded Phase 1 Trader shutdown",
+        ),
+        waitForTraderAccount(
+          state.phase2A,
+          account => String(account?.status || "").toUpperCase() === "ACTIVE" && account?.tradingEnabled === true,
+          "Phase 2 Trader activation",
+        ),
+      ]);
       const oldRejected = await expectTradingRejected(p1, state.traderToken, run, "old-phase1");
       return {
         summary: "Phase 2 is distinct and Phase 1 rejects new exposure.",
@@ -886,8 +909,11 @@ export async function executeAcceptanceRun(runIdValue, {
       const activeSuccessors = activePlatformAccounts(terminal).filter(item => String(item.platformAccountId) !== String(p1));
       assert.equal(activeSuccessors.length, 0, "A successor account remained ACTIVE after breach race.");
       assert.equal(terminal.commandPending, null, "A lifecycle promotion command remained pending after breach.");
-      const remote = await loadTraderAccount(p1);
-      assert.equal(String(remote?.status || "").toUpperCase(), "BREACHED", "Trader did not preserve BREACHED as terminal.");
+      const remote = await waitForTraderAccount(
+        p1,
+        account => String(account?.status || "").toUpperCase() === "BREACHED" && account?.tradingEnabled !== true,
+        "Challenge B Trader terminal breach",
+      );
 
       return {
         summary: "Breach won the transition race; no active successor survived.",
@@ -923,8 +949,11 @@ export async function executeAcceptanceRun(runIdValue, {
       }
       assert.equal(launchStatus, 409, "Funded Review unexpectedly remained launchable.");
 
-      const p2Remote = await loadTraderAccount(p2);
-      assert.equal(String(p2Remote?.status || "").toUpperCase(), "DISABLED", "Completed Phase 2 was not disabled.");
+      const p2Remote = await waitForTraderAccount(
+        p2,
+        account => String(account?.status || "").toUpperCase() === "DISABLED" && account?.tradingEnabled !== true,
+        "Completed Phase 2 Trader shutdown",
+      );
       const sessionAccounts = await traderSession("/v1/auth/accounts", state.traderToken);
       await requireResponse(sessionAccounts, 200, "Funded Review account visibility");
       const visibleMaster = (sessionAccounts.body?.accounts || []).find(item =>
@@ -969,9 +998,11 @@ export async function executeAcceptanceRun(runIdValue, {
       assert.equal(masters.length, 1, "More than one Master platform account was created.");
       assert.equal(activeMasters.length, 1, "Exactly one Master platform account was not ACTIVE.");
       state.masterA = activeMasters[0].platformAccountId;
-      const remote = await loadTraderAccount(state.masterA);
-      assert.equal(String(remote?.status || "").toUpperCase(), "ACTIVE", "Master Trader account is not ACTIVE.");
-      assert.equal(remote?.tradingEnabled, true, "Master Trader account is not trading-enabled.");
+      const remote = await waitForTraderAccount(
+        state.masterA,
+        account => String(account?.status || "").toUpperCase() === "ACTIVE" && account?.tradingEnabled === true,
+        "Master Trader activation",
+      );
 
       return {
         summary: "Double approval serialized into one active Master.",
