@@ -108,7 +108,19 @@ router.get("/overview", async (_req, res, next) => {
         { $group: { _id: null, revenue: { $sum: "$amount" }, count: { $sum: 1 } } },
       ]),
       Payment.countDocuments({ status: { $in: ["FAILED", "EXPIRED", "UNDERPAID"] }, updatedAt: { $gte: day } }),
-      Payment.countDocuments({ status: "PAID", "activation.status": { $in: ["NOT_STARTED", "PENDING", "FAILED"] } }),
+      Payment.countDocuments({
+        status: "PAID",
+        $or: [
+          { "activation.status": { $in: ["NOT_STARTED", "FAILED"] } },
+          {
+            "activation.status": "PENDING",
+            $or: [
+              { "activation.attemptedAt": { $lte: new Date(Date.now() - 5 * 60 * 1000) } },
+              { "activation.attemptedAt": null },
+            ],
+          },
+        ],
+      }),
       SupportConversation.countDocuments({ status: "ESCALATED" }),
       Account.countDocuments({ status: "FUNDED_REVIEW" }),
       getFunnelSummary({ days: 30 }),
@@ -271,7 +283,10 @@ router.get("/challenges", async (req, res, next) => {
     };
     if (req.query.funded === "true") {
       delete filter.accountMode;
-      filter.status = { $in: ["FUNDED_REVIEW", "FUNDED"] };
+      const requestedFundedStatus = String(req.query.status || "").toUpperCase();
+      filter.status = ["FUNDED_REVIEW", "FUNDED"].includes(requestedFundedStatus)
+        ? requestedFundedStatus
+        : { $in: ["FUNDED_REVIEW", "FUNDED"] };
     }
     if (q) {
       const rx = new RegExp(escapeRegex(q), "i");
@@ -526,14 +541,57 @@ async function listPayments(req, res, next) {
   try {
     const { page, limit, skip } = pageOptions(req.query);
     const q = String(req.query.q || "").trim();
+    const statuses = String(req.query.status || "")
+      .split(",")
+      .map(value => value.trim().toUpperCase())
+      .filter(Boolean);
+    const activationStatuses = String(req.query.activationStatus || "")
+      .split(",")
+      .map(value => value.trim().toUpperCase())
+      .filter(Boolean);
     const filter = {
-      ...(req.query.status ? { status: String(req.query.status).toUpperCase() } : {}),
+      ...(statuses.length === 1 ? { status: statuses[0] } : statuses.length > 1 ? { status: { $in: statuses } } : {}),
       ...(req.query.method ? { paymentMethod: String(req.query.method).toUpperCase() } : {}),
+      ...(req.query.provider ? { provider: String(req.query.provider).trim().toLowerCase() } : {}),
+      ...(activationStatuses.length === 1
+        ? { "activation.status": activationStatuses[0] }
+        : activationStatuses.length > 1
+          ? { "activation.status": { $in: activationStatuses } }
+          : {}),
     };
+    const compoundFilters = [];
+
+    const attention = String(req.query.attention || "").toLowerCase();
+    if (attention === "provisioning") {
+      const stalePendingBefore = new Date(Date.now() - 5 * 60 * 1000);
+      filter.status = "PAID";
+      compoundFilters.push({
+        $or: [
+          { "activation.status": { $in: ["NOT_STARTED", "FAILED"] } },
+          {
+            "activation.status": "PENDING",
+            $or: [
+              { "activation.attemptedAt": { $lte: stalePendingBefore } },
+              { "activation.attemptedAt": null },
+            ],
+          },
+        ],
+      });
+    } else if (attention === "failed-today") {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      filter.status = { $in: ["FAILED", "EXPIRED", "UNDERPAID"] };
+      filter.updatedAt = { $gte: day };
+    }
+
     if (q) {
       const rx = new RegExp(escapeRegex(q), "i");
-      filter.$or = [{ orderId: rx }, { email: rx }, { customerId: rx }, { providerPaymentId: rx }, { accountId: rx }];
+      compoundFilters.push({
+        $or: [{ orderId: rx }, { email: rx }, { customerId: rx }, { providerPaymentId: rx }, { accountId: rx }],
+      });
     }
+    if (compoundFilters.length) filter.$and = compoundFilters;
+
     const [rows, total] = await Promise.all([
       Payment.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).select(PAYMENT_ADMIN_FIELDS).lean(),
       Payment.countDocuments(filter),
