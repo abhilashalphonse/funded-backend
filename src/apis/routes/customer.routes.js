@@ -14,6 +14,7 @@ import { getTradingReadiness } from "../services/tradingReadiness.service.js";
 import { recordAnalyticsEvent } from "../services/analytics.service.js";
 import { completeAcademyLesson, getAcademyProgress, viewAcademyLesson } from "../services/academy.service.js";
 import { getCustomerNewsCalendar } from "../services/newsCalendar.service.js";
+import { getCustomerPayoutOverview } from "../services/payout.service.js";
 import { getCustomerTradingCredential, rotateCustomerTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 
@@ -46,6 +47,14 @@ router.get("/accounts/:accountId/trades", async (req, res, next) => {
       from: req.query.from,
       to: req.query.to,
     });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.get("/accounts/:accountId/payout-overview", async (req, res, next) => {
+  try {
+    const data = await getCustomerPayoutOverview(req.customer, req.params.accountId);
     res.setHeader("Cache-Control", "no-store");
     res.json({ success: true, data });
   } catch (error) { next(error); }
