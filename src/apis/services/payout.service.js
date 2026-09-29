@@ -1,5 +1,12 @@
+import { randomUUID } from "node:crypto";
 import Account from "../../accounts/account.model.js";
 import PayoutRequest, { ACTIVE_PAYOUT_STATUSES } from "../../models/payoutRequest.model.js";
+import { usdToInrQuote } from "./paymentProviders/upiFx.service.js";
+import {
+  SUPPORTED_USDT_NETWORKS,
+  encryptPayoutDestination,
+  normalizePayoutDestination,
+} from "./payoutDestination.service.js";
 
 export const PAYOUT_METHODS = Object.freeze([
   Object.freeze({
@@ -23,6 +30,7 @@ export const PAYOUT_METHODS = Object.freeze([
     label: "USDT",
     settlementCurrency: "USDT",
     limits: null,
+    networks: SUPPORTED_USDT_NETWORKS,
   }),
 ]);
 
@@ -270,6 +278,8 @@ function serializePayoutRecord(raw) {
     method: record.method || null,
     settlementCurrency: record.settlementCurrency || null,
     settlementAmount: record.settlementAmount == null ? null : money2(record.settlementAmount),
+    quoteStatus: record.quoteStatus || null,
+    destination: record.destination || null,
     cycle: record.cycle ? {
       key: record.cycle.key || null,
       frequency: record.cycle.frequency || null,
@@ -374,6 +384,7 @@ export function buildPayoutOverview(account, records = [], now = new Date()) {
       label: method.label,
       settlementCurrency: method.settlementCurrency,
       limits: method.limits ? { ...method.limits } : null,
+      networks: method.networks ? [...method.networks] : undefined,
     })),
   };
 }
@@ -439,4 +450,278 @@ export async function getCustomerPayoutHistory(
     accountId: account.accountId,
     items: records.map(serializePayoutRecord),
   };
+}
+
+
+function normalizePayoutAmount(value, availableUsd) {
+  const available = money2(Math.max(0, finiteNumber(availableUsd)));
+  const requested = value === undefined || value === null || value === ""
+    ? available
+    : money2(Number(value));
+
+  if (!Number.isFinite(requested) || requested <= 0) {
+    const error = new Error("Payout amount must be greater than zero.");
+    error.status = 400;
+    error.code = "INVALID_PAYOUT_AMOUNT";
+    throw error;
+  }
+  if (requested > available) {
+    const error = new Error("Payout amount exceeds the currently available payout balance.");
+    error.status = 409;
+    error.code = "PAYOUT_AMOUNT_EXCEEDS_AVAILABLE";
+    error.availableUsd = available;
+    throw error;
+  }
+  return requested;
+}
+
+function normalizeIdempotencyKey(value) {
+  const key = String(value || "").trim();
+  if (!key || key.length < 8 || key.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(key)) {
+    const error = new Error("A valid Idempotency-Key is required for payout requests.");
+    error.status = 400;
+    error.code = "PAYOUT_IDEMPOTENCY_KEY_REQUIRED";
+    throw error;
+  }
+  return key;
+}
+
+function payoutMethod(method) {
+  const id = String(method || "").trim().toUpperCase();
+  const configured = PAYOUT_METHODS.find(item => item.id === id);
+  if (!configured) {
+    const error = new Error("Unsupported payout method.");
+    error.status = 400;
+    error.code = "UNSUPPORTED_PAYOUT_METHOD";
+    throw error;
+  }
+  return configured;
+}
+
+export async function quotePayoutSettlement(
+  method,
+  amountUsd,
+  { fxResolver = usdToInrQuote } = {},
+) {
+  const configured = payoutMethod(method);
+  const amount = money2(amountUsd);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const error = new Error("A valid payout amount is required.");
+    error.status = 400;
+    error.code = "INVALID_PAYOUT_AMOUNT";
+    throw error;
+  }
+
+  if (configured.id === "USDT") {
+    return {
+      method: configured.id,
+      requestedAmountUsd: amount,
+      settlementCurrency: "USDT",
+      settlementAmount: null,
+      fxRate: null,
+      quoteSource: null,
+      quoteDate: null,
+      quoteStatus: "PROVIDER_PENDING",
+      available: true,
+      networks: [...SUPPORTED_USDT_NETWORKS],
+    };
+  }
+
+  const fx = await fxResolver(amount);
+  if (fx?.stale) {
+    const error = new Error("The INR exchange-rate quote is stale. Try again shortly.");
+    error.status = 503;
+    error.code = "PAYOUT_FX_QUOTE_STALE";
+    throw error;
+  }
+
+  const settlementAmount = money2(fx?.amountInr);
+  const quote = {
+    method: configured.id,
+    requestedAmountUsd: amount,
+    settlementCurrency: "INR",
+    settlementAmount,
+    fxRate: Number(fx?.usdToInr) || null,
+    quoteSource: fx?.source || null,
+    quoteDate: fx?.quoteDate || null,
+    quoteStatus: "LOCKED",
+    available: true,
+  };
+
+  if (configured.id === "UPI") {
+    const min = configured.limits.min;
+    const max = configured.limits.max;
+    if (settlementAmount < min || settlementAmount > max) {
+      return {
+        ...quote,
+        available: false,
+        blocker: "UPI_AMOUNT_OUT_OF_RANGE",
+        limits: { ...configured.limits },
+      };
+    }
+  }
+
+  return quote;
+}
+
+async function payoutEligibilityContext(
+  customer,
+  accountId,
+  {
+    accountModel = Account,
+    payoutModel = PayoutRequest,
+    now = () => new Date(),
+  } = {},
+) {
+  const account = await findOwnedAccount(customer, accountId, accountModel);
+  const records = await findPayoutRecords(payoutModel, account.accountId);
+  const at = now();
+  const overview = buildPayoutOverview(account, records, at);
+  return { account, records, overview, at };
+}
+
+function assertRequestEligible(overview) {
+  if (overview?.eligibility?.canRequest) return;
+  const error = new Error("This account is not currently eligible for a payout request.");
+  error.status = 409;
+  error.code = "PAYOUT_NOT_ELIGIBLE";
+  error.blockers = overview?.eligibility?.blockers || [];
+  throw error;
+}
+
+export async function getCustomerPayoutQuote(
+  customer,
+  accountId,
+  input = {},
+  {
+    accountModel = Account,
+    payoutModel = PayoutRequest,
+    now = () => new Date(),
+    fxResolver = usdToInrQuote,
+  } = {},
+) {
+  const { overview } = await payoutEligibilityContext(customer, accountId, {
+    accountModel,
+    payoutModel,
+    now,
+  });
+  assertRequestEligible(overview);
+
+  const amountUsd = normalizePayoutAmount(input.amountUsd, overview.ledger.availableUsd);
+  const quote = await quotePayoutSettlement(input.method, amountUsd, { fxResolver });
+  return {
+    accountId: overview.accountId,
+    availableUsd: overview.ledger.availableUsd,
+    quote,
+  };
+}
+
+export async function createCustomerPayoutRequest(
+  customer,
+  accountId,
+  input = {},
+  {
+    accountModel = Account,
+    payoutModel = PayoutRequest,
+    now = () => new Date(),
+    fxResolver = usdToInrQuote,
+    destinationEncryptor = encryptPayoutDestination,
+    payoutIdFactory = () => `PAYOUT-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`,
+  } = {},
+) {
+  const customerId = String(customer?.customerId || "").trim();
+  if (!customerId) {
+    const error = new Error("A canonical customer identity is required for payouts.");
+    error.status = 409;
+    error.code = "PAYOUT_CUSTOMER_ID_REQUIRED";
+    throw error;
+  }
+
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const existing = await payoutModel.findOne({ customerId, idempotencyKey });
+  if (existing) {
+    return {
+      idempotent: true,
+      payout: serializePayoutRecord(existing),
+    };
+  }
+
+  const { account, overview, at } = await payoutEligibilityContext(customer, accountId, {
+    accountModel,
+    payoutModel,
+    now,
+  });
+  assertRequestEligible(overview);
+
+  const amountUsd = normalizePayoutAmount(input.amountUsd, overview.ledger.availableUsd);
+  const quote = await quotePayoutSettlement(input.method, amountUsd, { fxResolver });
+  if (!quote.available) {
+    const error = new Error("The selected payout method is not available for this amount.");
+    error.status = 409;
+    error.code = quote.blocker || "PAYOUT_METHOD_UNAVAILABLE";
+    error.quote = quote;
+    throw error;
+  }
+
+  const destination = normalizePayoutDestination(input.method, input.destination || {});
+  const encrypted = destinationEncryptor(destination.payload);
+  const payoutId = payoutIdFactory();
+
+  const record = {
+    payoutId,
+    customerId,
+    ownerExternalRef: customer?.id || customer?.email || null,
+    accountId: account.accountId,
+    activeKey: account.accountId,
+    idempotencyKey,
+    status: "REQUESTED",
+    cycle: {
+      key: overview.cycle.currentCycleKey,
+      frequency: overview.cycle.frequency,
+      anchorAt: overview.cycle.anchorAt,
+      eligibleAt: overview.cycle.currentCycleEligibleAt,
+    },
+    snapshot: {
+      realizedProfitUsd: overview.performance.realizedProfitUsd,
+      profitSplitPercent: overview.commercialTerms.profitSplitPercent,
+      entitlementUsd: overview.performance.estimatedTraderShareUsd,
+      previouslyPaidUsd: overview.ledger.lifetimePaidUsd,
+      previouslyReservedUsd: overview.ledger.activeReservedUsd,
+      availableBeforeRequestUsd: overview.ledger.availableUsd,
+    },
+    requestedAmountUsd: amountUsd,
+    method: quote.method,
+    settlementCurrency: quote.settlementCurrency,
+    settlementAmount: quote.settlementAmount,
+    fxRate: quote.fxRate,
+    quoteSource: quote.quoteSource,
+    quoteDate: quote.quoteDate,
+    quoteStatus: quote.quoteStatus,
+    destination: destination.masked,
+    ...encrypted,
+    requestedAt: at,
+  };
+
+  try {
+    const created = await payoutModel.create(record);
+    return {
+      idempotent: false,
+      payout: serializePayoutRecord(created),
+    };
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+
+    const duplicate = await payoutModel.findOne({ customerId, idempotencyKey });
+    if (duplicate) {
+      return {
+        idempotent: true,
+        payout: serializePayoutRecord(duplicate),
+      };
+    }
+
+    const conflict = new Error("A payout request is already in progress for this account.");
+    conflict.status = 409;
+    conflict.code = "PAYOUT_ALREADY_IN_PROGRESS";
+    throw conflict;
+  }
 }
