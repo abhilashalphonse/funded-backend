@@ -8,6 +8,7 @@ import customerRoutes from "./apis/routes/customer.routes.js";
 import analyticsRoutes from "./apis/routes/analytics.routes.js";
 import supportRoutes from "./apis/routes/support.routes.js";
 import resendWebhookRoutes from "./apis/routes/resendWebhook.routes.js";
+import sunpayPayoutWebhookRoutes from "./apis/routes/sunpayPayoutWebhook.routes.js";
 import adminRoutes from "./apis/routes/admin.routes.js";
 import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
@@ -37,6 +38,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use("/api/webhooks/resend", express.raw({ type: "application/json", limit: "256kb" }), resendWebhookRoutes);
+app.use("/api/webhooks/payouts/sunpay", express.raw({ type: "application/json", limit: "64kb" }), sunpayPayoutWebhookRoutes);
 app.use(express.json({
   limit: "128kb",
   verify(req, _res, buffer) {
