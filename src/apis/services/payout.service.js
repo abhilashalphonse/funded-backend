@@ -431,10 +431,12 @@ async function findOwnedAccount(customer, accountId, accountModel) {
   return account;
 }
 
-async function findPayoutRecords(payoutModel, accountId, limit = 100) {
+async function findPayoutRecords(payoutModel, accountId, limit = null) {
   let query = payoutModel.find({ accountId: String(accountId) });
   if (typeof query?.sort === "function") query = query.sort({ createdAt: -1 });
-  if (typeof query?.limit === "function") query = query.limit(limit);
+  if (Number.isFinite(Number(limit)) && Number(limit) > 0 && typeof query?.limit === "function") {
+    query = query.limit(Number(limit));
+  }
   if (typeof query?.lean === "function") query = query.lean();
   const records = await query;
   return Array.isArray(records) ? records : [];
@@ -463,7 +465,7 @@ export async function getCustomerPayoutHistory(
   } = {},
 ) {
   const account = await findOwnedAccount(customer, accountId, accountModel);
-  const records = await findPayoutRecords(payoutModel, account.accountId);
+  const records = await findPayoutRecords(payoutModel, account.accountId, 100);
   return {
     accountId: account.accountId,
     items: records.map(serializePayoutRecord),
