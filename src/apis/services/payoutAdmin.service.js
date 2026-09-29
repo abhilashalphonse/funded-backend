@@ -287,11 +287,36 @@ function providerPatch(record, action, input = {}) {
       error.code = "INVALID_PAYOUT_SETTLEMENT_AMOUNT";
       throw error;
     }
-    patch.settlementAmount = money2(settlementAmount);
+
+    const normalizedAmount = money2(settlementAmount);
+    const currentAmount = money2(record?.settlementAmount);
+    if (
+      String(record?.quoteStatus || "").toUpperCase() === "LOCKED"
+      && Number.isFinite(currentAmount)
+      && normalizedAmount !== currentAmount
+    ) {
+      const error = new Error("The quoted payout settlement amount is locked and cannot be changed.");
+      error.status = 409;
+      error.code = "PAYOUT_SETTLEMENT_IMMUTABLE";
+      throw error;
+    }
+    patch.settlementAmount = normalizedAmount;
   }
 
   if (input.settlementCurrency) {
-    patch.settlementCurrency = String(input.settlementCurrency).trim().toUpperCase();
+    const normalizedCurrency = String(input.settlementCurrency).trim().toUpperCase();
+    const currentCurrency = String(record?.settlementCurrency || "").trim().toUpperCase();
+    if (
+      String(record?.quoteStatus || "").toUpperCase() === "LOCKED"
+      && currentCurrency
+      && normalizedCurrency !== currentCurrency
+    ) {
+      const error = new Error("The quoted payout settlement currency is locked and cannot be changed.");
+      error.status = 409;
+      error.code = "PAYOUT_SETTLEMENT_IMMUTABLE";
+      throw error;
+    }
+    patch.settlementCurrency = normalizedCurrency;
   }
 
   if (action === "MARK_SENT") {
