@@ -90,6 +90,17 @@ const PayoutRequestSchema = new mongoose.Schema(
 
     provider: { type: String, default: null },
     providerReference: { type: String, default: null, index: true, sparse: true },
+    providerStatus: { type: String, default: null },
+    providerFee: { type: Number, default: null },
+    providerNetAmount: { type: Number, default: null },
+    providerStatusCheckedAt: { type: Date, default: null },
+    providerLastAttemptAt: { type: Date, default: null },
+    providerLastError: {
+      code: { type: String, default: null },
+      message: { type: String, default: null },
+      status: { type: Number, default: null },
+    },
+    providerWebhookAt: { type: Date, default: null },
     utr: { type: String, default: null, index: true, sparse: true },
     txHash: { type: String, default: null, index: true, sparse: true },
     network: { type: String, default: null },
