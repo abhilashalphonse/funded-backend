@@ -1,0 +1,297 @@
+import PayoutRequest from "../../models/payoutRequest.model.js";
+import { decryptPayoutDestination } from "./payoutDestination.service.js";
+
+const ACTIONS = Object.freeze({
+  START_REVIEW: { from: ["REQUESTED"], to: "REVIEWING", timestamp: "reviewingAt" },
+  APPROVE: { from: ["REQUESTED", "REVIEWING"], to: "APPROVED", timestamp: "approvedAt" },
+  MARK_PROCESSING: { from: ["APPROVED"], to: "PROCESSING", timestamp: "processingAt" },
+  MARK_SENT: { from: ["PROCESSING"], to: "SENT", timestamp: "sentAt" },
+  MARK_PAID: { from: ["SENT"], to: "PAID", timestamp: "paidAt", terminal: true },
+  REJECT: { from: ["REQUESTED", "REVIEWING"], to: "REJECTED", timestamp: "rejectedAt", terminal: true },
+  FAIL: { from: ["APPROVED", "PROCESSING", "SENT"], to: "FAILED", timestamp: "failedAt", terminal: true },
+  CANCEL: { from: ["REQUESTED", "REVIEWING"], to: "CANCELLED", timestamp: "cancelledAt", terminal: true },
+});
+
+function escapeRegex(value = "") {
+  return String(value).replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
+}
+
+function money2(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.round((number + Number.EPSILON) * 100) / 100;
+}
+
+function plain(record) {
+  if (!record) return null;
+  return typeof record.toObject === "function" ? record.toObject() : record;
+}
+
+export function serializeAdminPayout(raw) {
+  const record = plain(raw) || {};
+  return {
+    id: record._id ? String(record._id) : null,
+    payoutId: record.payoutId || null,
+    customerId: record.customerId || null,
+    accountId: record.accountId || null,
+    status: record.status || null,
+    requestedAmountUsd: money2(record.requestedAmountUsd),
+    method: record.method || null,
+    settlementCurrency: record.settlementCurrency || null,
+    settlementAmount: record.settlementAmount == null ? null : money2(record.settlementAmount),
+    fxRate: record.fxRate == null ? null : Number(record.fxRate),
+    quoteSource: record.quoteSource || null,
+    quoteDate: record.quoteDate || null,
+    quoteStatus: record.quoteStatus || null,
+    destination: record.destination || null,
+    cycle: record.cycle || null,
+    snapshot: record.snapshot || null,
+    provider: record.provider || null,
+    providerReference: record.providerReference || null,
+    utr: record.utr || null,
+    txHash: record.txHash || null,
+    network: record.network || null,
+    failure: record.failure?.code || record.failure?.message ? record.failure : null,
+    requestedAt: record.requestedAt || record.createdAt || null,
+    reviewingAt: record.reviewingAt || null,
+    approvedAt: record.approvedAt || null,
+    processingAt: record.processingAt || null,
+    sentAt: record.sentAt || null,
+    paidAt: record.paidAt || null,
+    failedAt: record.failedAt || null,
+    rejectedAt: record.rejectedAt || null,
+    cancelledAt: record.cancelledAt || null,
+    createdAt: record.createdAt || null,
+    updatedAt: record.updatedAt || null,
+  };
+}
+
+export async function listAdminPayouts(
+  {
+    page = 1,
+    limit = 50,
+    q = "",
+    status = "",
+    method = "",
+  } = {},
+  { payoutModel = PayoutRequest } = {},
+) {
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 250);
+  const filter = {};
+
+  const normalizedStatus = String(status || "").trim().toUpperCase();
+  if (normalizedStatus) filter.status = normalizedStatus;
+
+  const normalizedMethod = String(method || "").trim().toUpperCase();
+  if (normalizedMethod) filter.method = normalizedMethod;
+
+  const search = String(q || "").trim();
+  if (search) {
+    const rx = new RegExp(escapeRegex(search), "i");
+    filter.$or = [
+      { payoutId: rx },
+      { customerId: rx },
+      { accountId: rx },
+      { providerReference: rx },
+      { utr: rx },
+      { txHash: rx },
+    ];
+  }
+
+  const skip = (safePage - 1) * safeLimit;
+  const [rows, total] = await Promise.all([
+    payoutModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(safeLimit).lean(),
+    payoutModel.countDocuments(filter),
+  ]);
+
+  return {
+    rows: rows.map(serializeAdminPayout),
+    pagination: {
+      page: safePage,
+      limit: safeLimit,
+      total,
+      pages: Math.max(1, Math.ceil(total / safeLimit)),
+    },
+  };
+}
+
+export async function getAdminPayout(
+  payoutId,
+  {
+    payoutModel = PayoutRequest,
+    destinationDecryptor = decryptPayoutDestination,
+  } = {},
+) {
+  const id = String(payoutId || "").trim();
+  let query = payoutModel.findOne({ payoutId: id });
+  if (typeof query?.select === "function") {
+    query = query.select("+destinationEncrypted +destinationIv +destinationAuthTag +destinationKeyVersion");
+  }
+  const record = await query;
+  if (!record) {
+    const error = new Error("Payout not found.");
+    error.status = 404;
+    error.code = "PAYOUT_NOT_FOUND";
+    throw error;
+  }
+
+  let destinationDetails = null;
+  let destinationError = null;
+  try {
+    destinationDetails = destinationDecryptor(record);
+  } catch (error) {
+    destinationError = {
+      code: error?.code || "PAYOUT_DESTINATION_UNAVAILABLE",
+      message: String(error?.message || "Payout destination could not be decrypted."),
+    };
+  }
+
+  return {
+    payout: serializeAdminPayout(record),
+    destinationDetails,
+    destinationError,
+  };
+}
+
+function normalizeTransitionInput(input = {}) {
+  const action = String(input.action || "").trim().toUpperCase();
+  const definition = ACTIONS[action];
+  if (!definition) {
+    const error = new Error("Unsupported payout action.");
+    error.status = 400;
+    error.code = "UNSUPPORTED_PAYOUT_ACTION";
+    throw error;
+  }
+
+  const reason = String(input.reason || "").trim();
+  if (!reason) {
+    const error = new Error("A reason is required for payout actions.");
+    error.status = 400;
+    error.code = "PAYOUT_ACTION_REASON_REQUIRED";
+    throw error;
+  }
+
+  return { action, definition, reason };
+}
+
+function providerPatch(record, action, input = {}) {
+  const patch = {};
+  const provider = String(input.provider || "").trim();
+  const providerReference = String(input.providerReference || "").trim();
+  const utr = String(input.utr || "").trim();
+  const txHash = String(input.txHash || "").trim();
+  const network = String(input.network || "").trim().toUpperCase();
+
+  if (provider) patch.provider = provider;
+  if (providerReference) patch.providerReference = providerReference;
+  if (utr) patch.utr = utr;
+  if (txHash) patch.txHash = txHash;
+  if (network) patch.network = network;
+
+  if (input.settlementAmount !== undefined && input.settlementAmount !== null && input.settlementAmount !== "") {
+    const settlementAmount = Number(input.settlementAmount);
+    if (!Number.isFinite(settlementAmount) || settlementAmount <= 0) {
+      const error = new Error("Settlement amount must be greater than zero.");
+      error.status = 400;
+      error.code = "INVALID_PAYOUT_SETTLEMENT_AMOUNT";
+      throw error;
+    }
+    patch.settlementAmount = money2(settlementAmount);
+  }
+
+  if (input.settlementCurrency) {
+    patch.settlementCurrency = String(input.settlementCurrency).trim().toUpperCase();
+  }
+
+  if (action === "MARK_SENT") {
+    const method = String(record?.method || "").toUpperCase();
+    const effectiveTxHash = txHash || record?.txHash;
+    const effectiveReference = providerReference || utr || record?.providerReference || record?.utr;
+
+    if (method === "USDT" && !effectiveTxHash) {
+      const error = new Error("A transaction hash is required before a USDT payout can be marked sent.");
+      error.status = 400;
+      error.code = "PAYOUT_TX_HASH_REQUIRED";
+      throw error;
+    }
+    if (["UPI", "BANK"].includes(method) && !effectiveReference) {
+      const error = new Error("A provider reference or UTR is required before this payout can be marked sent.");
+      error.status = 400;
+      error.code = "PAYOUT_TRANSFER_REFERENCE_REQUIRED";
+      throw error;
+    }
+  }
+
+  return patch;
+}
+
+export async function transitionAdminPayout(
+  payoutId,
+  input = {},
+  {
+    payoutModel = PayoutRequest,
+    now = () => new Date(),
+  } = {},
+) {
+  const { action, definition, reason } = normalizeTransitionInput(input);
+  const id = String(payoutId || "").trim();
+  const current = await payoutModel.findOne({ payoutId: id });
+  if (!current) {
+    const error = new Error("Payout not found.");
+    error.status = 404;
+    error.code = "PAYOUT_NOT_FOUND";
+    throw error;
+  }
+
+  const currentStatus = String(current.status || "").toUpperCase();
+  if (!definition.from.includes(currentStatus)) {
+    const error = new Error(`Payout cannot move from ${currentStatus || "UNKNOWN"} using ${action}.`);
+    error.status = 409;
+    error.code = "INVALID_PAYOUT_STATUS_TRANSITION";
+    error.currentStatus = currentStatus;
+    error.allowedStatuses = definition.from;
+    throw error;
+  }
+
+  const at = now();
+  const set = {
+    status: definition.to,
+    [definition.timestamp]: at,
+    ...providerPatch(current, action, input),
+  };
+
+  if (definition.terminal) set.activeKey = null;
+  if (["REJECT", "FAIL", "CANCEL"].includes(action)) {
+    set.failure = {
+      code: input.failureCode
+        ? String(input.failureCode).trim().toUpperCase().slice(0, 80)
+        : `ADMIN_${definition.to}`,
+      message: reason.slice(0, 1000),
+    };
+  } else {
+    set.failure = { code: null, message: null };
+  }
+
+  const updated = await payoutModel.findOneAndUpdate(
+    { payoutId: id, status: { $in: definition.from } },
+    { $set: set },
+    { new: true, runValidators: true },
+  );
+
+  if (!updated) {
+    const error = new Error("Payout changed state while this action was being applied. Refresh and try again.");
+    error.status = 409;
+    error.code = "PAYOUT_STATUS_CHANGED";
+    throw error;
+  }
+
+  return {
+    action,
+    reason,
+    before: serializeAdminPayout(current),
+    after: serializeAdminPayout(updated),
+  };
+}
+
+export { ACTIONS as PAYOUT_ADMIN_ACTIONS };
