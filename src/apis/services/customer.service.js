@@ -123,12 +123,28 @@ export async function getCustomerTradingHistory(
   return {
     accountId: account.accountId,
     timezone: "UTC",
-    items: Array.isArray(result?.items) ? result.items : [],
+    items: Array.isArray(result?.items) ? result.items.map(serializeCustomerTrade) : [],
     page: {
       limit: Number(result?.page?.limit || normalized.limit),
       hasMore: Boolean(result?.page?.hasMore),
       nextCursor: result?.page?.nextCursor || null,
     },
+  };
+}
+
+function serializeCustomerTrade(item = {}) {
+  return {
+    dealId: item.dealId || null,
+    positionId: item.positionId || null,
+    symbol: item.symbol || null,
+    side: item.side || null,
+    type: item.type || null,
+    volume: item.volume ?? null,
+    price: item.price ?? null,
+    commission: item.commission ?? "0",
+    swap: item.swap ?? "0",
+    realizedPnl: item.realizedPnl ?? "0",
+    executedAt: item.executedAt || null,
   };
 }
 
