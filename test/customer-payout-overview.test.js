@@ -63,6 +63,22 @@ test("trial payout overview is preview-only and uses realized profit projection"
   assert.ok(overview.eligibility.blockers.includes("MASTER_ACCOUNT_REQUIRED"));
 });
 
+test("trial without commercial terms uses a clearly illustrative 80 percent preview split", () => {
+  const overview = buildPayoutOverview({
+    ...baseAccount,
+    accountMode: "DEMO",
+    status: "ACTIVE",
+    commercialTerms: undefined,
+    projections: { profit: 1000 },
+  });
+
+  assert.equal(overview.commercialTerms.profitSplitPercent, 80);
+  assert.equal(overview.commercialTerms.profitSplitSource, "ILLUSTRATIVE_DEFAULT");
+  assert.equal(overview.performance.estimatedTraderShareUsd, 800);
+  assert.equal(overview.eligibility.canRequest, false);
+  assert.ok(overview.eligibility.blockers.includes("MASTER_ACCOUNT_REQUIRED"));
+});
+
 test("challenge payout overview is a journey and never marks evaluation profit withdrawable", () => {
   const overview = buildPayoutOverview(baseAccount);
 
