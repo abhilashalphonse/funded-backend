@@ -14,7 +14,12 @@ import { getTradingReadiness } from "../services/tradingReadiness.service.js";
 import { recordAnalyticsEvent } from "../services/analytics.service.js";
 import { completeAcademyLesson, getAcademyProgress, viewAcademyLesson } from "../services/academy.service.js";
 import { getCustomerNewsCalendar } from "../services/newsCalendar.service.js";
-import { getCustomerPayoutHistory, getCustomerPayoutOverview } from "../services/payout.service.js";
+import {
+  createCustomerPayoutRequest,
+  getCustomerPayoutHistory,
+  getCustomerPayoutOverview,
+  getCustomerPayoutQuote,
+} from "../services/payout.service.js";
 import { getCustomerTradingCredential, rotateCustomerTradingCredential } from "../../trading-credentials/trading-credential.service.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 
@@ -65,6 +70,30 @@ router.get("/accounts/:accountId/payouts", async (req, res, next) => {
     const data = await getCustomerPayoutHistory(req.customer, req.params.accountId);
     res.setHeader("Cache-Control", "no-store");
     res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/accounts/:accountId/payout-quote", async (req, res, next) => {
+  try {
+    const data = await getCustomerPayoutQuote(req.customer, req.params.accountId, {
+      amountUsd: req.body?.amountUsd,
+      method: req.body?.method,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/accounts/:accountId/payouts", async (req, res, next) => {
+  try {
+    const data = await createCustomerPayoutRequest(req.customer, req.params.accountId, {
+      amountUsd: req.body?.amountUsd,
+      method: req.body?.method,
+      destination: req.body?.destination || {},
+      idempotencyKey: req.get("Idempotency-Key") || req.body?.idempotencyKey,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.status(data.idempotent ? 200 : 201).json({ success: true, data });
   } catch (error) { next(error); }
 });
 
