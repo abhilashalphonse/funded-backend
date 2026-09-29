@@ -674,6 +674,9 @@ router.post("/support/:conversationId/reply", async (req, res, next) => {
 
     const conversation = await SupportConversation.findOne({ conversationId: req.params.conversationId });
     if (!conversation) return res.status(404).json({ success: false, message: "Support case not found." });
+    if (conversation.status === "CLOSED") {
+      return res.status(409).json({ success: false, message: "Closed support cases cannot be replied to." });
+    }
 
     let sent = null;
     if (conversation.channel === "EMAIL") {
@@ -713,6 +716,43 @@ router.post("/support/:conversationId/reply", async (req, res, next) => {
     });
 
     res.json({ success: true, data: { conversationId: conversation.conversationId, status: conversation.status, sentEmailId: sent?.id || null } });
+  } catch (error) { next(error); }
+});
+
+router.post("/support/:conversationId/return-to-ai", async (req, res, next) => {
+  try {
+    const conversation = await SupportConversation.findOne({ conversationId: req.params.conversationId });
+    if (!conversation) return res.status(404).json({ success: false, message: "Support case not found." });
+    if (conversation.status === "CLOSED") {
+      return res.status(409).json({ success: false, message: "Closed support cases cannot be returned to AI." });
+    }
+    if (conversation.status !== "ESCALATED") {
+      return res.status(409).json({ success: false, message: "This support case is already handled by AI." });
+    }
+
+    const before = { status: conversation.status, handoffReason: conversation.handoffReason };
+    conversation.status = "OPEN";
+    conversation.handoffReason = null;
+    conversation.lastMessageAt = new Date();
+    await conversation.save();
+
+    await writeAudit(req, {
+      action: "SUPPORT_RETURN_TO_AI",
+      entityType: "SUPPORT_CONVERSATION",
+      entityId: conversation.conversationId,
+      reason: String(req.body?.reason || "Returned to AI by human support").slice(0, 240),
+      before,
+      after: { status: conversation.status, handoffReason: conversation.handoffReason },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        conversationId: conversation.conversationId,
+        status: conversation.status,
+        handler: "AI",
+      },
+    });
   } catch (error) { next(error); }
 });
 
