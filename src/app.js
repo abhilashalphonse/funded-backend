@@ -18,6 +18,9 @@ import { COMMAND_QUEUE_NAME } from "./workers/state-engine/commandQueue.js";
 import { configuredTradingProvider } from "./connectors/trading/registry.js";
 import { provisionTradingAccount } from "./connectors/trading/account-provisioning.js";
 import pgBossRetention from "./maintenance/pgbossRetention.js";
+import { payoutDestinationEncryptionConfigured } from "./apis/services/payoutDestination.service.js";
+import { payoutQuoteConfigured } from "./apis/services/payoutQuote.service.js";
+import { automaticPayoutExecutionAvailable } from "./apis/services/payoutProviders/payoutProvider.registry.js";
 
 const app = express();
 
@@ -69,6 +72,9 @@ app.get("/health", (req, res) => res.json({
   tradingCredentialEmailConfigured: Boolean(process.env.RESEND_API_KEY && process.env.TRADING_EMAIL_FROM),
   rupexConfigured: Boolean(env.RUPEX_BASE_URL && env.RUPEX_API_TOKEN && env.RUPEX_CALLBACK_URL),
   sunpayConfigured: Boolean(env.SUNPAY_BASE_URL && env.SUNPAY_API_KEY && env.SUNPAY_API_SECRET && env.SUNPAY_CALLBACK_URL),
+  payoutDestinationEncryptionConfigured: payoutDestinationEncryptionConfigured(),
+  payoutQuoteSigningConfigured: payoutQuoteConfigured(),
+  payoutAutomationConfigured: automaticPayoutExecutionAvailable(),
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
   localAdminRoutesEnabled: env.ENABLE_LOCAL_ADMIN_ROUTES,
 }));
