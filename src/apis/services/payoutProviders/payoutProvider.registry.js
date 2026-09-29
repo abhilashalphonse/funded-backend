@@ -1,3 +1,4 @@
+import env from "../../../config/env.js";
 import {
   isSunpayPayoutConfigured,
 } from "./sunpayPayout.service.js";
@@ -17,7 +18,7 @@ export const PAYOUT_EXECUTION_PROVIDERS = Object.freeze([
     implemented: true,
     automatic: true,
     methods: Object.freeze(["UPI", "BANK"]),
-    configured: () => isSunpayPayoutConfigured(),
+    configured: () => isSunpayPayoutConfigured() && env.SUNPAY_PAYOUT_FEE_POLICY === "DEDUCT_FROM_PAYOUT",
   }),
   Object.freeze({
     id: "crypto",
@@ -39,6 +40,7 @@ export function listPayoutExecutionProviders() {
       configured,
       automatic: provider.automatic,
       methods: [...provider.methods],
+      feePolicy: provider.id === "sunpay" ? env.SUNPAY_PAYOUT_FEE_POLICY || null : null,
       status: !provider.implemented
         ? "NOT_INTEGRATED"
         : provider.automatic
