@@ -13,6 +13,7 @@ import {
   issuePayoutQuoteToken,
   verifyPayoutQuoteToken,
 } from "../src/apis/services/payoutQuote.service.js";
+import { PAYOUT_PROVIDER_FEE_POLICY } from "../src/apis/services/payoutPolicy.js";
 
 function eligibleMaster(overrides = {}) {
   return {
@@ -292,12 +293,14 @@ test("customer can request a full eligible UPI payout and the sensitive destinat
   assert.equal(result.payout.status, "REQUESTED");
   assert.equal(result.payout.requestedAmountUsd, 160);
   assert.equal(result.payout.settlementAmount, 13280);
+  assert.equal(result.payout.feePolicy, "ACG_COVERS");
   assert.equal(result.payout.destination.destination, "tr***@upi");
   assert.equal(result.payout.destinationEncrypted, undefined);
 
   assert.equal(payoutModel.records.length, 1);
   assert.equal(payoutModel.records[0].activeKey, account.accountId);
   assert.ok(payoutModel.records[0].destinationEncrypted);
+  assert.equal(payoutModel.records[0].feePolicy, PAYOUT_PROVIDER_FEE_POLICY);
   assert.equal(payoutModel.records[0].snapshot.availableBeforeRequestUsd, 160);
 });
 
