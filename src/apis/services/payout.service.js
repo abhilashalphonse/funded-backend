@@ -11,6 +11,7 @@ import {
   issuePayoutQuoteToken,
   verifyPayoutQuoteToken,
 } from "./payoutQuote.service.js";
+import { reconcileSunpayPayout } from "./payoutProviders/payoutExecution.service.js";
 
 export const PAYOUT_METHODS = Object.freeze([
   Object.freeze({
@@ -284,6 +285,11 @@ function serializePayoutRecord(raw) {
     settlementAmount: record.settlementAmount == null ? null : money2(record.settlementAmount),
     quoteStatus: record.quoteStatus || null,
     destination: record.destination || null,
+    provider: record.provider || null,
+    providerStatus: record.providerStatus || null,
+    providerFee: record.providerFee == null ? null : money2(record.providerFee),
+    providerNetAmount: record.providerNetAmount == null ? null : money2(record.providerNetAmount),
+    providerStatusCheckedAt: record.providerStatusCheckedAt || null,
     reference: {
       providerReference: record.providerReference || null,
       utr: record.utr || null,
@@ -452,7 +458,26 @@ export async function getCustomerPayoutOverview(
   } = {},
 ) {
   const account = await findOwnedAccount(customer, accountId, accountModel);
-  const records = await findPayoutRecords(payoutModel, account.accountId);
+  let records = await findPayoutRecords(payoutModel, account.accountId);
+  const activeSunpay = records.find(record =>
+    String(record?.provider || "").toLowerCase() === "sunpay"
+    && ["PROCESSING", "SENT"].includes(String(record?.status || "").toUpperCase())
+  );
+
+  if (activeSunpay) {
+    const checkedAt = validDate(activeSunpay.providerStatusCheckedAt);
+    const ageMs = checkedAt ? now().getTime() - checkedAt.getTime() : Number.POSITIVE_INFINITY;
+    if (ageMs >= 30_000) {
+      try {
+        await reconcileSunpayPayout(activeSunpay.payoutId, { payoutModel, now });
+        records = await findPayoutRecords(payoutModel, account.accountId);
+      } catch {
+        // Tracking stays available from the last durable payout state. Provider
+        // reconciliation failures are recorded on the payout and retried later.
+      }
+    }
+  }
+
   return buildPayoutOverview(account, records, now());
 }
 
