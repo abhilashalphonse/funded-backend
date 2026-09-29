@@ -77,6 +77,7 @@ app.get("/health", (req, res) => res.json({
   payoutDestinationEncryptionConfigured: payoutDestinationEncryptionConfigured(),
   payoutQuoteSigningConfigured: payoutQuoteConfigured(),
   payoutAutomationConfigured: automaticPayoutExecutionAvailable(),
+  sunpayPayoutFeePolicy: env.SUNPAY_PAYOUT_FEE_POLICY || null,
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
   localAdminRoutesEnabled: env.ENABLE_LOCAL_ADMIN_ROUTES,
 }));
