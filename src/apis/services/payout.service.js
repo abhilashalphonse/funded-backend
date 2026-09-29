@@ -12,6 +12,7 @@ import {
   verifyPayoutQuoteToken,
 } from "./payoutQuote.service.js";
 import { reconcileSunpayPayout } from "./payoutProviders/payoutExecution.service.js";
+import { PAYOUT_FEE_POLICY, PAYOUT_PROVIDER_FEE_POLICY } from "./payoutPolicy.js";
 
 export const PAYOUT_METHODS = Object.freeze([
   Object.freeze({
@@ -284,6 +285,7 @@ function serializePayoutRecord(raw) {
     settlementCurrency: record.settlementCurrency || null,
     settlementAmount: record.settlementAmount == null ? null : money2(record.settlementAmount),
     quoteStatus: record.quoteStatus || null,
+    feePolicy: record.feePolicy || PAYOUT_PROVIDER_FEE_POLICY,
     destination: record.destination || null,
     provider: record.provider || null,
     providerStatus: record.providerStatus || null,
@@ -403,6 +405,7 @@ export function buildPayoutOverview(account, records = [], now = new Date()) {
       canRequest,
       blockers,
     },
+    fees: { ...PAYOUT_FEE_POLICY },
     methods: PAYOUT_METHODS.map(method => ({
       id: method.id,
       label: method.label,
@@ -807,6 +810,7 @@ export async function createCustomerPayoutRequest(
       availableBeforeRequestUsd: overview.ledger.availableUsd,
     },
     requestedAmountUsd: amountUsd,
+    feePolicy: PAYOUT_PROVIDER_FEE_POLICY,
     method: configuredMethod.id,
     settlementCurrency: quote.settlementCurrency || configuredMethod.settlementCurrency,
     settlementAmount: quote.settlementAmount == null ? null : money2(quote.settlementAmount),
