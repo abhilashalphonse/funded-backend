@@ -308,7 +308,13 @@ export function buildPayoutOverview(account, records = [], now = new Date()) {
   const stage = accountStage(account);
   const mode = payoutMode(stage);
   const realized = realizedProfitUsd(account);
-  const split = profitSplitPercent(account);
+  const configuredSplit = profitSplitPercent(account);
+  const split = configuredSplit ?? (stage === "TRIAL" ? 80 : null);
+  const profitSplitSource = configuredSplit != null
+    ? "ACCOUNT_TERMS"
+    : stage === "TRIAL"
+      ? "ILLUSTRATIVE_DEFAULT"
+      : null;
   const estimatedShare = split == null ? null : money2(realized * split / 100);
   const cycle = buildPayoutCycle(account, now);
   const ledger = summarizePayoutLedger(records, cycle);
@@ -358,6 +364,7 @@ export function buildPayoutOverview(account, records = [], now = new Date()) {
     asOf: account?.lastPlatformSnapshotAt || account?.updatedAt || null,
     commercialTerms: {
       profitSplitPercent: split,
+      profitSplitSource,
       payoutFrequency: cycle.frequency || account?.commercialTerms?.payoutFrequency || null,
     },
     performance: {
