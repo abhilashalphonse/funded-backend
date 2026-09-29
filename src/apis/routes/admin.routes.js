@@ -653,6 +653,8 @@ router.post("/payouts/:payoutId/action", async (req, res, next) => {
       network: req.body?.network,
       settlementAmount: req.body?.settlementAmount,
       settlementCurrency: req.body?.settlementCurrency,
+      traderReceivedAmount: req.body?.traderReceivedAmount,
+      providerFeePaidByAcg: req.body?.providerFeePaidByAcg,
       failureCode: req.body?.failureCode,
     });
 
