@@ -18,6 +18,11 @@ import { hasCompletedCurrentChallenge, masterApprovalClaimFilter, resetAccountFo
 import { sendSupportEmail, replySubject } from "../../email/resendSupport.service.js";
 import { listUpiGateways, setActiveUpiGateway } from "../services/paymentProviders/upiGateway.registry.js";
 import {
+  getAdminPayout,
+  listAdminPayouts,
+  transitionAdminPayout,
+} from "../services/payoutAdmin.service.js";
+import {
   assertCustomerTradingAccessAllowed,
   blockCustomerTradingAccounts,
   reactivateCustomerTradingAccounts,
@@ -602,6 +607,57 @@ async function listPayments(req, res, next) {
 
 router.get("/orders", listPayments);
 router.get("/payments", listPayments);
+
+router.get("/payouts", async (req, res, next) => {
+  try {
+    const data = await listAdminPayouts({
+      page: req.query.page,
+      limit: req.query.limit,
+      q: req.query.q,
+      status: req.query.status,
+      method: req.query.method,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.get("/payouts/:payoutId", async (req, res, next) => {
+  try {
+    const data = await getAdminPayout(req.params.payoutId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/payouts/:payoutId/action", async (req, res, next) => {
+  try {
+    const result = await transitionAdminPayout(req.params.payoutId, {
+      action: req.body?.action,
+      reason: req.body?.reason,
+      provider: req.body?.provider,
+      providerReference: req.body?.providerReference,
+      utr: req.body?.utr,
+      txHash: req.body?.txHash,
+      network: req.body?.network,
+      settlementAmount: req.body?.settlementAmount,
+      settlementCurrency: req.body?.settlementCurrency,
+      failureCode: req.body?.failureCode,
+    });
+
+    await writeAudit(req, {
+      action: `PAYOUT_${result.action}`,
+      entityType: "PAYOUT",
+      entityId: req.params.payoutId,
+      reason: result.reason,
+      before: result.before,
+      after: result.after,
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data: result.after });
+  } catch (error) { next(error); }
+});
 
 router.post("/payments/:paymentId/retry-activation", async (req, res, next) => {
   try {
