@@ -90,6 +90,7 @@ router.post("/accounts/:accountId/payouts", async (req, res, next) => {
       amountUsd: req.body?.amountUsd,
       method: req.body?.method,
       destination: req.body?.destination || {},
+      quoteId: req.body?.quoteId,
       idempotencyKey: req.get("Idempotency-Key") || req.body?.idempotencyKey,
     });
     res.setHeader("Cache-Control", "no-store");
