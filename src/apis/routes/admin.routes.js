@@ -22,6 +22,12 @@ import {
   listAdminPayouts,
   transitionAdminPayout,
 } from "../services/payoutAdmin.service.js";
+import { payoutDestinationEncryptionConfigured } from "../services/payoutDestination.service.js";
+import { payoutQuoteConfigured } from "../services/payoutQuote.service.js";
+import {
+  automaticPayoutExecutionAvailable,
+  listPayoutExecutionProviders,
+} from "../services/payoutProviders/payoutProvider.registry.js";
 import {
   assertCustomerTradingAccessAllowed,
   blockCustomerTradingAccounts,
@@ -1004,6 +1010,8 @@ router.get("/system", async (_req, res, next) => {
   try {
     const upiGateways = await listUpiGateways();
     const activeUpiGateway = upiGateways.find(item => item.active) || null;
+    const payoutProviders = listPayoutExecutionProviders();
+    const payoutSecurityReady = payoutDestinationEncryptionConfigured() && payoutQuoteConfigured();
     res.json({
       success: true,
       data: {
@@ -1015,13 +1023,21 @@ router.get("/system", async (_req, res, next) => {
           { name: "Rupex", status: upiGateways.find(item => item.id === "rupex")?.status || "NOT_CONFIGURED" },
           { name: "Sunpay", status: upiGateways.find(item => item.id === "sunpay")?.status || "NOT_INTEGRATED" },
           { name: "Support AI", status: env.OPENAI_API_KEY ? "CONFIGURED" : "NOT_CONFIGURED" },
+          { name: "Payout workflow", status: payoutSecurityReady ? "CONFIGURED" : "NOT_CONFIGURED" },
+          { name: "Payout automation", status: automaticPayoutExecutionAvailable() ? "CONFIGURED" : "MANUAL" },
         ],
         upiGateways,
         activeUpiGatewayId: activeUpiGateway?.id || null,
+        payoutProviders,
+        payoutSecurity: {
+          destinationEncryption: payoutDestinationEncryptionConfigured(),
+          signedQuotes: payoutQuoteConfigured(),
+        },
         tradingProvider: env.TRADING_PROVIDER,
         environment: env.NODE_ENV,
         capabilities: {
-          payouts: false,
+          payouts: true,
+          payoutAutomation: automaticPayoutExecutionAvailable(),
           refunds: false,
           challengeProductAdmin: false,
           pricingAdmin: false,
