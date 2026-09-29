@@ -78,6 +78,136 @@ export async function listCustomerAccounts(customer) {
   return accounts.map(serializeCustomerAccount);
 }
 
+export async function getCustomerTradingHistory(
+  customer,
+  accountId,
+  query = {},
+  {
+    accountModel = Account,
+    connectorResolver = getTradingConnector,
+  } = {},
+) {
+  const account = await accountModel.findOne({
+    accountId: String(accountId || "").trim(),
+    ...ownerQuery(customer),
+  });
+
+  if (!account) {
+    const error = new Error("Trading account not found.");
+    error.status = 404;
+    error.code = "TRADING_ACCOUNT_NOT_FOUND";
+    throw error;
+  }
+
+  if (String(account.platform || "").toLowerCase() !== "acg-trader" || !account.platformAccountId) {
+    const error = new Error("Trading history is unavailable for this account.");
+    error.status = 409;
+    error.code = "TRADING_HISTORY_UNAVAILABLE";
+    throw error;
+  }
+
+  const normalized = normalizeTradingHistoryQuery(query);
+  const connector = connectorResolver(account.platform);
+  if (typeof connector?.adminTrades !== "function") {
+    const error = new Error("Trading history is unavailable for this account.");
+    error.status = 409;
+    error.code = "TRADING_HISTORY_UNAVAILABLE";
+    throw error;
+  }
+
+  const result = await connector.adminTrades({
+    accountId: String(account.platformAccountId),
+    ...normalized,
+  });
+
+  return {
+    accountId: account.accountId,
+    timezone: "UTC",
+    items: Array.isArray(result?.items) ? result.items : [],
+    page: {
+      limit: Number(result?.page?.limit || normalized.limit),
+      hasMore: Boolean(result?.page?.hasMore),
+      nextCursor: result?.page?.nextCursor || null,
+    },
+  };
+}
+
+function normalizeTradingHistoryQuery(query = {}) {
+  const normalized = {
+    limit: Math.max(1, Math.min(200, Number.parseInt(query.limit, 10) || 200)),
+  };
+
+  const cursor = String(query.cursor || "").trim();
+  if (cursor) {
+    if (!/^[0-9a-fA-F]{24}$/.test(cursor)) {
+      const error = new Error("Invalid trading-history cursor.");
+      error.status = 400;
+      error.code = "INVALID_TRADING_HISTORY_QUERY";
+      throw error;
+    }
+    normalized.cursor = cursor;
+  }
+
+  const symbol = String(query.symbol || "").trim().toUpperCase();
+  if (symbol) {
+    if (!/^[A-Z0-9._:/-]{1,32}$/.test(symbol)) {
+      const error = new Error("Invalid trading-history symbol.");
+      error.status = 400;
+      error.code = "INVALID_TRADING_HISTORY_QUERY";
+      throw error;
+    }
+    normalized.symbol = symbol;
+  }
+
+  const side = String(query.side || "").trim().toUpperCase();
+  if (side) {
+    if (!["BUY", "SELL"].includes(side)) {
+      const error = new Error("Invalid trading-history side.");
+      error.status = 400;
+      error.code = "INVALID_TRADING_HISTORY_QUERY";
+      throw error;
+    }
+    normalized.side = side;
+  }
+
+  const type = String(query.type || "").trim().toUpperCase();
+  if (type) {
+    if (!/^[A-Z_]{1,32}$/.test(type)) {
+      const error = new Error("Invalid trading-history type.");
+      error.status = 400;
+      error.code = "INVALID_TRADING_HISTORY_QUERY";
+      throw error;
+    }
+    normalized.type = type;
+  }
+
+  const from = normalizeHistoryTimestamp(query.from, "from");
+  const to = normalizeHistoryTimestamp(query.to, "to");
+  if (from) normalized.from = from;
+  if (to) normalized.to = to;
+
+  if (from && to && new Date(from).getTime() > new Date(to).getTime()) {
+    const error = new Error("Trading-history 'from' must be before 'to'.");
+    error.status = 400;
+    error.code = "INVALID_TRADING_HISTORY_QUERY";
+    throw error;
+  }
+
+  return normalized;
+}
+
+function normalizeHistoryTimestamp(value, field) {
+  if (value === undefined || value === null || value === "") return null;
+  const date = new Date(String(value));
+  if (!Number.isFinite(date.getTime())) {
+    const error = new Error(`Invalid trading-history ${field} timestamp.`);
+    error.status = 400;
+    error.code = "INVALID_TRADING_HISTORY_QUERY";
+    throw error;
+  }
+  return date.toISOString();
+}
+
 export async function getCustomerWorkspace(customer) {
   const accounts = await listCustomerAccounts(customer);
   const challenges = accounts.filter(account => account.accountMode !== "DEMO");
