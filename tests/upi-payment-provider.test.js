@@ -6,7 +6,11 @@ import {
   usdToInrQuote,
 } from "../src/apis/services/paymentProviders/upiFx.service.js";
 import { normalizeRupexStatus } from "../src/apis/services/paymentProviders/rupex.service.js";
-import { computeSunpaySignature, normalizeSunpayStatus } from "../src/apis/services/paymentProviders/sunpay.service.js";
+import {
+  createSunpayOrder,
+  computeSunpaySignature,
+  normalizeSunpayStatus,
+} from "../src/apis/services/paymentProviders/sunpay.service.js";
 
 test("normalizes the documented Rupex lifecycle into ACG payment states", () => {
   assert.equal(normalizeRupexStatus("PENDING"), "WAITING");
@@ -59,5 +63,32 @@ test("Sunpay signs the exact raw JSON body with HMAC-SHA256", () => {
   assert.equal(
     computeSunpaySignature(body, "test-secret"),
     "cc356d4e439736a8c245bd2207df27eb334da6cc595cbf9f60594f78649b3b71",
+  );
+});
+
+
+test("Sunpay rejects decimal INR amounts before making a provider request", async () => {
+  await assert.rejects(
+    () => createSunpayOrder({
+      amountInr: 18104.31,
+      orderId: "ACG-DECIMAL",
+      redirectUrl: "https://example.com/callback",
+      customerEmail: "customer@example.com",
+      paymentId: "payment-1",
+    }),
+    error => error?.code === "SUNPAY_WHOLE_INR_REQUIRED",
+  );
+});
+
+test("Sunpay rejects pay-in amounts outside ₹100–₹50,000 before making a provider request", async () => {
+  await assert.rejects(
+    () => createSunpayOrder({
+      amountInr: 50001,
+      orderId: "ACG-HIGH",
+      redirectUrl: "https://example.com/callback",
+      customerEmail: "customer@example.com",
+      paymentId: "payment-2",
+    }),
+    error => error?.code === "SUNPAY_AMOUNT_OUT_OF_RANGE",
   );
 });
