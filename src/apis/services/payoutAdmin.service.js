@@ -1,3 +1,4 @@
+import Account from "../../accounts/account.model.js";
 import PayoutRequest from "../../models/payoutRequest.model.js";
 import { decryptPayoutDestination } from "./payoutDestination.service.js";
 
@@ -154,6 +155,77 @@ export async function getAdminPayout(
   };
 }
 
+export async function assertPayoutApprovalEligible(
+  payout,
+  {
+    accountModel = Account,
+    payoutModel = PayoutRequest,
+  } = {},
+) {
+  const account = await accountModel.findOne({ accountId: String(payout?.accountId || "") });
+  if (!account) {
+    const error = new Error("The Master Account for this payout no longer exists.");
+    error.status = 409;
+    error.code = "PAYOUT_APPROVAL_ACCOUNT_UNAVAILABLE";
+    throw error;
+  }
+
+  if (
+    String(account.status || "").toUpperCase() !== "FUNDED"
+    || account.enabled === false
+    || account.customerAccessBlocked === true
+  ) {
+    const error = new Error("The Master Account is no longer active for payout approval.");
+    error.status = 409;
+    error.code = "PAYOUT_APPROVAL_ACCOUNT_INACTIVE";
+    throw error;
+  }
+
+  const currentSplit = Number(account?.commercialTerms?.profitSplit);
+  const snapshottedSplit = Number(payout?.snapshot?.profitSplitPercent);
+  if (
+    !Number.isFinite(currentSplit)
+    || currentSplit <= 0
+    || !Number.isFinite(snapshottedSplit)
+    || currentSplit !== snapshottedSplit
+  ) {
+    const error = new Error("Profit-split terms changed after this payout was requested.");
+    error.status = 409;
+    error.code = "PAYOUT_APPROVAL_TERMS_CHANGED";
+    throw error;
+  }
+
+  const realizedProfit = Math.max(0, Number(account?.projections?.profit || 0));
+  const entitlement = Math.round((realizedProfit * currentSplit / 100 + Number.EPSILON) * 100) / 100;
+
+  let paidQuery = payoutModel.find({
+    accountId: String(payout.accountId),
+    status: "PAID",
+  });
+  if (typeof paidQuery?.lean === "function") paidQuery = paidQuery.lean();
+  const paidRows = await paidQuery;
+  const alreadyPaid = (Array.isArray(paidRows) ? paidRows : [])
+    .reduce((sum, row) => sum + Math.max(0, Number(row?.requestedAmountUsd || 0)), 0);
+  const remaining = Math.round((Math.max(0, entitlement - alreadyPaid) + Number.EPSILON) * 100) / 100;
+  const requested = Math.round((Math.max(0, Number(payout?.requestedAmountUsd || 0)) + Number.EPSILON) * 100) / 100;
+
+  if (remaining < requested) {
+    const error = new Error("Realized profit changed and no longer covers this payout request.");
+    error.status = 409;
+    error.code = "PAYOUT_APPROVAL_FUNDS_CHANGED";
+    error.availableUsd = remaining;
+    error.requestedUsd = requested;
+    throw error;
+  }
+
+  return {
+    realizedProfitUsd: Math.round((realizedProfit + Number.EPSILON) * 100) / 100,
+    entitlementUsd: entitlement,
+    alreadyPaidUsd: Math.round((alreadyPaid + Number.EPSILON) * 100) / 100,
+    availableForApprovalUsd: remaining,
+  };
+}
+
 function normalizeTransitionInput(input = {}) {
   const action = String(input.action || "").trim().toUpperCase();
   const definition = ACTIONS[action];
@@ -231,6 +303,8 @@ export async function transitionAdminPayout(
   input = {},
   {
     payoutModel = PayoutRequest,
+    accountModel = Account,
+    approvalGuard = assertPayoutApprovalEligible,
     now = () => new Date(),
   } = {},
 ) {
@@ -252,6 +326,10 @@ export async function transitionAdminPayout(
     error.currentStatus = currentStatus;
     error.allowedStatuses = definition.from;
     throw error;
+  }
+
+  if (action === "APPROVE") {
+    await approvalGuard(current, { accountModel, payoutModel });
   }
 
   const at = now();
