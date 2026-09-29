@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import env from "../../../config/env.js";
 
+export const SUNPAY_PAYIN_MIN_INR = 100;
+export const SUNPAY_PAYIN_MAX_INR = 50000;
+
 function baseUrl() {
   return String(env.SUNPAY_BASE_URL || "https://ttpay.business").trim().replace(/\/$/, "");
 }
@@ -58,9 +61,25 @@ export async function createSunpayOrder({
   customerName,
   paymentId,
 }) {
+  const normalizedAmount = Number(amountInr);
+  if (!Number.isInteger(normalizedAmount)) {
+    const error = new Error("Sunpay UPI pay-in amount must be a whole INR value.");
+    error.status = 400;
+    error.code = "SUNPAY_WHOLE_INR_REQUIRED";
+    throw error;
+  }
+  if (normalizedAmount < SUNPAY_PAYIN_MIN_INR || normalizedAmount > SUNPAY_PAYIN_MAX_INR) {
+    const error = new Error(
+      `Sunpay UPI pay-in amount must be between ₹${SUNPAY_PAYIN_MIN_INR} and ₹${SUNPAY_PAYIN_MAX_INR}.`,
+    );
+    error.status = 400;
+    error.code = "SUNPAY_AMOUNT_OUT_OF_RANGE";
+    throw error;
+  }
+
   const payload = {
     order_id: String(orderId),
-    amount: Number(amountInr),
+    amount: normalizedAmount,
     currency: "INR",
     method: "upi",
     notify_url: String(redirectUrl),
