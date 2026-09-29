@@ -289,8 +289,6 @@ function serializePayoutRecord(raw) {
     destination: record.destination || null,
     provider: record.provider || null,
     providerStatus: record.providerStatus || null,
-    providerFee: record.providerFee == null ? null : money2(record.providerFee),
-    providerNetAmount: record.providerNetAmount == null ? null : money2(record.providerNetAmount),
     providerStatusCheckedAt: record.providerStatusCheckedAt || null,
     reference: {
       providerReference: record.providerReference || null,
