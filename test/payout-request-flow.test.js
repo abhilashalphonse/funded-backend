@@ -9,6 +9,10 @@ import {
   normalizePayoutDestination,
   SUPPORTED_USDT_NETWORKS,
 } from "../src/apis/services/payoutDestination.service.js";
+import {
+  issuePayoutQuoteToken,
+  verifyPayoutQuoteToken,
+} from "../src/apis/services/payoutQuote.service.js";
 
 function eligibleMaster(overrides = {}) {
   return {
@@ -86,6 +90,24 @@ const fixedFx = async amountUsd => ({
   quoteDate: "2026-09-29",
 });
 
+
+function quotedUpi160() {
+  return {
+    v: 1,
+    accountId: "MASTER-100",
+    method: "UPI",
+    requestedAmountUsd: 160,
+    settlementCurrency: "INR",
+    settlementAmount: 13280,
+    fxRate: 83,
+    quoteSource: "test-fx",
+    quoteDate: "2026-09-29",
+    quoteStatus: "LOCKED",
+    issuedAt: "2026-09-29T11:55:00.000Z",
+    expiresAt: "2026-09-29T12:05:00.000Z",
+  };
+}
+
 test("UPI quote enforces the ₹100 to ₹20,000 payout range", async () => {
   const small = await quotePayoutSettlement("UPI", 1, {
     fxResolver: async () => ({ amountInr: 83, usdToInr: 83, source: "test", quoteDate: "2026-09-29" }),
@@ -121,6 +143,66 @@ test("USDT quote explicitly waits for provider settlement pricing and exposes TR
   assert.equal(quote.settlementAmount, null);
   assert.equal(quote.quoteStatus, "PROVIDER_PENDING");
   assert.deepEqual(quote.networks, SUPPORTED_USDT_NETWORKS);
+});
+
+test("signed payout quotes preserve the confirmed settlement and expire", () => {
+  const secret = "test-payout-quote-secret-that-is-long-enough-123";
+  const issued = issuePayoutQuoteToken(
+    {
+      accountId: "MASTER-100",
+      method: "UPI",
+      requestedAmountUsd: 160,
+      settlementCurrency: "INR",
+      settlementAmount: 13280,
+      fxRate: 83,
+      quoteSource: "test-fx",
+      quoteDate: "2026-09-29",
+      quoteStatus: "LOCKED",
+    },
+    {
+      now: () => new Date("2026-09-29T12:00:00.000Z"),
+      ttlMs: 10 * 60 * 1000,
+      secret,
+    },
+  );
+
+  const verified = verifyPayoutQuoteToken(issued.quoteId, {
+    now: () => new Date("2026-09-29T12:05:00.000Z"),
+    secret,
+  });
+  assert.equal(verified.settlementAmount, 13280);
+  assert.equal(verified.requestedAmountUsd, 160);
+
+  assert.throws(
+    () => verifyPayoutQuoteToken(issued.quoteId, {
+      now: () => new Date("2026-09-29T12:11:00.000Z"),
+      secret,
+    }),
+    error => error?.code === "PAYOUT_QUOTE_EXPIRED",
+  );
+});
+
+test("customer payout quote returns a signed quote identifier for confirmation", async () => {
+  const account = eligibleMaster({ projections: { profit: 200 } });
+  const result = await getCustomerPayoutQuote(
+    { customerId: "CUS-100" },
+    account.accountId,
+    { method: "UPI", amountUsd: 160 },
+    {
+      accountModel: accountModelWith(account),
+      payoutModel: memoryPayoutModel(),
+      fxResolver: fixedFx,
+      quoteIssuer: payload => ({
+        quoteId: "signed-quote-001",
+        quoteExpiresAt: new Date("2026-09-29T12:10:00.000Z"),
+        payload,
+      }),
+    },
+  );
+
+  assert.equal(result.quote.quoteId, "signed-quote-001");
+  assert.equal(result.quote.settlementAmount, 13280);
+  assert.equal(result.quote.quoteExpiresAt.toISOString(), "2026-09-29T12:10:00.000Z");
 });
 
 test("payout destinations are validated and customer-facing snapshots are masked", () => {
@@ -183,6 +265,7 @@ test("customer can request a full eligible UPI payout and the sensitive destinat
       method: "UPI",
       amountUsd: 160,
       idempotencyKey: "payout-request-0001",
+      quoteId: "signed-quote-0001",
       destination: {
         upiId: "trader@upi",
         beneficiaryName: "Trader One",
@@ -192,7 +275,7 @@ test("customer can request a full eligible UPI payout and the sensitive destinat
       accountModel: accountModelWith(account),
       payoutModel,
       now: () => new Date("2026-09-29T12:00:00.000Z"),
-      fxResolver: fixedFx,
+      quoteVerifier: () => quotedUpi160(),
       destinationEncryptor: payload => ({
         destinationEncrypted: Buffer.from(JSON.stringify(payload)).toString("base64"),
         destinationIv: "test-iv",
@@ -224,7 +307,7 @@ test("replaying the same idempotency key returns the original payout instead of 
     accountModel: accountModelWith(account),
     payoutModel,
     now: () => new Date("2026-09-29T12:00:00.000Z"),
-    fxResolver: fixedFx,
+    quoteVerifier: () => quotedUpi160(),
     destinationEncryptor: () => ({
       destinationEncrypted: "cipher",
       destinationIv: "iv",
@@ -237,6 +320,7 @@ test("replaying the same idempotency key returns the original payout instead of 
     method: "UPI",
     amountUsd: 160,
     idempotencyKey: "payout-request-0002",
+    quoteId: "signed-quote-0002",
     destination: { upiId: "trader@upi", beneficiaryName: "Trader One" },
   };
 
@@ -277,6 +361,35 @@ test("customer payout quote refuses amounts above the payout ledger balance", as
   );
 });
 
+test("payout request rejects a quote whose amount or account no longer matches", async () => {
+  const account = eligibleMaster({ projections: { profit: 200 } });
+
+  await assert.rejects(
+    () => createCustomerPayoutRequest(
+      { customerId: "CUS-100" },
+      account.accountId,
+      {
+        method: "UPI",
+        amountUsd: 160,
+        quoteId: "mismatched-quote",
+        idempotencyKey: "payout-mismatch-0001",
+        destination: { upiId: "trader@upi", beneficiaryName: "Trader One" },
+      },
+      {
+        accountModel: accountModelWith(account),
+        payoutModel: memoryPayoutModel(),
+        quoteVerifier: () => ({ ...quotedUpi160(), requestedAmountUsd: 150 }),
+        destinationEncryptor: () => ({
+          destinationEncrypted: "cipher",
+          destinationIv: "iv",
+          destinationAuthTag: "tag",
+        }),
+      },
+    ),
+    error => error?.code === "PAYOUT_QUOTE_MISMATCH",
+  );
+});
+
 test("an active payout blocks a second payout even with a different idempotency key", async () => {
   const account = eligibleMaster({ projections: { profit: 1000 } });
   const payoutModel = memoryPayoutModel([{
@@ -298,6 +411,7 @@ test("an active payout blocks a second payout even with a different idempotency 
         method: "BANK",
         amountUsd: 100,
         idempotencyKey: "new-request-key",
+        quoteId: "signed-quote-new",
         destination: {
           beneficiaryName: "Trader One",
           accountNumber: "123456789012",
