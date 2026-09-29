@@ -69,11 +69,23 @@ const PayoutRequestSchema = new mongoose.Schema(
     quoteId: { type: String, default: null },
     quoteExpiresAt: { type: Date, default: null },
 
-    // Never expose this object directly to a customer response.
-    destinationSnapshot: {
+    // Customer responses use only this masked snapshot. The full destination
+    // payload is encrypted with AES-256-GCM in the fields below.
+    destination: {
       type: mongoose.Schema.Types.Mixed,
       default: null,
-      select: false,
+    },
+    destinationEncrypted: { type: String, default: null, select: false },
+    destinationIv: { type: String, default: null, select: false },
+    destinationAuthTag: { type: String, default: null, select: false },
+    destinationKeyVersion: { type: String, default: "v1", select: false },
+
+    quoteSource: { type: String, default: null },
+    quoteDate: { type: String, default: null },
+    quoteStatus: {
+      type: String,
+      enum: ["LOCKED", "PROVIDER_PENDING"],
+      default: null,
     },
 
     provider: { type: String, default: null },
