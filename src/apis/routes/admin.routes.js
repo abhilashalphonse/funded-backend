@@ -26,8 +26,13 @@ import { payoutDestinationEncryptionConfigured } from "../services/payoutDestina
 import { payoutQuoteConfigured } from "../services/payoutQuote.service.js";
 import {
   automaticPayoutExecutionAvailable,
+  getAutomaticPayoutProvider,
   listPayoutExecutionProviders,
 } from "../services/payoutProviders/payoutProvider.registry.js";
+import {
+  executeApprovedSunpayPayout,
+  reconcileSunpayPayout,
+} from "../services/payoutProviders/payoutExecution.service.js";
 import {
   assertCustomerTradingAccessAllowed,
   blockCustomerTradingAccounts,
@@ -651,17 +656,102 @@ router.post("/payouts/:payoutId/action", async (req, res, next) => {
       failureCode: req.body?.failureCode,
     });
 
+    let after = result.after;
+    let executionError = null;
+    const automaticProvider = result.action === "APPROVE"
+      ? getAutomaticPayoutProvider(result.after?.method)
+      : null;
+
+    if (automaticProvider?.id === "sunpay") {
+      try {
+        await executeApprovedSunpayPayout(req.params.payoutId);
+        const detail = await getAdminPayout(req.params.payoutId);
+        after = detail.payout;
+      } catch (error) {
+        executionError = {
+          code: error?.code || "PAYOUT_AUTO_EXECUTION_FAILED",
+          message: error?.message || "Automatic payout execution failed.",
+        };
+        const detail = await getAdminPayout(req.params.payoutId).catch(() => null);
+        if (detail?.payout) after = detail.payout;
+
+        await writeAudit(req, {
+          action: "PAYOUT_AUTO_EXECUTION_FAILED",
+          entityType: "PAYOUT",
+          entityId: req.params.payoutId,
+          reason: executionError.message,
+          before: result.after,
+          after,
+        });
+      }
+    }
+
     await writeAudit(req, {
       action: `PAYOUT_${result.action}`,
       entityType: "PAYOUT",
       entityId: req.params.payoutId,
       reason: result.reason,
       before: result.before,
-      after: result.after,
+      after,
     });
 
     res.setHeader("Cache-Control", "no-store");
-    res.json({ success: true, data: result.after });
+    res.json({ success: true, data: { ...after, executionError } });
+  } catch (error) { next(error); }
+});
+
+router.post("/payouts/:payoutId/execute", async (req, res, next) => {
+  try {
+    const reason = String(req.body?.reason || "").trim();
+    if (reason.length < 3) {
+      return res.status(400).json({ success: false, message: "A reason is required to retry payout execution." });
+    }
+
+    const before = (await getAdminPayout(req.params.payoutId)).payout;
+    const provider = getAutomaticPayoutProvider(before?.method);
+    if (provider?.id !== "sunpay") {
+      return res.status(409).json({ success: false, message: "No automatic payout provider is configured for this method." });
+    }
+
+    await executeApprovedSunpayPayout(req.params.payoutId);
+    const after = (await getAdminPayout(req.params.payoutId)).payout;
+
+    await writeAudit(req, {
+      action: "PAYOUT_EXECUTION_RETRY",
+      entityType: "PAYOUT",
+      entityId: req.params.payoutId,
+      reason,
+      before,
+      after,
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data: after });
+  } catch (error) { next(error); }
+});
+
+router.post("/payouts/:payoutId/reconcile", async (req, res, next) => {
+  try {
+    const reason = String(req.body?.reason || "").trim();
+    if (reason.length < 3) {
+      return res.status(400).json({ success: false, message: "A reason is required to verify payout status." });
+    }
+
+    const before = (await getAdminPayout(req.params.payoutId)).payout;
+    await reconcileSunpayPayout(req.params.payoutId);
+    const after = (await getAdminPayout(req.params.payoutId)).payout;
+
+    await writeAudit(req, {
+      action: "PAYOUT_PROVIDER_RECONCILE",
+      entityType: "PAYOUT",
+      entityId: req.params.payoutId,
+      reason,
+      before,
+      after,
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data: after });
   } catch (error) { next(error); }
 });
 
