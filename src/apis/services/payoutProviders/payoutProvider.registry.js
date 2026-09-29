@@ -1,3 +1,7 @@
+import {
+  isSunpayPayoutConfigured,
+} from "./sunpayPayout.service.js";
+
 export const PAYOUT_EXECUTION_PROVIDERS = Object.freeze([
   Object.freeze({
     id: "manual",
@@ -10,10 +14,10 @@ export const PAYOUT_EXECUTION_PROVIDERS = Object.freeze([
   Object.freeze({
     id: "sunpay",
     label: "Sunpay",
-    implemented: false,
+    implemented: true,
     automatic: true,
     methods: Object.freeze(["UPI", "BANK"]),
-    configured: () => false,
+    configured: () => isSunpayPayoutConfigured(),
   }),
   Object.freeze({
     id: "crypto",
@@ -37,11 +41,21 @@ export function listPayoutExecutionProviders() {
       methods: [...provider.methods],
       status: !provider.implemented
         ? "NOT_INTEGRATED"
-        : provider.automatic && configured
-          ? "READY"
+        : provider.automatic
+          ? configured ? "READY" : "NOT_CONFIGURED"
           : "MANUAL",
     };
   });
+}
+
+export function getAutomaticPayoutProvider(method) {
+  const normalizedMethod = String(method || "").trim().toUpperCase();
+  return PAYOUT_EXECUTION_PROVIDERS.find(provider =>
+    provider.automatic
+    && provider.implemented
+    && provider.configured()
+    && provider.methods.includes(normalizedMethod)
+  ) || null;
 }
 
 export function automaticPayoutExecutionAvailable() {
