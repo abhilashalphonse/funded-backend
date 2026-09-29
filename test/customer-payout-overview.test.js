@@ -60,6 +60,8 @@ test("trial payout overview is preview-only and uses realized profit projection"
   assert.equal(overview.performance.realizedProfitUsd, 3420.13);
   assert.equal(overview.performance.estimatedTraderShareUsd, 2736.1);
   assert.equal(overview.eligibility.canRequest, false);
+  assert.equal(overview.fees.providerFeePolicy, "ACG_COVERS");
+  assert.equal(overview.fees.traderPaysProviderFee, false);
   assert.ok(overview.eligibility.blockers.includes("MASTER_ACCOUNT_REQUIRED"));
 });
 
