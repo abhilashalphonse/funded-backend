@@ -64,6 +64,9 @@ const sunpayBaseUrl = String(process.env.SUNPAY_BASE_URL || "https://ttpay.busin
 const sunpayApiKey = String(process.env.SUNPAY_API_KEY || "").trim() || undefined;
 const sunpayApiSecret = String(process.env.SUNPAY_API_SECRET || "").trim() || undefined;
 const sunpayCallbackUrl = String(process.env.SUNPAY_CALLBACK_URL || "").trim() || undefined;
+const sunpayPayoutApiKey = String(process.env.SUNPAY_PAYOUT_API_KEY || "").trim() || undefined;
+const sunpayPayoutApiSecret = String(process.env.SUNPAY_PAYOUT_API_SECRET || "").trim() || undefined;
+const sunpayPayoutCallbackUrl = String(process.env.SUNPAY_PAYOUT_CALLBACK_URL || "").trim() || undefined;
 
 const env = Object.freeze({
   NODE_ENV: nodeEnv,
@@ -133,6 +136,9 @@ const env = Object.freeze({
   SUNPAY_API_KEY: sunpayApiKey,
   SUNPAY_API_SECRET: sunpayApiSecret,
   SUNPAY_CALLBACK_URL: validUrl("SUNPAY_CALLBACK_URL", sunpayCallbackUrl),
+  SUNPAY_PAYOUT_API_KEY: sunpayPayoutApiKey,
+  SUNPAY_PAYOUT_API_SECRET: sunpayPayoutApiSecret,
+  SUNPAY_PAYOUT_CALLBACK_URL: validUrl("SUNPAY_PAYOUT_CALLBACK_URL", sunpayPayoutCallbackUrl),
 
   ENABLE_SIMULATOR_ROUTES: bool("ENABLE_SIMULATOR_ROUTES", !isProduction),
   ENABLE_LOCAL_ADMIN_ROUTES: bool("ENABLE_LOCAL_ADMIN_ROUTES", !isProduction),
