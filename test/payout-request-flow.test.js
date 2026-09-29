@@ -126,6 +126,20 @@ test("UPI quote enforces the ₹100 to ₹20,000 payout range", async () => {
   assert.deepEqual(large.limits, { min: 100, max: 20000, unit: "INR" });
 });
 
+test("UPI payout accepts the exact ₹100 and ₹20,000 boundaries", async () => {
+  const min = await quotePayoutSettlement("UPI", 1, {
+    fxResolver: async () => ({ amountInr: 100, usdToInr: 100, source: "test", quoteDate: "2026-09-29" }),
+  });
+  const max = await quotePayoutSettlement("UPI", 200, {
+    fxResolver: async () => ({ amountInr: 20000, usdToInr: 100, source: "test", quoteDate: "2026-09-29" }),
+  });
+
+  assert.equal(min.available, true);
+  assert.equal(min.settlementAmount, 100);
+  assert.equal(max.available, true);
+  assert.equal(max.settlementAmount, 20000);
+});
+
 test("bank payout quote snapshots the current USD/INR rate without inventing provider limits", async () => {
   const quote = await quotePayoutSettlement("BANK", 4000, { fxResolver: fixedFx });
 
