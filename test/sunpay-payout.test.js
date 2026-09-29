@@ -216,6 +216,7 @@ test("approved UPI payout executes through Sunpay then remains PROCESSING until 
       payoutId: "PAYOUT-EXEC-1",
       status: "PROCESSING",
       providerStatus: "pending",
+      amount: 1000,
       fee: 30,
       netAmount: 970,
     }),
@@ -236,11 +237,12 @@ test("approved UPI payout executes through Sunpay then remains PROCESSING until 
   assert.equal(result.provider, "sunpay");
   assert.equal(result.providerReference, "pyt_exec_1");
   assert.equal(result.providerFee, 30);
+  assert.equal(result.providerGrossAmount, 1000);
   assert.equal(result.providerNetAmount, 970);
   assert.equal(result.activeKey, "MASTER-1");
 });
 
-test("Sunpay reconciliation marks PAID only after authoritative status endpoint returns success", async () => {
+test("Sunpay reconciliation marks PAID only when provider success delivered the full quoted trader amount", async () => {
   const model = payoutModel({
     payoutId: "PAYOUT-EXEC-2",
     accountId: "MASTER-2",
@@ -251,6 +253,7 @@ test("Sunpay reconciliation marks PAID only after authoritative status endpoint 
     providerReference: "pyt_exec_2",
     settlementCurrency: "INR",
     settlementAmount: 5000,
+    feePolicy: "ACG_COVERS",
     processingAt: new Date("2026-09-29T20:00:00.000Z"),
   });
 
@@ -263,8 +266,9 @@ test("Sunpay reconciliation marks PAID only after authoritative status endpoint 
       payoutId: "PAYOUT-EXEC-2",
       status: "PAID",
       providerStatus: "success",
+      amount: 5030,
       fee: 30,
-      netAmount: 4970,
+      netAmount: 5000,
       utr: "422519876544",
       settledAt: "2026-09-29T20:01:30.000Z",
     }),
@@ -273,8 +277,54 @@ test("Sunpay reconciliation marks PAID only after authoritative status endpoint 
   assert.equal(result.status, "PAID");
   assert.equal(result.activeKey, null);
   assert.equal(result.utr, "422519876544");
-  assert.equal(result.providerNetAmount, 4970);
+  assert.equal(result.providerGrossAmount, 5030);
+  assert.equal(result.providerNetAmount, 5000);
+  assert.equal(result.traderReceivedAmount, 5000);
+  assert.equal(result.providerFeePaidByAcg, 30);
+  assert.equal(result.acgTotalCostAmount, 5030);
+  assert.equal(result.accountingSource, "PROVIDER_VERIFIED");
   assert.equal(new Date(result.paidAt).toISOString(), "2026-09-29T20:01:30.000Z");
+});
+
+test("Sunpay success with a fee-deducted net amount stays PROCESSING for an ACG top-up", async () => {
+  const model = payoutModel({
+    payoutId: "PAYOUT-EXEC-SHORT",
+    accountId: "MASTER-SHORT",
+    status: "PROCESSING",
+    activeKey: "MASTER-SHORT",
+    method: "UPI",
+    provider: "sunpay",
+    providerReference: "pyt_short",
+    settlementCurrency: "INR",
+    settlementAmount: 1000,
+    feePolicy: "ACG_COVERS",
+    processingAt: new Date("2026-09-29T20:00:00.000Z"),
+  });
+
+  const result = await reconcileSunpayPayout("PAYOUT-EXEC-SHORT", {
+    payoutModel: model,
+    now: () => new Date("2026-09-29T20:02:00.000Z"),
+    statusFetcher: async () => ({
+      provider: "sunpay",
+      providerReference: "pyt_short",
+      payoutId: "PAYOUT-EXEC-SHORT",
+      status: "PAID",
+      providerStatus: "success",
+      amount: 1000,
+      fee: 30,
+      netAmount: 970,
+      utr: "422519876500",
+      settledAt: "2026-09-29T20:01:30.000Z",
+    }),
+  });
+
+  assert.equal(result.status, "PROCESSING");
+  assert.equal(result.activeKey, "MASTER-SHORT");
+  assert.equal(result.providerGrossAmount, 1000);
+  assert.equal(result.providerNetAmount, 970);
+  assert.equal(result.traderReceivedAmount, undefined);
+  assert.equal(result.providerLastError.code, "PAYOUT_EXACT_RECEIPT_MISMATCH");
+  assert.equal(result.providerLastError.expectedAmount, undefined);
 });
 
 test("insufficient Sunpay balance leaves approved payout reserved for retry", async () => {
