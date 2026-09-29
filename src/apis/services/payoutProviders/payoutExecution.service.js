@@ -1,5 +1,6 @@
 import PayoutRequest from "../../../models/payoutRequest.model.js";
 import { decryptPayoutDestination } from "../payoutDestination.service.js";
+import { buildPaidPayoutAccounting } from "../payoutAccounting.service.js";
 import {
   createSunpayPayout,
   getSunpayPayoutBalance,
@@ -131,6 +132,7 @@ export async function executeApprovedSunpayPayout(
       providerReference: created.providerReference || record.providerReference || null,
       providerStatus: created.providerStatus || null,
       providerFee: created.fee == null ? null : money2(created.fee),
+      providerGrossAmount: created.amount == null ? settlementAmount : money2(created.amount),
       providerNetAmount: created.netAmount == null ? null : money2(created.netAmount),
       providerStatusCheckedAt: attemptAt,
       providerLastAttemptAt: attemptAt,
@@ -230,6 +232,7 @@ export async function reconcileSunpayPayout(
     providerReference: remote.providerReference || record.providerReference || null,
     providerStatus: remote.providerStatus || null,
     providerFee: remote.fee == null ? record.providerFee ?? null : money2(remote.fee),
+    providerGrossAmount: remote.amount == null ? record.providerGrossAmount ?? null : money2(remote.amount),
     providerNetAmount: remote.netAmount == null ? record.providerNetAmount ?? null : money2(remote.netAmount),
     providerStatusCheckedAt: checkedAt,
     providerLastError: { code: null, message: null, status: null },
@@ -239,11 +242,35 @@ export async function reconcileSunpayPayout(
 
   if (remote.status === "PAID") {
     const settledAt = remote.settledAt ? new Date(remote.settledAt) : checkedAt;
-    set.status = "PAID";
-    set.activeKey = null;
-    set.sentAt = record.sentAt || settledAt;
-    set.paidAt = record.paidAt || settledAt;
-    set.failure = { code: null, message: null };
+    try {
+      const accounting = buildPaidPayoutAccounting(
+        { ...plain(record), ...set },
+        {
+          traderReceivedAmount: remote.netAmount,
+          providerFeePaidByAcg: remote.fee ?? 0,
+          source: "PROVIDER_VERIFIED",
+          verifiedAt: settledAt,
+        },
+      );
+      set.status = "PAID";
+      set.activeKey = null;
+      set.sentAt = record.sentAt || settledAt;
+      set.paidAt = record.paidAt || settledAt;
+      set.failure = { code: null, message: null };
+      Object.assign(set, accounting);
+    } catch (error) {
+      // ACG covers payout fees, so a provider-reported success is not enough:
+      // the beneficiary must have received exactly the quoted trader amount.
+      set.status = "PROCESSING";
+      set.processingAt = record.processingAt || checkedAt;
+      set.providerLastError = {
+        code: error?.code || "PAYOUT_EXACT_RECEIPT_MISMATCH",
+        message: error?.message || "Provider success did not deliver the full quoted trader amount.",
+        status: null,
+        minimum: null,
+        maximum: null,
+      };
+    }
   } else if (remote.status === "FAILED") {
     set.status = "FAILED";
     set.activeKey = null;
