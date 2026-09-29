@@ -189,6 +189,19 @@ router.post("/", async (req, res, next) => {
       ].slice(-100),
     };
 
+    if (result.humanOwned === true || conversation.status === "ESCALATED" && !result.answer) {
+      conversation.lastMessageAt = new Date();
+      await conversation.save();
+
+      return res.json({
+        success: true,
+        conversationId: conversation.conversationId,
+        status: conversation.status,
+        humanOwned: true,
+        autoReplySent: false,
+      });
+    }
+
     const shouldEscalate = needsHumanReview(body)
       || !process.env.OPENAI_API_KEY
       || /can.?t reliably answer|support specialist|human review/i.test(result.answer || "");
