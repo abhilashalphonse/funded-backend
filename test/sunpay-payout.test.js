@@ -329,6 +329,133 @@ test("Sunpay success with a fee-deducted net amount stays PROCESSING for an ACG 
   assert.equal(result.providerLastError.currency, "INR");
 });
 
+test("a restart during PROCESSING reconciles status without creating a second provider payout", async () => {
+  const model = payoutModel({
+    payoutId: "PAYOUT-RESTART",
+    accountId: "MASTER-RESTART",
+    status: "PROCESSING",
+    activeKey: "MASTER-RESTART",
+    method: "UPI",
+    provider: "sunpay",
+    settlementCurrency: "INR",
+    settlementAmount: 1000,
+    feePolicy: "ACG_COVERS",
+  });
+  let createCalls = 0;
+  let statusCalls = 0;
+
+  const result = await executeApprovedSunpayPayout("PAYOUT-RESTART", {
+    payoutModel: model,
+    payoutCreator: async () => {
+      createCalls += 1;
+      throw new Error("must not create a second payout");
+    },
+    statusFetcher: async () => {
+      statusCalls += 1;
+      return {
+        provider: "sunpay",
+        payoutId: "PAYOUT-RESTART",
+        status: "PROCESSING",
+        providerStatus: "processing",
+        amount: 1000,
+        fee: 30,
+        netAmount: 970,
+      };
+    },
+  });
+
+  assert.equal(result.status, "PROCESSING");
+  assert.equal(createCalls, 0);
+  assert.equal(statusCalls, 1);
+});
+
+test("Sunpay provider failure releases the payout reservation for a future request", async () => {
+  const model = payoutModel({
+    payoutId: "PAYOUT-FAILED",
+    accountId: "MASTER-FAILED",
+    status: "PROCESSING",
+    activeKey: "MASTER-FAILED",
+    method: "UPI",
+    provider: "sunpay",
+    settlementCurrency: "INR",
+    settlementAmount: 1000,
+  });
+
+  const result = await reconcileSunpayPayout("PAYOUT-FAILED", {
+    payoutModel: model,
+    statusFetcher: async () => ({
+      provider: "sunpay",
+      payoutId: "PAYOUT-FAILED",
+      status: "FAILED",
+      providerStatus: "failed",
+      amount: 1000,
+      fee: 30,
+      netAmount: 970,
+    }),
+  });
+
+  assert.equal(result.status, "FAILED");
+  assert.equal(result.activeKey, null);
+  assert.equal(result.failure.code, "SUNPAY_PROVIDER_FAILED");
+});
+
+test("Sunpay status timeout keeps the payout reserved and records a retryable provider error", async () => {
+  const model = payoutModel({
+    payoutId: "PAYOUT-TIMEOUT",
+    accountId: "MASTER-TIMEOUT",
+    status: "PROCESSING",
+    activeKey: "MASTER-TIMEOUT",
+    method: "BANK",
+    provider: "sunpay",
+    settlementCurrency: "INR",
+    settlementAmount: 5000,
+  });
+  const timeout = new Error("provider timeout");
+  timeout.code = "SUNPAY_TIMEOUT";
+  timeout.status = 504;
+
+  await assert.rejects(
+    () => reconcileSunpayPayout("PAYOUT-TIMEOUT", {
+      payoutModel: model,
+      statusFetcher: async () => { throw timeout; },
+    }),
+    error => error?.code === "SUNPAY_TIMEOUT",
+  );
+
+  assert.equal(model.record.status, "PROCESSING");
+  assert.equal(model.record.activeKey, "MASTER-TIMEOUT");
+  assert.equal(model.record.providerLastError.code, "SUNPAY_TIMEOUT");
+  assert.equal(model.record.providerLastError.status, 504);
+});
+
+test("repeated reconciliation after PAID is idempotent and does not query Sunpay again", async () => {
+  const model = payoutModel({
+    payoutId: "PAYOUT-PAID-IDEMPOTENT",
+    accountId: "MASTER-PAID",
+    status: "PAID",
+    activeKey: null,
+    method: "UPI",
+    provider: "sunpay",
+    settlementCurrency: "INR",
+    settlementAmount: 1000,
+    traderReceivedAmount: 1000,
+    providerFeePaidByAcg: 30,
+    acgTotalCostAmount: 1030,
+  });
+  let statusCalls = 0;
+
+  const result = await reconcileSunpayPayout("PAYOUT-PAID-IDEMPOTENT", {
+    payoutModel: model,
+    statusFetcher: async () => {
+      statusCalls += 1;
+      throw new Error("must not query a terminal payout");
+    },
+  });
+
+  assert.equal(result.status, "PAID");
+  assert.equal(statusCalls, 0);
+});
+
 test("insufficient Sunpay balance leaves approved payout reserved for retry", async () => {
   const model = payoutModel({
     payoutId: "PAYOUT-EXEC-3",
