@@ -1,7 +1,9 @@
-import env from "../../../config/env.js";
 import {
   isSunpayPayoutConfigured,
 } from "./sunpayPayout.service.js";
+import {
+  PAYOUT_PROVIDER_FEE_POLICY,
+} from "../payoutPolicy.js";
 
 export const PAYOUT_EXECUTION_PROVIDERS = Object.freeze([
   Object.freeze({
@@ -11,6 +13,7 @@ export const PAYOUT_EXECUTION_PROVIDERS = Object.freeze([
     automatic: false,
     methods: Object.freeze(["UPI", "BANK", "USDT"]),
     configured: () => true,
+    automaticReady: () => false,
   }),
   Object.freeze({
     id: "sunpay",
@@ -18,7 +21,11 @@ export const PAYOUT_EXECUTION_PROVIDERS = Object.freeze([
     implemented: true,
     automatic: true,
     methods: Object.freeze(["UPI", "BANK"]),
-    configured: () => isSunpayPayoutConfigured() && env.SUNPAY_PAYOUT_FEE_POLICY === "DEDUCT_FROM_PAYOUT",
+    configured: () => isSunpayPayoutConfigured(),
+    // ACG covers provider fees. Sunpay's public payout response exposes fee/net
+    // only after submission, and the docs do not define a pre-submit gross-up
+    // mechanism. Keep auto-execution closed until that guarantee exists.
+    automaticReady: () => false,
   }),
   Object.freeze({
     id: "crypto",
@@ -27,25 +34,36 @@ export const PAYOUT_EXECUTION_PROVIDERS = Object.freeze([
     automatic: true,
     methods: Object.freeze(["USDT"]),
     configured: () => false,
+    automaticReady: () => false,
   }),
 ]);
 
 export function listPayoutExecutionProviders() {
   return PAYOUT_EXECUTION_PROVIDERS.map(provider => {
     const configured = provider.implemented && provider.configured();
+    const automaticReady = configured && provider.automatic && provider.automaticReady();
+    const status = !provider.implemented
+      ? "NOT_INTEGRATED"
+      : !configured
+        ? "NOT_CONFIGURED"
+        : provider.automatic
+          ? automaticReady
+            ? "READY"
+            : provider.id === "sunpay" && PAYOUT_PROVIDER_FEE_POLICY === "ACG_COVERS"
+              ? "FEE_GROSS_UP_REQUIRED"
+              : "NOT_READY"
+          : "MANUAL";
+
     return {
       id: provider.id,
       label: provider.label,
       implemented: provider.implemented,
       configured,
       automatic: provider.automatic,
+      automaticReady,
       methods: [...provider.methods],
-      feePolicy: provider.id === "sunpay" ? env.SUNPAY_PAYOUT_FEE_POLICY || null : null,
-      status: !provider.implemented
-        ? "NOT_INTEGRATED"
-        : provider.automatic
-          ? configured ? "READY" : "NOT_CONFIGURED"
-          : "MANUAL",
+      feePolicy: provider.id === "sunpay" ? PAYOUT_PROVIDER_FEE_POLICY : null,
+      status,
     };
   });
 }
@@ -56,10 +74,16 @@ export function getAutomaticPayoutProvider(method) {
     provider.automatic
     && provider.implemented
     && provider.configured()
+    && provider.automaticReady()
     && provider.methods.includes(normalizedMethod)
   ) || null;
 }
 
 export function automaticPayoutExecutionAvailable() {
-  return listPayoutExecutionProviders().some(provider => provider.automatic && provider.configured);
+  return PAYOUT_EXECUTION_PROVIDERS.some(provider =>
+    provider.automatic
+    && provider.implemented
+    && provider.configured()
+    && provider.automaticReady()
+  );
 }
