@@ -135,10 +135,11 @@ test("bank payout quote snapshots the current USD/INR rate without inventing pro
   assert.equal(quote.quoteStatus, "LOCKED");
 });
 
-test("USDT quote explicitly waits for provider settlement pricing and exposes TRC20", async () => {
+test("USDT remains unavailable until an exact provider settlement quote can be confirmed", async () => {
   const quote = await quotePayoutSettlement("USDT", 4000);
 
-  assert.equal(quote.available, true);
+  assert.equal(quote.available, false);
+  assert.equal(quote.blocker, "USDT_PROVIDER_NOT_CONFIGURED");
   assert.equal(quote.settlementCurrency, "USDT");
   assert.equal(quote.settlementAmount, null);
   assert.equal(quote.quoteStatus, "PROVIDER_PENDING");
