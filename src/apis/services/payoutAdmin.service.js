@@ -49,6 +49,15 @@ export function serializeAdminPayout(raw) {
     snapshot: record.snapshot || null,
     provider: record.provider || null,
     providerReference: record.providerReference || null,
+    providerStatus: record.providerStatus || null,
+    providerFee: record.providerFee == null ? null : money2(record.providerFee),
+    providerNetAmount: record.providerNetAmount == null ? null : money2(record.providerNetAmount),
+    providerStatusCheckedAt: record.providerStatusCheckedAt || null,
+    providerLastAttemptAt: record.providerLastAttemptAt || null,
+    providerLastError: record.providerLastError?.code || record.providerLastError?.message
+      ? record.providerLastError
+      : null,
+    providerWebhookAt: record.providerWebhookAt || null,
     utr: record.utr || null,
     txHash: record.txHash || null,
     network: record.network || null,
