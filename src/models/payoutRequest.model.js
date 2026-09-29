@@ -99,6 +99,8 @@ const PayoutRequestSchema = new mongoose.Schema(
       code: { type: String, default: null },
       message: { type: String, default: null },
       status: { type: Number, default: null },
+      minimum: { type: Number, default: null },
+      maximum: { type: Number, default: null },
     },
     providerWebhookAt: { type: Date, default: null },
     utr: { type: String, default: null, index: true, sparse: true },
