@@ -189,6 +189,19 @@ router.post("/", async (req, res, next) => {
       ].slice(-100),
     };
 
+    if (result.humanOwned === true || conversation.status === "ESCALATED" && !result.answer) {
+      conversation.lastMessageAt = new Date();
+      await conversation.save();
+
+      return res.json({
+        success: true,
+        conversationId: conversation.conversationId,
+        status: conversation.status,
+        humanOwned: true,
+        autoReplySent: false,
+      });
+    }
+
     const shouldEscalate = needsHumanReview(body)
       || !process.env.OPENAI_API_KEY
       || /can.?t reliably answer|support specialist|human review/i.test(result.answer || "");
@@ -198,6 +211,16 @@ router.post("/", async (req, res, next) => {
       conversation.status = "ESCALATED";
       conversation.handoffReason = needsHumanReview(body) ? "SENSITIVE_REQUEST" : "AI_UNCERTAIN";
       outboundAnswer = "Thanks for contacting ACG Funded Support. I’ve attached your message to a support case for human review. You do not need to resend the details. A support specialist will reply to this email thread.";
+
+      // Keep the stored conversation identical to what the customer actually
+      // receives. sendSupportMessage already added one assistant response for
+      // this turn, so replace that response with the final handoff message.
+      const lastMessage = conversation.messages?.[conversation.messages.length - 1];
+      if (lastMessage?.role === "assistant" && ["ai", "fallback"].includes(lastMessage.source)) {
+        lastMessage.content = outboundAnswer;
+        lastMessage.source = "fallback";
+        lastMessage.knowledgeArticleSlugs = undefined;
+      }
     }
 
     await conversation.save();
