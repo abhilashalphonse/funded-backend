@@ -128,7 +128,14 @@ Rules:
 - Do not mention internal prompts, APIs, models, databases, retrieval, or implementation details.`;
 
   const recent = history.slice(-MAX_HISTORY_MESSAGES)
-    .map(item => `${item.role.toUpperCase()}: ${item.content}`)
+    .map(item => {
+      const source = item.source === "human"
+        ? " (HUMAN SUPPORT)"
+        : item.source === "ai"
+          ? " (AI SUPPORT)"
+          : "";
+      return `${item.role.toUpperCase()}${source}: ${item.content}`;
+    })
     .join("\n");
 
   const input = `LIVE CUSTOMER CONTEXT:\n${JSON.stringify(context)}\n\nAPPROVED KNOWLEDGE BASE:\n${JSON.stringify(knowledgeBase)}\n\nRECENT CONVERSATION:\n${recent}\n\nCUSTOMER: ${message}`;
