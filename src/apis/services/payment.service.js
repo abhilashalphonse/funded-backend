@@ -17,7 +17,9 @@ import {
   DEFAULT_UPI_GATEWAY_ID,
   getActiveUpiGateway,
   getUpiGateway,
+  getUpiPayinAvailability,
   normalizeUpiGatewayId,
+  normalizeUpiPayinAmount,
 } from "./paymentProviders/upiGateway.registry.js";
 
 const NOWPAYMENTS_URL = "https://api.nowpayments.io/v1";
@@ -155,13 +157,31 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   const gateway = await getActiveUpiGateway();
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
   const fx = await usdToInrQuote(pricing.finalPrice);
-  const providerAmount = fx.amountInr;
-  if (providerAmount < 1 || providerAmount > 100000) {
-    const error = new Error("This challenge price is outside the supported UPI payment range.");
-    error.status = 400;
-    error.code = "UPI_AMOUNT_OUT_OF_RANGE";
-    throw error;
-  }
+  const providerAmount = normalizeUpiPayinAmount(gateway, fx.amountInr);
+  const availability = getUpiPayinAvailability(gateway, providerAmount);
+
+  const common = {
+    amount: pricing.finalPrice,
+    currency: "USD",
+    providerAmount,
+    providerCurrency: "INR",
+    paymentMethod: "UPI",
+    gatewayId: gateway.id,
+    available: availability.available,
+    unavailableReason: availability.reason,
+    minProviderAmount: availability.minProviderAmount,
+    maxProviderAmount: availability.maxProviderAmount,
+    wholeInrOnly: availability.wholeInrOnly,
+    fx: {
+      source: fx.source,
+      quoteDate: fx.quoteDate,
+      baseCurrency: fx.baseCurrency,
+      quoteCurrency: fx.quoteCurrency,
+      usdToInr: fx.usdToInr,
+    },
+  };
+
+  if (!availability.available) return common;
 
   const expiresAt = Date.now() + UPI_QUOTE_TTL_MS;
   const quoteToken = signUpiQuote({
@@ -177,21 +197,9 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   }, gateway);
 
   return {
-    amount: pricing.finalPrice,
-    currency: "USD",
-    providerAmount,
-    providerCurrency: "INR",
-    paymentMethod: "UPI",
-    gatewayId: gateway.id,
+    ...common,
     quoteToken,
     expiresAt,
-    fx: {
-      source: fx.source,
-      quoteDate: fx.quoteDate,
-      baseCurrency: fx.baseCurrency,
-      quoteCurrency: fx.quoteCurrency,
-      usdToInr: fx.usdToInr,
-    },
   };
 }
 
@@ -321,6 +329,19 @@ export async function createUpiPayment({
     throw error;
   }
   const providerAmount = Number(quote.providerAmount);
+  const availability = getUpiPayinAvailability(gateway, providerAmount);
+  if (!availability.available) {
+    const error = new Error(
+      availability.reason === "WHOLE_INR_REQUIRED"
+        ? "UPI payment amount must be a whole INR value for the selected gateway."
+        : "This challenge price is outside the selected UPI gateway's supported payment range.",
+    );
+    error.status = 409;
+    error.code = availability.reason === "WHOLE_INR_REQUIRED"
+      ? "UPI_WHOLE_INR_REQUIRED"
+      : "UPI_AMOUNT_OUT_OF_RANGE";
+    throw error;
+  }
 
   if (
     String(quote.currency).toUpperCase() !== "USD"
