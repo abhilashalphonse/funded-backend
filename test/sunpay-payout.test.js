@@ -324,7 +324,9 @@ test("Sunpay success with a fee-deducted net amount stays PROCESSING for an ACG 
   assert.equal(result.providerNetAmount, 970);
   assert.equal(result.traderReceivedAmount, undefined);
   assert.equal(result.providerLastError.code, "PAYOUT_EXACT_RECEIPT_MISMATCH");
-  assert.equal(result.providerLastError.expectedAmount, undefined);
+  assert.equal(result.providerLastError.expectedAmount, 1000);
+  assert.equal(result.providerLastError.receivedAmount, 970);
+  assert.equal(result.providerLastError.currency, "INR");
 });
 
 test("insufficient Sunpay balance leaves approved payout reserved for retry", async () => {
