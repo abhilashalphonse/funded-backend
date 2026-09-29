@@ -67,6 +67,10 @@ const sunpayCallbackUrl = String(process.env.SUNPAY_CALLBACK_URL || "").trim() |
 const sunpayPayoutApiKey = String(process.env.SUNPAY_PAYOUT_API_KEY || "").trim() || undefined;
 const sunpayPayoutApiSecret = String(process.env.SUNPAY_PAYOUT_API_SECRET || "").trim() || undefined;
 const sunpayPayoutCallbackUrl = String(process.env.SUNPAY_PAYOUT_CALLBACK_URL || "").trim() || undefined;
+const sunpayPayoutFeePolicy = String(process.env.SUNPAY_PAYOUT_FEE_POLICY || "").trim().toUpperCase() || undefined;
+if (sunpayPayoutFeePolicy && !["DEDUCT_FROM_PAYOUT", "ACG_COVERS"].includes(sunpayPayoutFeePolicy)) {
+  throw new Error("SUNPAY_PAYOUT_FEE_POLICY must be DEDUCT_FROM_PAYOUT or ACG_COVERS.");
+}
 
 const env = Object.freeze({
   NODE_ENV: nodeEnv,
@@ -139,6 +143,7 @@ const env = Object.freeze({
   SUNPAY_PAYOUT_API_KEY: sunpayPayoutApiKey,
   SUNPAY_PAYOUT_API_SECRET: sunpayPayoutApiSecret,
   SUNPAY_PAYOUT_CALLBACK_URL: validUrl("SUNPAY_PAYOUT_CALLBACK_URL", sunpayPayoutCallbackUrl),
+  SUNPAY_PAYOUT_FEE_POLICY: sunpayPayoutFeePolicy,
 
   ENABLE_SIMULATOR_ROUTES: bool("ENABLE_SIMULATOR_ROUTES", !isProduction),
   ENABLE_LOCAL_ADMIN_ROUTES: bool("ENABLE_LOCAL_ADMIN_ROUTES", !isProduction),
