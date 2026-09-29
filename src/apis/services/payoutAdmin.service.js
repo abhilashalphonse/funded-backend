@@ -37,6 +37,7 @@ export function serializeAdminPayout(raw) {
     accountId: record.accountId || null,
     status: record.status || null,
     requestedAmountUsd: money2(record.requestedAmountUsd),
+    feePolicy: record.feePolicy || "ACG_COVERS",
     method: record.method || null,
     settlementCurrency: record.settlementCurrency || null,
     settlementAmount: record.settlementAmount == null ? null : money2(record.settlementAmount),
