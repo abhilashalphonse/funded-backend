@@ -32,7 +32,8 @@ test("Sunpay payout signing uses the exact raw JSON body", () => {
 
   assert.match(signature, /^[0-9a-f]{64}$/);
   assert.equal(verifySunpayPayoutWebhook(raw, signature, API_SECRET), true);
-  assert.equal(verifySunpayPayoutWebhook(raw, signature.slice(0, -1) + "0", API_SECRET), false);
+  const wrong = signature.slice(0, -1) + (signature.endsWith("0") ? "1" : "0");
+  assert.equal(verifySunpayPayoutWebhook(raw, wrong, API_SECRET), false);
 });
 
 test("Sunpay creates UPI payout with payout credentials and signed body", async () => {
