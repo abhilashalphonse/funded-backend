@@ -292,6 +292,7 @@ function serializePayoutRecord(raw) {
       eligibleAt: record.cycle.eligibleAt || null,
     } : null,
     requestedAt: record.requestedAt || record.createdAt || null,
+    reviewingAt: record.reviewingAt || null,
     approvedAt: record.approvedAt || null,
     processingAt: record.processingAt || null,
     sentAt: record.sentAt || null,
