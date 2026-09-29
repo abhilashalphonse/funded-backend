@@ -495,6 +495,33 @@ function normalizePayoutAmount(value, availableUsd) {
   return requested;
 }
 
+function idempotentPayoutResponse(existing, input = {}, accountId) {
+  const existingAccountId = String(existing?.accountId || "");
+  const requestedAccountId = String(accountId || "");
+  const existingMethod = String(existing?.method || "").toUpperCase();
+  const requestedMethod = String(input?.method || "").trim().toUpperCase();
+  const inputAmount = input?.amountUsd === undefined || input?.amountUsd === null || input?.amountUsd === ""
+    ? null
+    : money2(Number(input.amountUsd));
+  const existingAmount = money2(existing?.requestedAmountUsd);
+
+  if (
+    existingAccountId !== requestedAccountId
+    || (requestedMethod && existingMethod !== requestedMethod)
+    || (inputAmount != null && inputAmount !== existingAmount)
+  ) {
+    const error = new Error("This Idempotency-Key was already used for a different payout request.");
+    error.status = 409;
+    error.code = "PAYOUT_IDEMPOTENCY_CONFLICT";
+    throw error;
+  }
+
+  return {
+    idempotent: true,
+    payout: serializePayoutRecord(existing),
+  };
+}
+
 function normalizeIdempotencyKey(value) {
   const key = String(value || "").trim();
   if (!key || key.length < 8 || key.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(key)) {
@@ -687,10 +714,7 @@ export async function createCustomerPayoutRequest(
   const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
   const existing = await payoutModel.findOne({ customerId, idempotencyKey });
   if (existing) {
-    return {
-      idempotent: true,
-      payout: serializePayoutRecord(existing),
-    };
+    return idempotentPayoutResponse(existing, input, accountId);
   }
 
   const { account, overview, at } = await payoutEligibilityContext(customer, accountId, {
@@ -783,10 +807,7 @@ export async function createCustomerPayoutRequest(
 
     const duplicate = await payoutModel.findOne({ customerId, idempotencyKey });
     if (duplicate) {
-      return {
-        idempotent: true,
-        payout: serializePayoutRecord(duplicate),
-      };
+      return idempotentPayoutResponse(duplicate, input, accountId);
     }
 
     const conflict = new Error("A payout request is already in progress for this account.");
