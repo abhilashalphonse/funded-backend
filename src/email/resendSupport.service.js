@@ -133,7 +133,7 @@ async function resendRequest(path, options = {}) {
 export async function retrieveReceivedEmail(emailId) {
   const id = encodeURIComponent(String(emailId || "").trim());
   if (!id) throw new Error("Received email ID is required.");
-  return resendRequest(`/emails/${id}`);
+  return resendRequest(`/emails/receiving/${id}`);
 }
 
 export async function sendSupportEmail({
