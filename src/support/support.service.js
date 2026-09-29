@@ -223,21 +223,18 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
   conversation.lastMessageAt = new Date();
 
   if (conversation.status === "ESCALATED") {
-    const answer = "Your message has been added to the existing support case. A support specialist will review it; you do not need to repeat the earlier details.";
-    conversation.messages.push({
-      messageId: randomUUID(),
-      role: "assistant",
-      content: answer,
-      source: "fallback",
-      createdAt: new Date(),
-    });
+    // Human ownership is sticky. Keep recording customer messages, but do not
+    // let AI or an automated fallback reply while a support specialist owns
+    // the conversation. Admin must explicitly return the case to AI.
     await conversation.save();
     return {
       conversationId: conversation.conversationId,
       status: conversation.status,
       category: conversation.category,
       escalated: true,
-      answer,
+      humanOwned: true,
+      handler: "HUMAN",
+      answer: null,
     };
   }
 
@@ -309,6 +306,8 @@ export async function sendSupportMessage({ customer, anonymousSessionId, convers
     status: conversation.status,
     category: conversation.category,
     escalated,
+    humanOwned: false,
+    handler: "AI",
     answer,
   };
 }
@@ -326,10 +325,17 @@ export async function getSupportConversation({ customer, anonymousSessionId, con
     conversationId: conversation.conversationId,
     status: conversation.status,
     category: conversation.category,
+    handoffReason: conversation.handoffReason || null,
+    handler: conversation.status === "ESCALATED"
+      ? "HUMAN"
+      : conversation.status === "CLOSED"
+        ? "CLOSED"
+        : "AI",
     messages: conversation.messages.map(message => ({
       messageId: message.messageId,
       role: message.role,
       content: message.content,
+      source: message.source,
       createdAt: message.createdAt,
     })),
   };
@@ -348,5 +354,5 @@ export async function escalateSupportConversation({ customer, anonymousSessionId
   conversation.handoffReason = String(reason || "CUSTOMER_REQUESTED").slice(0, 120);
   conversation.lastMessageAt = new Date();
   await conversation.save();
-  return { conversationId, status: conversation.status };
+  return { conversationId, status: conversation.status, handler: "HUMAN" };
 }
