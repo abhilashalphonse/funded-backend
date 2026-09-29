@@ -98,7 +98,20 @@ const PayoutRequestSchema = new mongoose.Schema(
     providerReference: { type: String, default: null, index: true, sparse: true },
     providerStatus: { type: String, default: null },
     providerFee: { type: Number, default: null },
+    providerGrossAmount: { type: Number, default: null },
     providerNetAmount: { type: Number, default: null },
+
+    // Final accounting is written only after exact trader receipt is verified.
+    traderReceivedAmount: { type: Number, default: null },
+    providerFeePaidByAcg: { type: Number, default: null },
+    acgTotalCostAmount: { type: Number, default: null },
+    accountingCurrency: { type: String, default: null },
+    accountingSource: {
+      type: String,
+      enum: ["ADMIN_VERIFIED", "PROVIDER_VERIFIED"],
+      default: null,
+    },
+    accountingVerifiedAt: { type: Date, default: null },
     providerStatusCheckedAt: { type: Date, default: null },
     providerLastAttemptAt: { type: Date, default: null },
     providerLastError: {
