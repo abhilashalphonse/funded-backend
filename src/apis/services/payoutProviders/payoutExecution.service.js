@@ -269,6 +269,9 @@ export async function reconcileSunpayPayout(
         status: null,
         minimum: null,
         maximum: null,
+        expectedAmount: Number.isFinite(Number(error?.expectedAmount)) ? Number(error.expectedAmount) : null,
+        receivedAmount: Number.isFinite(Number(error?.receivedAmount)) ? Number(error.receivedAmount) : null,
+        currency: error?.currency || String(record?.settlementCurrency || "").toUpperCase() || null,
       };
     }
   } else if (remote.status === "FAILED") {
