@@ -7,6 +7,10 @@ import {
   encryptPayoutDestination,
   normalizePayoutDestination,
 } from "./payoutDestination.service.js";
+import {
+  issuePayoutQuoteToken,
+  verifyPayoutQuoteToken,
+} from "./payoutQuote.service.js";
 
 export const PAYOUT_METHODS = Object.freeze([
   Object.freeze({
@@ -612,6 +616,7 @@ export async function getCustomerPayoutQuote(
     payoutModel = PayoutRequest,
     now = () => new Date(),
     fxResolver = usdToInrQuote,
+    quoteIssuer = issuePayoutQuoteToken,
   } = {},
 ) {
   const { overview } = await payoutEligibilityContext(customer, accountId, {
@@ -623,10 +628,35 @@ export async function getCustomerPayoutQuote(
 
   const amountUsd = normalizePayoutAmount(input.amountUsd, overview.ledger.availableUsd);
   const quote = await quotePayoutSettlement(input.method, amountUsd, { fxResolver });
+
+  if (!quote.available) {
+    return {
+      accountId: overview.accountId,
+      availableUsd: overview.ledger.availableUsd,
+      quote,
+    };
+  }
+
+  const issued = quoteIssuer({
+    accountId: overview.accountId,
+    method: quote.method,
+    requestedAmountUsd: quote.requestedAmountUsd,
+    settlementCurrency: quote.settlementCurrency,
+    settlementAmount: quote.settlementAmount,
+    fxRate: quote.fxRate,
+    quoteSource: quote.quoteSource,
+    quoteDate: quote.quoteDate,
+    quoteStatus: quote.quoteStatus,
+  }, { now });
+
   return {
     accountId: overview.accountId,
     availableUsd: overview.ledger.availableUsd,
-    quote,
+    quote: {
+      ...quote,
+      quoteId: issued.quoteId,
+      quoteExpiresAt: issued.quoteExpiresAt,
+    },
   };
 }
 
@@ -638,7 +668,7 @@ export async function createCustomerPayoutRequest(
     accountModel = Account,
     payoutModel = PayoutRequest,
     now = () => new Date(),
-    fxResolver = usdToInrQuote,
+    quoteVerifier = verifyPayoutQuoteToken,
     destinationEncryptor = encryptPayoutDestination,
     payoutIdFactory = () => `PAYOUT-${randomUUID().replace(/-/g, "").slice(0, 20).toUpperCase()}`,
   } = {},
@@ -668,16 +698,37 @@ export async function createCustomerPayoutRequest(
   assertRequestEligible(overview);
 
   const amountUsd = normalizePayoutAmount(input.amountUsd, overview.ledger.availableUsd);
-  const quote = await quotePayoutSettlement(input.method, amountUsd, { fxResolver });
-  if (!quote.available) {
-    const error = new Error("The selected payout method is not available for this amount.");
+  const configuredMethod = payoutMethod(input.method);
+  const quote = quoteVerifier(input.quoteId, { now });
+
+  const quotedAccountId = String(quote?.accountId || "");
+  const quotedMethod = String(quote?.method || "").toUpperCase();
+  const quotedAmount = money2(quote?.requestedAmountUsd);
+  if (
+    quotedAccountId !== String(account.accountId)
+    || quotedMethod !== configuredMethod.id
+    || quotedAmount !== amountUsd
+  ) {
+    const error = new Error("Payout details changed after the quote was created. Request a new quote.");
     error.status = 409;
-    error.code = quote.blocker || "PAYOUT_METHOD_UNAVAILABLE";
-    error.quote = quote;
+    error.code = "PAYOUT_QUOTE_MISMATCH";
     throw error;
   }
 
-  const destination = normalizePayoutDestination(input.method, input.destination || {});
+  if (configuredMethod.id === "UPI") {
+    const settlementAmount = money2(quote?.settlementAmount);
+    if (
+      settlementAmount < configuredMethod.limits.min
+      || settlementAmount > configuredMethod.limits.max
+    ) {
+      const error = new Error("UPI is not available for the quoted payout amount.");
+      error.status = 409;
+      error.code = "UPI_AMOUNT_OUT_OF_RANGE";
+      throw error;
+    }
+  }
+
+  const destination = normalizePayoutDestination(configuredMethod.id, input.destination || {});
   const encrypted = destinationEncryptor(destination.payload);
   const payoutId = payoutIdFactory();
 
@@ -704,13 +755,15 @@ export async function createCustomerPayoutRequest(
       availableBeforeRequestUsd: overview.ledger.availableUsd,
     },
     requestedAmountUsd: amountUsd,
-    method: quote.method,
-    settlementCurrency: quote.settlementCurrency,
-    settlementAmount: quote.settlementAmount,
-    fxRate: quote.fxRate,
-    quoteSource: quote.quoteSource,
-    quoteDate: quote.quoteDate,
-    quoteStatus: quote.quoteStatus,
+    method: configuredMethod.id,
+    settlementCurrency: quote.settlementCurrency || configuredMethod.settlementCurrency,
+    settlementAmount: quote.settlementAmount == null ? null : money2(quote.settlementAmount),
+    fxRate: quote.fxRate == null ? null : Number(quote.fxRate),
+    quoteId: String(input.quoteId),
+    quoteExpiresAt: new Date(quote.expiresAt),
+    quoteSource: quote.quoteSource || null,
+    quoteDate: quote.quoteDate || null,
+    quoteStatus: quote.quoteStatus || null,
     destination: destination.masked,
     ...encrypted,
     requestedAt: at,
@@ -739,3 +792,4 @@ export async function createCustomerPayoutRequest(
     throw conflict;
   }
 }
+
