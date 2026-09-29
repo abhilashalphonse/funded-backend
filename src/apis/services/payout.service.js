@@ -540,7 +540,8 @@ export async function quotePayoutSettlement(
       quoteSource: null,
       quoteDate: null,
       quoteStatus: "PROVIDER_PENDING",
-      available: true,
+      available: false,
+      blocker: "USDT_PROVIDER_NOT_CONFIGURED",
       networks: [...SUPPORTED_USDT_NETWORKS],
     };
   }
