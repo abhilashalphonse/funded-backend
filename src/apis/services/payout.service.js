@@ -280,6 +280,12 @@ function serializePayoutRecord(raw) {
     settlementAmount: record.settlementAmount == null ? null : money2(record.settlementAmount),
     quoteStatus: record.quoteStatus || null,
     destination: record.destination || null,
+    reference: {
+      providerReference: record.providerReference || null,
+      utr: record.utr || null,
+      txHash: record.txHash || null,
+      network: record.network || null,
+    },
     cycle: record.cycle ? {
       key: record.cycle.key || null,
       frequency: record.cycle.frequency || null,
