@@ -344,6 +344,40 @@ test("replaying the same idempotency key returns the original payout instead of 
   assert.equal(payoutModel.records.length, 1);
 });
 
+test("reusing an idempotency key for a different payout is rejected", async () => {
+  const account = eligibleMaster({ projections: { profit: 200 } });
+  const payoutModel = memoryPayoutModel([{
+    payoutId: "PAYOUT-EXISTING",
+    customerId: "CUS-100",
+    accountId: account.accountId,
+    activeKey: account.accountId,
+    idempotencyKey: "same-key-0001",
+    status: "REQUESTED",
+    requestedAmountUsd: 160,
+    method: "UPI",
+  }]);
+
+  await assert.rejects(
+    () => createCustomerPayoutRequest(
+      { customerId: "CUS-100" },
+      account.accountId,
+      {
+        method: "BANK",
+        amountUsd: 150,
+        quoteId: "new-quote",
+        idempotencyKey: "same-key-0001",
+        destination: {
+          beneficiaryName: "Trader One",
+          accountNumber: "123456789012",
+          ifsc: "HDFC0001234",
+        },
+      },
+      { accountModel: accountModelWith(account), payoutModel },
+    ),
+    error => error?.code === "PAYOUT_IDEMPOTENCY_CONFLICT",
+  );
+});
+
 test("customer payout quote refuses amounts above the payout ledger balance", async () => {
   const account = eligibleMaster({ projections: { profit: 1000 } }); // $800 share
 
