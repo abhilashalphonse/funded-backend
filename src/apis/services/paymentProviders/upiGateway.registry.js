@@ -6,6 +6,8 @@ import {
   normalizeRupexStatus,
 } from "./rupex.service.js";
 import {
+  SUNPAY_PAYIN_MAX_INR,
+  SUNPAY_PAYIN_MIN_INR,
   createSunpayOrder,
   normalizeSunpayStatus,
   verifySunpayWebhook,
@@ -38,6 +40,11 @@ const gateways = [
     getOrderStatus: getRupexOrderStatus,
     normalizeStatus: normalizeRupexStatus,
     verifyWebhook: null,
+    payinRules: {
+      minInr: 1,
+      maxInr: 100000,
+      wholeInrOnly: false,
+    },
   },
   {
     id: "sunpay",
@@ -56,6 +63,11 @@ const gateways = [
     getOrderStatus: null,
     normalizeStatus: normalizeSunpayStatus,
     verifyWebhook: verifySunpayWebhook,
+    payinRules: {
+      minInr: SUNPAY_PAYIN_MIN_INR,
+      maxInr: SUNPAY_PAYIN_MAX_INR,
+      wholeInrOnly: true,
+    },
   },
 ];
 
@@ -64,6 +76,67 @@ const byId = new Map(gateways.map(gateway => [gateway.id, gateway]));
 export function normalizeUpiGatewayId(value) {
   const id = String(value || "").trim().toLowerCase();
   return LEGACY_ALIASES.get(id) || id;
+}
+
+export function normalizeUpiPayinAmount(gateway, amount) {
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric)) return NaN;
+  return gateway?.payinRules?.wholeInrOnly ? Math.ceil(numeric) : numeric;
+}
+
+export function getUpiPayinAvailability(gateway, amount) {
+  const numeric = Number(amount);
+  const minInr = Number(gateway?.payinRules?.minInr ?? 1);
+  const maxInr = Number(gateway?.payinRules?.maxInr ?? 100000);
+  const wholeInrOnly = Boolean(gateway?.payinRules?.wholeInrOnly);
+
+  if (!Number.isFinite(numeric)) {
+    return {
+      available: false,
+      reason: "INVALID_AMOUNT",
+      minProviderAmount: minInr,
+      maxProviderAmount: maxInr,
+      wholeInrOnly,
+    };
+  }
+
+  if (wholeInrOnly && !Number.isInteger(numeric)) {
+    return {
+      available: false,
+      reason: "WHOLE_INR_REQUIRED",
+      minProviderAmount: minInr,
+      maxProviderAmount: maxInr,
+      wholeInrOnly,
+    };
+  }
+
+  if (numeric < minInr) {
+    return {
+      available: false,
+      reason: "AMOUNT_BELOW_GATEWAY_LIMIT",
+      minProviderAmount: minInr,
+      maxProviderAmount: maxInr,
+      wholeInrOnly,
+    };
+  }
+
+  if (numeric > maxInr) {
+    return {
+      available: false,
+      reason: "AMOUNT_ABOVE_GATEWAY_LIMIT",
+      minProviderAmount: minInr,
+      maxProviderAmount: maxInr,
+      wholeInrOnly,
+    };
+  }
+
+  return {
+    available: true,
+    reason: null,
+    minProviderAmount: minInr,
+    maxProviderAmount: maxInr,
+    wholeInrOnly,
+  };
 }
 
 export function getUpiGateway(gatewayId, { requireAvailable = true } = {}) {
