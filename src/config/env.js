@@ -36,6 +36,13 @@ function validUrl(name, value) {
   catch { throw new Error(`${name} must be a valid URL.`); }
 }
 
+function httpsUrl(name, value) {
+  const url = validUrl(name, value);
+  if (!url) return url;
+  if (new URL(url).protocol !== "https:") throw new Error(`${name} must use HTTPS.`);
+  return url;
+}
+
 const fundedRiskPolicyVersion = String(process.env.ACG_FUNDED_RISK_POLICY_VERSION || "ACG_FUNDED_V1").trim().toUpperCase();
 if (!["ACG_FUNDED_V1", "ACG_FUNDED_V2"].includes(fundedRiskPolicyVersion)) {
   throw new Error("ACG_FUNDED_RISK_POLICY_VERSION must be ACG_FUNDED_V1 or ACG_FUNDED_V2.");
@@ -142,7 +149,7 @@ const env = Object.freeze({
   SUNPAY_CALLBACK_URL: validUrl("SUNPAY_CALLBACK_URL", sunpayCallbackUrl),
   SUNPAY_PAYOUT_API_KEY: sunpayPayoutApiKey,
   SUNPAY_PAYOUT_API_SECRET: sunpayPayoutApiSecret,
-  SUNPAY_PAYOUT_CALLBACK_URL: validUrl("SUNPAY_PAYOUT_CALLBACK_URL", sunpayPayoutCallbackUrl),
+  SUNPAY_PAYOUT_CALLBACK_URL: httpsUrl("SUNPAY_PAYOUT_CALLBACK_URL", sunpayPayoutCallbackUrl),
   SUNPAY_PAYOUT_FEE_POLICY: sunpayPayoutFeePolicy,
 
   ENABLE_SIMULATOR_ROUTES: bool("ENABLE_SIMULATOR_ROUTES", !isProduction),
