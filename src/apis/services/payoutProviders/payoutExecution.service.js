@@ -22,6 +22,8 @@ function executionError(error) {
     code: String(error?.code || "SUNPAY_PAYOUT_EXECUTION_FAILED").slice(0, 120),
     message: String(error?.message || "Sunpay payout execution failed.").slice(0, 1000),
     status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+    minimum: Number.isFinite(Number(error?.providerPayload?.minimum)) ? Number(error.providerPayload.minimum) : null,
+    maximum: Number.isFinite(Number(error?.providerPayload?.maximum)) ? Number(error.providerPayload.maximum) : null,
   };
 }
 
