@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  assertPayoutApprovalEligible,
   serializeAdminPayout,
   transitionAdminPayout,
 } from "../src/apis/services/payoutAdmin.service.js";
@@ -56,38 +57,39 @@ test("payout review lifecycle progresses forward and clears active reservation w
   const model = transitionModel(payout());
   let clock = 0;
   const now = () => new Date(Date.UTC(2026, 9, 1, 10, clock++, 0));
+  const deps = { payoutModel: model, now, approvalGuard: async () => ({}) };
 
   let result = await transitionAdminPayout("PAYOUT-001", {
     action: "START_REVIEW",
     reason: "Destination verified",
-  }, { payoutModel: model, now });
+  }, deps);
   assert.equal(result.after.status, "REVIEWING");
 
   result = await transitionAdminPayout("PAYOUT-001", {
     action: "APPROVE",
     reason: "Eligibility and destination approved",
-  }, { payoutModel: model, now });
+  }, deps);
   assert.equal(result.after.status, "APPROVED");
 
   result = await transitionAdminPayout("PAYOUT-001", {
     action: "MARK_PROCESSING",
     reason: "Submitted to payout operations",
     provider: "manual-test",
-  }, { payoutModel: model, now });
+  }, deps);
   assert.equal(result.after.status, "PROCESSING");
 
   result = await transitionAdminPayout("PAYOUT-001", {
     action: "MARK_SENT",
     reason: "UPI transfer sent",
     utr: "UTR-001",
-  }, { payoutModel: model, now });
+  }, deps);
   assert.equal(result.after.status, "SENT");
   assert.equal(result.after.utr, "UTR-001");
 
   result = await transitionAdminPayout("PAYOUT-001", {
     action: "MARK_PAID",
     reason: "Settlement confirmed",
-  }, { payoutModel: model, now });
+  }, deps);
   assert.equal(result.after.status, "PAID");
   assert.equal(model.record.activeKey, null);
   assert.ok(result.after.paidAt);
@@ -163,6 +165,82 @@ test("rejecting a payout frees the account reservation and records the reason", 
   assert.equal(model.record.activeKey, null);
   assert.equal(result.after.failure.code, "ADMIN_REJECTED");
   assert.match(result.after.failure.message, /Destination name/);
+});
+
+test("approval guard rejects a payout if realized Master profit fell below the requested amount", async () => {
+  const record = payout({
+    status: "REVIEWING",
+    requestedAmountUsd: 400,
+    snapshot: {
+      realizedProfitUsd: 500,
+      profitSplitPercent: 80,
+      entitlementUsd: 400,
+      previouslyPaidUsd: 0,
+      previouslyReservedUsd: 0,
+      availableBeforeRequestUsd: 400,
+    },
+  });
+  const accountModel = {
+    async findOne() {
+      return {
+        accountId: "MASTER-001",
+        status: "FUNDED",
+        enabled: true,
+        customerAccessBlocked: false,
+        projections: { profit: 300 },
+        commercialTerms: { profitSplit: 80 },
+      };
+    },
+  };
+  const payoutModel = {
+    find() {
+      return { lean: async () => [] };
+    },
+  };
+
+  await assert.rejects(
+    () => assertPayoutApprovalEligible(record, { accountModel, payoutModel }),
+    error => error?.code === "PAYOUT_APPROVAL_FUNDS_CHANGED"
+      && error?.availableUsd === 240
+      && error?.requestedUsd === 400,
+  );
+});
+
+test("approval guard allows the snapshotted request when current realized entitlement still covers it", async () => {
+  const record = payout({
+    status: "REVIEWING",
+    requestedAmountUsd: 400,
+    snapshot: {
+      realizedProfitUsd: 500,
+      profitSplitPercent: 80,
+      entitlementUsd: 400,
+      previouslyPaidUsd: 0,
+      previouslyReservedUsd: 0,
+      availableBeforeRequestUsd: 400,
+    },
+  });
+  const accountModel = {
+    async findOne() {
+      return {
+        accountId: "MASTER-001",
+        status: "FUNDED",
+        enabled: true,
+        customerAccessBlocked: false,
+        projections: { profit: 1000 },
+        commercialTerms: { profitSplit: 80 },
+      };
+    },
+  };
+  const payoutModel = {
+    find() {
+      return { lean: async () => [{ requestedAmountUsd: 100, status: "PAID" }] };
+    },
+  };
+
+  const result = await assertPayoutApprovalEligible(record, { accountModel, payoutModel });
+  assert.equal(result.entitlementUsd, 800);
+  assert.equal(result.alreadyPaidUsd, 100);
+  assert.equal(result.availableForApprovalUsd, 700);
 });
 
 test("admin payout serializer never exposes encrypted destination material", () => {
