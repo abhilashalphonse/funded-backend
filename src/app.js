@@ -22,6 +22,7 @@ import pgBossRetention from "./maintenance/pgbossRetention.js";
 import { payoutDestinationEncryptionConfigured } from "./apis/services/payoutDestination.service.js";
 import { payoutQuoteConfigured } from "./apis/services/payoutQuote.service.js";
 import { automaticPayoutExecutionAvailable } from "./apis/services/payoutProviders/payoutProvider.registry.js";
+import { PAYOUT_PROVIDER_FEE_POLICY } from "./apis/services/payoutPolicy.js";
 
 const app = express();
 
@@ -77,7 +78,7 @@ app.get("/health", (req, res) => res.json({
   payoutDestinationEncryptionConfigured: payoutDestinationEncryptionConfigured(),
   payoutQuoteSigningConfigured: payoutQuoteConfigured(),
   payoutAutomationConfigured: automaticPayoutExecutionAvailable(),
-  sunpayPayoutFeePolicy: env.SUNPAY_PAYOUT_FEE_POLICY || null,
+  sunpayPayoutFeePolicy: PAYOUT_PROVIDER_FEE_POLICY,
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
   localAdminRoutesEnabled: env.ENABLE_LOCAL_ADMIN_ROUTES,
 }));
