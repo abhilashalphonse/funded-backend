@@ -1,6 +1,7 @@
 import Account from "../../accounts/account.model.js";
 import PayoutRequest from "../../models/payoutRequest.model.js";
 import { decryptPayoutDestination } from "./payoutDestination.service.js";
+import { buildPaidPayoutAccounting } from "./payoutAccounting.service.js";
 
 const ACTIONS = Object.freeze({
   START_REVIEW: { from: ["REQUESTED"], to: "REVIEWING", timestamp: "reviewingAt" },
@@ -52,7 +53,14 @@ export function serializeAdminPayout(raw) {
     providerReference: record.providerReference || null,
     providerStatus: record.providerStatus || null,
     providerFee: record.providerFee == null ? null : money2(record.providerFee),
+    providerGrossAmount: record.providerGrossAmount == null ? null : money2(record.providerGrossAmount),
     providerNetAmount: record.providerNetAmount == null ? null : money2(record.providerNetAmount),
+    traderReceivedAmount: record.traderReceivedAmount == null ? null : money2(record.traderReceivedAmount),
+    providerFeePaidByAcg: record.providerFeePaidByAcg == null ? null : money2(record.providerFeePaidByAcg),
+    acgTotalCostAmount: record.acgTotalCostAmount == null ? null : money2(record.acgTotalCostAmount),
+    accountingCurrency: record.accountingCurrency || null,
+    accountingSource: record.accountingSource || null,
+    accountingVerifiedAt: record.accountingVerifiedAt || null,
     providerStatusCheckedAt: record.providerStatusCheckedAt || null,
     providerLastAttemptAt: record.providerLastAttemptAt || null,
     providerLastError: record.providerLastError?.code || record.providerLastError?.message
@@ -343,10 +351,22 @@ export async function transitionAdminPayout(
   }
 
   const at = now();
+  const patch = providerPatch(current, action, input);
+  const effectiveRecord = { ...plain(current), ...patch };
+  const accounting = action === "MARK_PAID"
+    ? buildPaidPayoutAccounting(effectiveRecord, {
+        traderReceivedAmount: input.traderReceivedAmount,
+        providerFeePaidByAcg: input.providerFeePaidByAcg,
+        source: "ADMIN_VERIFIED",
+        verifiedAt: at,
+      })
+    : {};
+
   const set = {
     status: definition.to,
     [definition.timestamp]: at,
-    ...providerPatch(current, action, input),
+    ...patch,
+    ...accounting,
   };
 
   if (definition.terminal) set.activeKey = null;
