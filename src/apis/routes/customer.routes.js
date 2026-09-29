@@ -5,6 +5,7 @@ import {
   closeDemoPosition,
   ensureDemoAccount,
   getCustomerWorkspace,
+  getCustomerTradingHistory,
   listCustomerAccounts,
   placeDemoOrder,
 } from "../services/customer.service.js";
@@ -30,6 +31,22 @@ router.get("/workspace", async (req, res, next) => {
 router.get("/accounts", async (req, res, next) => {
   try {
     const data = await listCustomerAccounts(req.customer);
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.get("/accounts/:accountId/trades", async (req, res, next) => {
+  try {
+    const data = await getCustomerTradingHistory(req.customer, req.params.accountId, {
+      limit: req.query.limit,
+      cursor: req.query.cursor,
+      symbol: req.query.symbol,
+      side: req.query.side,
+      type: req.query.type,
+      from: req.query.from,
+      to: req.query.to,
+    });
+    res.setHeader("Cache-Control", "no-store");
     res.json({ success: true, data });
   } catch (error) { next(error); }
 });
