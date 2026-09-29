@@ -89,10 +89,60 @@ test("payout review lifecycle progresses forward and clears active reservation w
   result = await transitionAdminPayout("PAYOUT-001", {
     action: "MARK_PAID",
     reason: "Settlement confirmed",
+    traderReceivedAmount: 33200,
+    providerFeePaidByAcg: 30,
   }, deps);
   assert.equal(result.after.status, "PAID");
+  assert.equal(result.after.traderReceivedAmount, 33200);
+  assert.equal(result.after.providerFeePaidByAcg, 30);
+  assert.equal(result.after.acgTotalCostAmount, 33230);
+  assert.equal(result.after.accountingCurrency, "INR");
+  assert.equal(result.after.accountingSource, "ADMIN_VERIFIED");
   assert.equal(model.record.activeKey, null);
   assert.ok(result.after.paidAt);
+});
+
+test("MARK_PAID is blocked if the trader received less than the quoted amount", async () => {
+  const model = transitionModel(payout({ status: "SENT", utr: "UTR-001" }));
+
+  await assert.rejects(
+    () => transitionAdminPayout("PAYOUT-001", {
+      action: "MARK_PAID",
+      reason: "Provider deducted its fee",
+      traderReceivedAmount: 33170,
+      providerFeePaidByAcg: 30,
+    }, { payoutModel: model }),
+    error => error?.code === "PAYOUT_EXACT_RECEIPT_MISMATCH"
+      && error?.expectedAmount === 33200
+      && error?.receivedAmount === 33170,
+  );
+
+  assert.equal(model.record.status, "SENT");
+  assert.equal(model.record.activeKey, "MASTER-001");
+});
+
+test("MARK_PAID requires ACG provider fee accounting even when the fee is zero", async () => {
+  const model = transitionModel(payout({ status: "SENT", utr: "UTR-001" }));
+
+  await assert.rejects(
+    () => transitionAdminPayout("PAYOUT-001", {
+      action: "MARK_PAID",
+      reason: "Settlement confirmed",
+      traderReceivedAmount: 33200,
+    }, { payoutModel: model }),
+    error => error?.code === "PAYOUT_PROVIDER_FEE_REQUIRED",
+  );
+
+  const result = await transitionAdminPayout("PAYOUT-001", {
+    action: "MARK_PAID",
+    reason: "Settlement confirmed with no provider fee",
+    traderReceivedAmount: 33200,
+    providerFeePaidByAcg: 0,
+  }, { payoutModel: model });
+
+  assert.equal(result.after.status, "PAID");
+  assert.equal(result.after.providerFeePaidByAcg, 0);
+  assert.equal(result.after.acgTotalCostAmount, 33200);
 });
 
 test("invalid payout status regressions are rejected", async () => {
