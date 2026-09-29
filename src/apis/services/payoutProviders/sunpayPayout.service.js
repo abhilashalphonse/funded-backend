@@ -61,10 +61,10 @@ export function computeSunpayPayoutSignature(rawBody, secret = payoutApiSecret()
   return crypto.createHmac("sha256", String(secret)).update(raw).digest("hex");
 }
 
-export function verifySunpayPayoutWebhook(rawBody, signature) {
+export function verifySunpayPayoutWebhook(rawBody, signature, secret = null) {
   const raw = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody || ""), "utf8");
   if (!raw.length || !signature) return false;
-  return safeEqualHex(computeSunpayPayoutSignature(raw), signature);
+  return safeEqualHex(computeSunpayPayoutSignature(raw, secret || payoutApiSecret()), signature);
 }
 
 export function normalizeSunpayPayoutStatus(value) {
@@ -94,7 +94,13 @@ export async function createSunpayPayout({
   bankName,
   beneficiaryPhone,
   notifyUrl,
-}, { fetchImpl = fetch } = {}) {
+}, {
+  fetchImpl = fetch,
+  baseUrlValue = baseUrl(),
+  apiKeyValue = payoutApiKey(),
+  apiSecretValue = payoutApiSecret(),
+  callbackUrlValue = callbackUrl(),
+} = {}) {
   const normalizedMethod = String(method || "").trim().toLowerCase();
   if (!["upi", "bank"].includes(normalizedMethod)) {
     const error = new Error("Sunpay automated payouts currently support UPI and bank only.");
@@ -118,7 +124,7 @@ export async function createSunpayPayout({
     method: normalizedMethod,
     beneficiary_name: String(beneficiaryName || "").trim(),
     beneficiary_account: String(beneficiaryAccount || "").trim(),
-    notify_url: String(notifyUrl || callbackUrl()),
+    notify_url: String(notifyUrl || callbackUrlValue),
   };
 
   if (!payload.beneficiary_name || !payload.beneficiary_account) {
@@ -145,12 +151,12 @@ export async function createSunpayPayout({
   }
 
   const body = JSON.stringify(payload);
-  const response = await fetchImpl(`${baseUrl()}/api/public/v1/payouts`, {
+  const response = await fetchImpl(`${String(baseUrlValue).replace(/\/$/, "")}/api/public/v1/payouts`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-api-key": payoutApiKey(),
-      "x-signature": computeSunpayPayoutSignature(body),
+      "x-api-key": apiKeyValue,
+      "x-signature": computeSunpayPayoutSignature(body, apiSecretValue),
       accept: "application/json",
     },
     body,
@@ -184,7 +190,11 @@ export async function createSunpayPayout({
   };
 }
 
-export async function getSunpayPayoutStatus(payoutId, { fetchImpl = fetch } = {}) {
+export async function getSunpayPayoutStatus(payoutId, {
+  fetchImpl = fetch,
+  baseUrlValue = baseUrl(),
+  apiKeyValue = payoutApiKey(),
+} = {}) {
   const id = encodeURIComponent(String(payoutId || "").trim());
   if (!id) {
     const error = new Error("Sunpay payout ID is required.");
@@ -193,10 +203,10 @@ export async function getSunpayPayoutStatus(payoutId, { fetchImpl = fetch } = {}
     throw error;
   }
 
-  const response = await fetchImpl(`${baseUrl()}/api/public/v1/payouts/status/${id}`, {
+  const response = await fetchImpl(`${String(baseUrlValue).replace(/\/$/, "")}/api/public/v1/payouts/status/${id}`, {
     method: "GET",
     headers: {
-      "x-api-key": payoutApiKey(),
+      "x-api-key": apiKeyValue,
       accept: "application/json",
     },
   });
@@ -220,15 +230,19 @@ export async function getSunpayPayoutStatus(payoutId, { fetchImpl = fetch } = {}
   };
 }
 
-export async function getSunpayPayoutBalance(currency = "INR", { fetchImpl = fetch } = {}) {
+export async function getSunpayPayoutBalance(currency = "INR", {
+  fetchImpl = fetch,
+  baseUrlValue = baseUrl(),
+  apiKeyValue = payoutApiKey(),
+} = {}) {
   const normalizedCurrency = String(currency || "INR").trim().toUpperCase();
-  const url = new URL(`${baseUrl()}/api/public/v1/balance`);
+  const url = new URL(`${String(baseUrlValue).replace(/\/$/, "")}/api/public/v1/balance`);
   url.searchParams.set("currency", normalizedCurrency);
 
   const response = await fetchImpl(url, {
     method: "GET",
     headers: {
-      "x-api-key": payoutApiKey(),
+      "x-api-key": apiKeyValue,
       accept: "application/json",
     },
   });
