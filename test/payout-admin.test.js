@@ -145,6 +145,28 @@ test("MARK_PAID requires ACG provider fee accounting even when the fee is zero",
   assert.equal(result.after.acgTotalCostAmount, 33200);
 });
 
+test("locked payout settlement cannot be changed by an admin action", async () => {
+  const model = transitionModel(payout({
+    status: "PROCESSING",
+    quoteStatus: "LOCKED",
+    settlementCurrency: "INR",
+    settlementAmount: 33200,
+  }));
+
+  await assert.rejects(
+    () => transitionAdminPayout("PAYOUT-001", {
+      action: "MARK_SENT",
+      reason: "Attempt to alter quoted settlement",
+      utr: "UTR-001",
+      settlementAmount: 33170,
+    }, { payoutModel: model }),
+    error => error?.code === "PAYOUT_SETTLEMENT_IMMUTABLE",
+  );
+
+  assert.equal(model.record.settlementAmount, 33200);
+  assert.equal(model.record.status, "PROCESSING");
+});
+
 test("invalid payout status regressions are rejected", async () => {
   const model = transitionModel(payout({ status: "APPROVED" }));
 
