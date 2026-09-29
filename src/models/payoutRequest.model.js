@@ -57,6 +57,12 @@ const PayoutRequestSchema = new mongoose.Schema(
     },
 
     requestedAmountUsd: { type: Number, required: true, min: 0.01 },
+    feePolicy: {
+      type: String,
+      enum: ["ACG_COVERS"],
+      default: "ACG_COVERS",
+      required: true,
+    },
 
     method: {
       type: String,
