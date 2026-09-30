@@ -9,6 +9,8 @@ function clean(value) {
   return String(value || "").trim();
 }
 
+const WEBHOOK_PROCESSING_LEASE_MS = 2 * 60 * 1000;
+
 function webhookError(error) {
   return {
     code: clean(error?.code || "SUNPAY_PAYOUT_WEBHOOK_PROCESSING_FAILED").slice(0, 120),
@@ -83,6 +85,18 @@ export async function registerSunpayPayoutWebhook(
   } catch (error) {
     if (error?.code !== 11000) throw error;
 
+    const before = await eventModel.findOne({ eventKey: identity.eventKey });
+    if (!before) throw error;
+
+    const reportedStatusChanged = clean(before.providerReportedStatus).toLowerCase()
+      !== clean(identity.providerReportedStatus).toLowerCase();
+    const staleProcessing = String(before.status || "").toUpperCase() === "PROCESSING"
+      && before.processingStartedAt
+      && at.getTime() - new Date(before.processingStartedAt).getTime() >= WEBHOOK_PROCESSING_LEASE_MS;
+    const shouldRequeue = reportedStatusChanged
+      || String(before.status || "").toUpperCase() === "FAILED"
+      || staleProcessing;
+
     const existing = await eventModel.findOneAndUpdate(
       { eventKey: identity.eventKey },
       {
@@ -90,6 +104,11 @@ export async function registerSunpayPayoutWebhook(
           lastReceivedAt: at,
           providerReportedStatus: identity.providerReportedStatus,
           ...(payloadHash ? { payloadHash } : {}),
+          ...(shouldRequeue ? {
+            status: "RECEIVED",
+            processingStartedAt: null,
+            processedAt: null,
+          } : {}),
         },
         $inc: { deliveries: 1 },
       },
@@ -101,6 +120,7 @@ export async function registerSunpayPayoutWebhook(
       eventKey: identity.eventKey,
       duplicate: true,
       status: existing.status,
+      requeued: shouldRequeue,
     };
   }
 }
@@ -115,10 +135,14 @@ export async function processSunpayPayoutWebhook(
   } = {},
 ) {
   const processingAt = now();
+  const staleBefore = new Date(processingAt.getTime() - WEBHOOK_PROCESSING_LEASE_MS);
   const claimed = await eventModel.findOneAndUpdate(
     {
       eventKey: clean(eventKey),
-      status: { $in: ["RECEIVED", "FAILED"] },
+      $or: [
+        { status: { $in: ["RECEIVED", "FAILED"] } },
+        { status: "PROCESSING", processingStartedAt: { $lte: staleBefore } },
+      ],
     },
     {
       $set: {
