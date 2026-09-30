@@ -15,6 +15,7 @@ import {
 
 const API_KEY = "payout-key";
 const API_SECRET = "payout-secret";
+const WEBHOOK_SECRET = "shared-webhook-secret";
 const BASE_URL = "https://ttpay.business";
 const CALLBACK_URL = "https://example.com/api/webhooks/payouts/sunpay";
 
@@ -26,14 +27,14 @@ function jsonResponse(data, status = 200) {
   };
 }
 
-test("Sunpay payout signing uses the exact raw JSON body", () => {
+test("Sunpay payout requests use the payout API secret while callbacks use the shared webhook secret", () => {
   const raw = Buffer.from('{"payout_id":"PO_001","amount":1000}', "utf8");
-  const signature = computeSunpayPayoutSignature(raw, API_SECRET);
+  const requestSignature = computeSunpayPayoutSignature(raw, API_SECRET);
+  const webhookSignature = computeSunpayPayoutSignature(raw, WEBHOOK_SECRET);
 
-  assert.match(signature, /^[0-9a-f]{64}$/);
-  assert.equal(verifySunpayPayoutWebhook(raw, signature, API_SECRET), true);
-  const wrong = signature.slice(0, -1) + (signature.endsWith("0") ? "1" : "0");
-  assert.equal(verifySunpayPayoutWebhook(raw, wrong, API_SECRET), false);
+  assert.match(requestSignature, /^[0-9a-f]{64}$/);
+  assert.equal(verifySunpayPayoutWebhook(raw, webhookSignature, WEBHOOK_SECRET), true);
+  assert.equal(verifySunpayPayoutWebhook(raw, requestSignature, WEBHOOK_SECRET), false);
 });
 
 test("Sunpay creates UPI payout with payout credentials and signed body", async () => {
