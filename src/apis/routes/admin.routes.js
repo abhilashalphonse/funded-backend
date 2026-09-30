@@ -18,6 +18,22 @@ import { hasCompletedCurrentChallenge, masterApprovalClaimFilter, resetAccountFo
 import { sendSupportEmail, replySubject } from "../../email/resendSupport.service.js";
 import { listUpiGateways, setActiveUpiGateway } from "../services/paymentProviders/upiGateway.registry.js";
 import {
+  getAdminPayout,
+  listAdminPayouts,
+  transitionAdminPayout,
+} from "../services/payoutAdmin.service.js";
+import { payoutDestinationEncryptionConfigured } from "../services/payoutDestination.service.js";
+import { payoutQuoteConfigured } from "../services/payoutQuote.service.js";
+import {
+  automaticPayoutExecutionAvailable,
+  getAutomaticPayoutProvider,
+  listPayoutExecutionProviders,
+} from "../services/payoutProviders/payoutProvider.registry.js";
+import {
+  executeApprovedSunpayPayout,
+  reconcileSunpayPayout,
+} from "../services/payoutProviders/payoutExecution.service.js";
+import {
   assertCustomerTradingAccessAllowed,
   blockCustomerTradingAccounts,
   reactivateCustomerTradingAccounts,
@@ -603,6 +619,144 @@ async function listPayments(req, res, next) {
 router.get("/orders", listPayments);
 router.get("/payments", listPayments);
 
+router.get("/payouts", async (req, res, next) => {
+  try {
+    const data = await listAdminPayouts({
+      page: req.query.page,
+      limit: req.query.limit,
+      q: req.query.q,
+      status: req.query.status,
+      method: req.query.method,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.get("/payouts/:payoutId", async (req, res, next) => {
+  try {
+    const data = await getAdminPayout(req.params.payoutId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+router.post("/payouts/:payoutId/action", async (req, res, next) => {
+  try {
+    const result = await transitionAdminPayout(req.params.payoutId, {
+      action: req.body?.action,
+      reason: req.body?.reason,
+      provider: req.body?.provider,
+      providerReference: req.body?.providerReference,
+      utr: req.body?.utr,
+      txHash: req.body?.txHash,
+      network: req.body?.network,
+      settlementAmount: req.body?.settlementAmount,
+      settlementCurrency: req.body?.settlementCurrency,
+      traderReceivedAmount: req.body?.traderReceivedAmount,
+      providerFeePaidByAcg: req.body?.providerFeePaidByAcg,
+      failureCode: req.body?.failureCode,
+    });
+
+    let after = result.after;
+    let executionError = null;
+    const automaticProvider = result.action === "APPROVE"
+      ? getAutomaticPayoutProvider(result.after?.method)
+      : null;
+
+    if (automaticProvider?.id === "sunpay") {
+      try {
+        await executeApprovedSunpayPayout(req.params.payoutId);
+        const detail = await getAdminPayout(req.params.payoutId);
+        after = detail.payout;
+      } catch (error) {
+        executionError = {
+          code: error?.code || "PAYOUT_AUTO_EXECUTION_FAILED",
+          message: error?.message || "Automatic payout execution failed.",
+        };
+        const detail = await getAdminPayout(req.params.payoutId).catch(() => null);
+        if (detail?.payout) after = detail.payout;
+
+        await writeAudit(req, {
+          action: "PAYOUT_AUTO_EXECUTION_FAILED",
+          entityType: "PAYOUT",
+          entityId: req.params.payoutId,
+          reason: executionError.message,
+          before: result.after,
+          after,
+        });
+      }
+    }
+
+    await writeAudit(req, {
+      action: `PAYOUT_${result.action}`,
+      entityType: "PAYOUT",
+      entityId: req.params.payoutId,
+      reason: result.reason,
+      before: result.before,
+      after,
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data: { ...after, executionError } });
+  } catch (error) { next(error); }
+});
+
+router.post("/payouts/:payoutId/execute", async (req, res, next) => {
+  try {
+    const reason = String(req.body?.reason || "").trim();
+    if (reason.length < 3) {
+      return res.status(400).json({ success: false, message: "A reason is required to retry payout execution." });
+    }
+
+    const before = (await getAdminPayout(req.params.payoutId)).payout;
+    const provider = getAutomaticPayoutProvider(before?.method);
+    if (provider?.id !== "sunpay") {
+      return res.status(409).json({ success: false, message: "No automatic payout provider is configured for this method." });
+    }
+
+    await executeApprovedSunpayPayout(req.params.payoutId);
+    const after = (await getAdminPayout(req.params.payoutId)).payout;
+
+    await writeAudit(req, {
+      action: "PAYOUT_EXECUTION_RETRY",
+      entityType: "PAYOUT",
+      entityId: req.params.payoutId,
+      reason,
+      before,
+      after,
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data: after });
+  } catch (error) { next(error); }
+});
+
+router.post("/payouts/:payoutId/reconcile", async (req, res, next) => {
+  try {
+    const reason = String(req.body?.reason || "").trim();
+    if (reason.length < 3) {
+      return res.status(400).json({ success: false, message: "A reason is required to verify payout status." });
+    }
+
+    const before = (await getAdminPayout(req.params.payoutId)).payout;
+    await reconcileSunpayPayout(req.params.payoutId);
+    const after = (await getAdminPayout(req.params.payoutId)).payout;
+
+    await writeAudit(req, {
+      action: "PAYOUT_PROVIDER_RECONCILE",
+      entityType: "PAYOUT",
+      entityId: req.params.payoutId,
+      reason,
+      before,
+      after,
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data: after });
+  } catch (error) { next(error); }
+});
+
 router.post("/payments/:paymentId/retry-activation", async (req, res, next) => {
   try {
     const reason = String(req.body?.reason || "").trim();
@@ -948,6 +1102,8 @@ router.get("/system", async (_req, res, next) => {
   try {
     const upiGateways = await listUpiGateways();
     const activeUpiGateway = upiGateways.find(item => item.active) || null;
+    const payoutProviders = listPayoutExecutionProviders();
+    const payoutSecurityReady = payoutDestinationEncryptionConfigured() && payoutQuoteConfigured();
     res.json({
       success: true,
       data: {
@@ -959,13 +1115,21 @@ router.get("/system", async (_req, res, next) => {
           { name: "Rupex", status: upiGateways.find(item => item.id === "rupex")?.status || "NOT_CONFIGURED" },
           { name: "Sunpay", status: upiGateways.find(item => item.id === "sunpay")?.status || "NOT_INTEGRATED" },
           { name: "Support AI", status: env.OPENAI_API_KEY ? "CONFIGURED" : "NOT_CONFIGURED" },
+          { name: "Payout workflow", status: payoutSecurityReady ? "CONFIGURED" : "NOT_CONFIGURED" },
+          { name: "Payout automation", status: automaticPayoutExecutionAvailable() ? "CONFIGURED" : "MANUAL" },
         ],
         upiGateways,
         activeUpiGatewayId: activeUpiGateway?.id || null,
+        payoutProviders,
+        payoutSecurity: {
+          destinationEncryption: payoutDestinationEncryptionConfigured(),
+          signedQuotes: payoutQuoteConfigured(),
+        },
         tradingProvider: env.TRADING_PROVIDER,
         environment: env.NODE_ENV,
         capabilities: {
-          payouts: false,
+          payouts: true,
+          payoutAutomation: automaticPayoutExecutionAvailable(),
           refunds: false,
           challengeProductAdmin: false,
           pricingAdmin: false,

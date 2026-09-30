@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import env from "../../../config/env.js";
+import { verifySunpayWebhookSignature } from "./sunpayWebhook.service.js";
 
 export const SUNPAY_PAYIN_MIN_INR = 100;
 export const SUNPAY_PAYIN_MAX_INR = 50000;
@@ -39,17 +40,8 @@ function signBody(body) {
   return computeSunpaySignature(body, apiSecret());
 }
 
-function safeEqualHex(leftValue, rightValue) {
-  const left = Buffer.from(String(leftValue || "").trim().toLowerCase());
-  const right = Buffer.from(String(rightValue || "").trim().toLowerCase());
-  return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
-
-export function verifySunpayWebhook(rawBody, signature) {
-  const raw = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody || ""), "utf8");
-  if (!raw.length || !signature) return false;
-  const expected = computeSunpaySignature(raw, apiSecret());
-  return safeEqualHex(expected, signature);
+export function verifySunpayWebhook(rawBody, signature, secret = null) {
+  return verifySunpayWebhookSignature(rawBody, signature, secret);
 }
 
 export async function createSunpayOrder({

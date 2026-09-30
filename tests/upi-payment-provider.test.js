@@ -10,6 +10,7 @@ import {
   createSunpayOrder,
   computeSunpaySignature,
   normalizeSunpayStatus,
+  verifySunpayWebhook,
 } from "../src/apis/services/paymentProviders/sunpay.service.js";
 
 test("normalizes the documented Rupex lifecycle into ACG payment states", () => {
@@ -66,6 +67,16 @@ test("Sunpay signs the exact raw JSON body with HMAC-SHA256", () => {
   );
 });
 
+
+test("Sunpay pay-in webhook verification uses the shared webhook secret, not the pay-in API secret", () => {
+  const body = Buffer.from('{"event":"payin.updated","order_id":"ORDER_001","status":"success"}', "utf8");
+  const webhookSecret = "shared-webhook-secret";
+  const payinSecret = "payin-request-secret";
+  const signature = computeSunpaySignature(body, webhookSecret);
+
+  assert.equal(verifySunpayWebhook(body, signature, webhookSecret), true);
+  assert.equal(verifySunpayWebhook(body, computeSunpaySignature(body, payinSecret), webhookSecret), false);
+});
 
 test("Sunpay rejects decimal INR amounts before making a provider request", async () => {
   await assert.rejects(

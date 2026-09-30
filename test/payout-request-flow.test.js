@@ -1,0 +1,472 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  createCustomerPayoutRequest,
+  getCustomerPayoutQuote,
+  quotePayoutSettlement,
+} from "../src/apis/services/payout.service.js";
+import {
+  normalizePayoutDestination,
+  SUPPORTED_USDT_NETWORKS,
+} from "../src/apis/services/payoutDestination.service.js";
+import {
+  issuePayoutQuoteToken,
+  verifyPayoutQuoteToken,
+} from "../src/apis/services/payoutQuote.service.js";
+import { PAYOUT_PROVIDER_FEE_POLICY } from "../src/apis/services/payoutPolicy.js";
+
+function eligibleMaster(overrides = {}) {
+  return {
+    accountId: "MASTER-100",
+    customerId: "CUS-100",
+    ownerExternalRef: "CUS-100",
+    accountMode: "CHALLENGE",
+    status: "FUNDED",
+    enabled: true,
+    customerAccessBlocked: false,
+    initialDeposit: 100000,
+    accountSize: 100000,
+    balance: 105000,
+    projections: { profit: 5000 },
+    commercialTerms: {
+      profitSplit: 80,
+      payoutFrequency: "On Demand",
+    },
+    fundedApprovedAt: new Date("2026-09-01T00:00:00.000Z"),
+    lastPlatformSnapshotAt: new Date("2026-09-29T12:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function accountModelWith(account) {
+  return {
+    async findOne() {
+      return account;
+    },
+  };
+}
+
+function memoryPayoutModel(initial = []) {
+  const records = [...initial];
+
+  return {
+    records,
+    find() {
+      return {
+        sort() { return this; },
+        limit() { return this; },
+        lean() { return Promise.resolve([...records].reverse()); },
+      };
+    },
+    async findOne(query) {
+      return records.find(record =>
+        (!query.customerId || record.customerId === query.customerId)
+        && (!query.idempotencyKey || record.idempotencyKey === query.idempotencyKey)
+      ) || null;
+    },
+    async create(record) {
+      if (records.some(item => item.activeKey && item.activeKey === record.activeKey)) {
+        const error = new Error("duplicate active payout");
+        error.code = 11000;
+        error.keyPattern = { activeKey: 1 };
+        throw error;
+      }
+      if (records.some(item => item.customerId === record.customerId && item.idempotencyKey === record.idempotencyKey)) {
+        const error = new Error("duplicate idempotency");
+        error.code = 11000;
+        error.keyPattern = { customerId: 1, idempotencyKey: 1 };
+        throw error;
+      }
+      const created = { ...record, createdAt: record.requestedAt };
+      records.push(created);
+      return created;
+    },
+  };
+}
+
+const fixedFx = async amountUsd => ({
+  amountInr: Number((Number(amountUsd) * 83).toFixed(2)),
+  usdToInr: 83,
+  source: "test-fx",
+  quoteDate: "2026-09-29",
+});
+
+
+function quotedUpi160() {
+  return {
+    v: 1,
+    accountId: "MASTER-100",
+    method: "UPI",
+    requestedAmountUsd: 160,
+    settlementCurrency: "INR",
+    settlementAmount: 13280,
+    fxRate: 83,
+    quoteSource: "test-fx",
+    quoteDate: "2026-09-29",
+    quoteStatus: "LOCKED",
+    issuedAt: "2026-09-29T11:55:00.000Z",
+    expiresAt: "2026-09-29T12:05:00.000Z",
+  };
+}
+
+test("UPI payout quotes do not invent provider minimum or maximum values", async () => {
+  const small = await quotePayoutSettlement("UPI", 1, {
+    fxResolver: async () => ({ amountInr: 83, usdToInr: 83, source: "test", quoteDate: "2026-09-29" }),
+  });
+  const large = await quotePayoutSettlement("UPI", 300, { fxResolver: fixedFx });
+
+  assert.equal(small.available, true);
+  assert.equal(small.settlementAmount, 83);
+  assert.equal(large.available, true);
+  assert.equal(large.settlementAmount, 24900);
+  assert.equal(small.limits, undefined);
+  assert.equal(large.limits, undefined);
+});
+
+test("bank payout quote snapshots the current USD/INR rate without inventing provider limits", async () => {
+  const quote = await quotePayoutSettlement("BANK", 4000, { fxResolver: fixedFx });
+
+  assert.equal(quote.available, true);
+  assert.equal(quote.settlementCurrency, "INR");
+  assert.equal(quote.settlementAmount, 332000);
+  assert.equal(quote.fxRate, 83);
+  assert.equal(quote.quoteStatus, "LOCKED");
+});
+
+test("USDT remains unavailable until an exact provider settlement quote can be confirmed", async () => {
+  const quote = await quotePayoutSettlement("USDT", 4000);
+
+  assert.equal(quote.available, false);
+  assert.equal(quote.blocker, "USDT_PROVIDER_NOT_CONFIGURED");
+  assert.equal(quote.settlementCurrency, "USDT");
+  assert.equal(quote.settlementAmount, null);
+  assert.equal(quote.quoteStatus, "PROVIDER_PENDING");
+  assert.deepEqual(quote.networks, SUPPORTED_USDT_NETWORKS);
+});
+
+test("signed payout quotes preserve the confirmed settlement and expire", () => {
+  const secret = "test-payout-quote-secret-that-is-long-enough-123";
+  const issued = issuePayoutQuoteToken(
+    {
+      accountId: "MASTER-100",
+      method: "UPI",
+      requestedAmountUsd: 160,
+      settlementCurrency: "INR",
+      settlementAmount: 13280,
+      fxRate: 83,
+      quoteSource: "test-fx",
+      quoteDate: "2026-09-29",
+      quoteStatus: "LOCKED",
+    },
+    {
+      now: () => new Date("2026-09-29T12:00:00.000Z"),
+      ttlMs: 10 * 60 * 1000,
+      secret,
+    },
+  );
+
+  const verified = verifyPayoutQuoteToken(issued.quoteId, {
+    now: () => new Date("2026-09-29T12:05:00.000Z"),
+    secret,
+  });
+  assert.equal(verified.settlementAmount, 13280);
+  assert.equal(verified.requestedAmountUsd, 160);
+
+  assert.throws(
+    () => verifyPayoutQuoteToken(issued.quoteId, {
+      now: () => new Date("2026-09-29T12:11:00.000Z"),
+      secret,
+    }),
+    error => error?.code === "PAYOUT_QUOTE_EXPIRED",
+  );
+});
+
+test("customer payout quote returns a signed quote identifier for confirmation", async () => {
+  const account = eligibleMaster({ projections: { profit: 200 } });
+  const result = await getCustomerPayoutQuote(
+    { customerId: "CUS-100" },
+    account.accountId,
+    { method: "UPI", amountUsd: 160 },
+    {
+      accountModel: accountModelWith(account),
+      payoutModel: memoryPayoutModel(),
+      fxResolver: fixedFx,
+      quoteIssuer: payload => ({
+        quoteId: "signed-quote-001",
+        quoteExpiresAt: new Date("2026-09-29T12:10:00.000Z"),
+        payload,
+      }),
+    },
+  );
+
+  assert.equal(result.quote.quoteId, "signed-quote-001");
+  assert.equal(result.quote.settlementAmount, 13280);
+  assert.equal(result.quote.quoteExpiresAt.toISOString(), "2026-09-29T12:10:00.000Z");
+});
+
+test("payout destinations are validated and customer-facing snapshots are masked", () => {
+  const upi = normalizePayoutDestination("UPI", {
+    upiId: "trader@upi",
+    beneficiaryName: "Trader One",
+  });
+  assert.equal(upi.payload.upiId, "trader@upi");
+  assert.equal(upi.masked.destination, "tr***@upi");
+
+  const bank = normalizePayoutDestination("BANK", {
+    beneficiaryName: "Trader One",
+    accountNumber: "123456789012",
+    ifsc: "HDFC0001234",
+    bankName: "HDFC Bank",
+  });
+  assert.equal(bank.payload.accountNumber, "123456789012");
+  assert.equal(bank.masked.destination, "•••• 9012");
+
+  assert.throws(
+    () => normalizePayoutDestination("USDT", {
+      network: "TRC20",
+      walletAddress: "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE",
+    }),
+    error => error?.code === "USDT_NETWORK_NOT_CONFIGURED",
+  );
+});
+
+test("invalid payout destinations fail before a payout can be reserved", () => {
+  assert.throws(
+    () => normalizePayoutDestination("UPI", { upiId: "not-an-id", beneficiaryName: "Trader One" }),
+    error => error?.code === "INVALID_UPI_ID",
+  );
+
+  assert.throws(
+    () => normalizePayoutDestination("BANK", {
+      beneficiaryName: "Trader One",
+      accountNumber: "1234567890",
+      ifsc: "BADIFSC",
+    }),
+    error => error?.code === "INVALID_IFSC",
+  );
+
+  assert.throws(
+    () => normalizePayoutDestination("USDT", {
+      network: "ERC20",
+      walletAddress: "0x123",
+    }),
+    error => error?.code === "USDT_NETWORK_NOT_CONFIGURED",
+  );
+});
+
+test("customer can request a full eligible UPI payout and the sensitive destination is not returned", async () => {
+  const payoutModel = memoryPayoutModel();
+  const account = eligibleMaster({ projections: { profit: 200 } }); // 80% = $160 -> ₹13,280
+
+  const result = await createCustomerPayoutRequest(
+    { id: "auth-100", customerId: "CUS-100", email: "trader@example.com" },
+    account.accountId,
+    {
+      method: "UPI",
+      amountUsd: 160,
+      idempotencyKey: "payout-request-0001",
+      quoteId: "signed-quote-0001",
+      destination: {
+        upiId: "trader@upi",
+        beneficiaryName: "Trader One",
+      },
+    },
+    {
+      accountModel: accountModelWith(account),
+      payoutModel,
+      now: () => new Date("2026-09-29T12:00:00.000Z"),
+      quoteVerifier: () => quotedUpi160(),
+      destinationEncryptor: payload => ({
+        destinationEncrypted: Buffer.from(JSON.stringify(payload)).toString("base64"),
+        destinationIv: "test-iv",
+        destinationAuthTag: "test-tag",
+        destinationKeyVersion: "test",
+      }),
+      payoutIdFactory: () => "PAYOUT-TEST-0001",
+    },
+  );
+
+  assert.equal(result.idempotent, false);
+  assert.equal(result.payout.payoutId, "PAYOUT-TEST-0001");
+  assert.equal(result.payout.status, "REQUESTED");
+  assert.equal(result.payout.requestedAmountUsd, 160);
+  assert.equal(result.payout.settlementAmount, 13280);
+  assert.equal(result.payout.feePolicy, "ACG_COVERS");
+  assert.equal(result.payout.destination.destination, "tr***@upi");
+  assert.equal(result.payout.destinationEncrypted, undefined);
+
+  assert.equal(payoutModel.records.length, 1);
+  assert.equal(payoutModel.records[0].activeKey, account.accountId);
+  assert.ok(payoutModel.records[0].destinationEncrypted);
+  assert.equal(payoutModel.records[0].feePolicy, PAYOUT_PROVIDER_FEE_POLICY);
+  assert.equal(payoutModel.records[0].snapshot.availableBeforeRequestUsd, 160);
+});
+
+test("replaying the same idempotency key returns the original payout instead of creating a duplicate", async () => {
+  const payoutModel = memoryPayoutModel();
+  const account = eligibleMaster({ projections: { profit: 200 } });
+  const deps = {
+    accountModel: accountModelWith(account),
+    payoutModel,
+    now: () => new Date("2026-09-29T12:00:00.000Z"),
+    quoteVerifier: () => quotedUpi160(),
+    destinationEncryptor: () => ({
+      destinationEncrypted: "cipher",
+      destinationIv: "iv",
+      destinationAuthTag: "tag",
+      destinationKeyVersion: "test",
+    }),
+    payoutIdFactory: () => "PAYOUT-TEST-0002",
+  };
+  const input = {
+    method: "UPI",
+    amountUsd: 160,
+    idempotencyKey: "payout-request-0002",
+    quoteId: "signed-quote-0002",
+    destination: { upiId: "trader@upi", beneficiaryName: "Trader One" },
+  };
+
+  const first = await createCustomerPayoutRequest(
+    { id: "auth-100", customerId: "CUS-100", email: "trader@example.com" },
+    account.accountId,
+    input,
+    deps,
+  );
+  const second = await createCustomerPayoutRequest(
+    { id: "auth-100", customerId: "CUS-100", email: "trader@example.com" },
+    account.accountId,
+    input,
+    deps,
+  );
+
+  assert.equal(first.idempotent, false);
+  assert.equal(second.idempotent, true);
+  assert.equal(second.payout.payoutId, first.payout.payoutId);
+  assert.equal(payoutModel.records.length, 1);
+});
+
+test("reusing an idempotency key for a different payout is rejected", async () => {
+  const account = eligibleMaster({ projections: { profit: 200 } });
+  const payoutModel = memoryPayoutModel([{
+    payoutId: "PAYOUT-EXISTING",
+    customerId: "CUS-100",
+    accountId: account.accountId,
+    activeKey: account.accountId,
+    idempotencyKey: "same-key-0001",
+    status: "REQUESTED",
+    requestedAmountUsd: 160,
+    method: "UPI",
+  }]);
+
+  await assert.rejects(
+    () => createCustomerPayoutRequest(
+      { customerId: "CUS-100" },
+      account.accountId,
+      {
+        method: "BANK",
+        amountUsd: 150,
+        quoteId: "new-quote",
+        idempotencyKey: "same-key-0001",
+        destination: {
+          beneficiaryName: "Trader One",
+          accountNumber: "123456789012",
+          ifsc: "HDFC0001234",
+        },
+      },
+      { accountModel: accountModelWith(account), payoutModel },
+    ),
+    error => error?.code === "PAYOUT_IDEMPOTENCY_CONFLICT",
+  );
+});
+
+test("customer payout quote refuses amounts above the payout ledger balance", async () => {
+  const account = eligibleMaster({ projections: { profit: 1000 } }); // $800 share
+
+  await assert.rejects(
+    () => getCustomerPayoutQuote(
+      { customerId: "CUS-100" },
+      account.accountId,
+      { method: "BANK", amountUsd: 900 },
+      {
+        accountModel: accountModelWith(account),
+        payoutModel: memoryPayoutModel(),
+        fxResolver: fixedFx,
+      },
+    ),
+    error => error?.code === "PAYOUT_AMOUNT_EXCEEDS_AVAILABLE" && error?.availableUsd === 800,
+  );
+});
+
+test("payout request rejects a quote whose amount or account no longer matches", async () => {
+  const account = eligibleMaster({ projections: { profit: 200 } });
+
+  await assert.rejects(
+    () => createCustomerPayoutRequest(
+      { customerId: "CUS-100" },
+      account.accountId,
+      {
+        method: "UPI",
+        amountUsd: 160,
+        quoteId: "mismatched-quote",
+        idempotencyKey: "payout-mismatch-0001",
+        destination: { upiId: "trader@upi", beneficiaryName: "Trader One" },
+      },
+      {
+        accountModel: accountModelWith(account),
+        payoutModel: memoryPayoutModel(),
+        quoteVerifier: () => ({ ...quotedUpi160(), requestedAmountUsd: 150 }),
+        destinationEncryptor: () => ({
+          destinationEncrypted: "cipher",
+          destinationIv: "iv",
+          destinationAuthTag: "tag",
+        }),
+      },
+    ),
+    error => error?.code === "PAYOUT_QUOTE_MISMATCH",
+  );
+});
+
+test("an active payout blocks a second payout even with a different idempotency key", async () => {
+  const account = eligibleMaster({ projections: { profit: 1000 } });
+  const payoutModel = memoryPayoutModel([{
+    payoutId: "PAYOUT-ACTIVE",
+    customerId: "CUS-100",
+    accountId: account.accountId,
+    activeKey: account.accountId,
+    idempotencyKey: "existing-request",
+    status: "REVIEWING",
+    requestedAmountUsd: 300,
+    cycle: { key: "ON_DEMAND" },
+  }]);
+
+  await assert.rejects(
+    () => createCustomerPayoutRequest(
+      { customerId: "CUS-100" },
+      account.accountId,
+      {
+        method: "BANK",
+        amountUsd: 100,
+        idempotencyKey: "new-request-key",
+        quoteId: "signed-quote-new",
+        destination: {
+          beneficiaryName: "Trader One",
+          accountNumber: "123456789012",
+          ifsc: "HDFC0001234",
+        },
+      },
+      {
+        accountModel: accountModelWith(account),
+        payoutModel,
+        fxResolver: fixedFx,
+        destinationEncryptor: () => ({
+          destinationEncrypted: "cipher",
+          destinationIv: "iv",
+          destinationAuthTag: "tag",
+        }),
+      },
+    ),
+    error => error?.code === "PAYOUT_NOT_ELIGIBLE"
+      && Array.isArray(error?.blockers)
+      && error.blockers.includes("PAYOUT_ALREADY_IN_PROGRESS"),
+  );
+});

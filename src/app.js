@@ -8,6 +8,7 @@ import customerRoutes from "./apis/routes/customer.routes.js";
 import analyticsRoutes from "./apis/routes/analytics.routes.js";
 import supportRoutes from "./apis/routes/support.routes.js";
 import resendWebhookRoutes from "./apis/routes/resendWebhook.routes.js";
+import sunpayPayoutWebhookRoutes from "./apis/routes/sunpayPayoutWebhook.routes.js";
 import adminRoutes from "./apis/routes/admin.routes.js";
 import simulatorRoutes from "./simulator/api.js";
 import Account from "./accounts/account.model.js";
@@ -18,6 +19,10 @@ import { COMMAND_QUEUE_NAME } from "./workers/state-engine/commandQueue.js";
 import { configuredTradingProvider } from "./connectors/trading/registry.js";
 import { provisionTradingAccount } from "./connectors/trading/account-provisioning.js";
 import pgBossRetention from "./maintenance/pgbossRetention.js";
+import { payoutDestinationEncryptionConfigured } from "./apis/services/payoutDestination.service.js";
+import { payoutQuoteConfigured } from "./apis/services/payoutQuote.service.js";
+import { automaticPayoutExecutionAvailable } from "./apis/services/payoutProviders/payoutProvider.registry.js";
+import { PAYOUT_PROVIDER_FEE_POLICY } from "./apis/services/payoutPolicy.js";
 
 const app = express();
 
@@ -34,6 +39,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use("/api/webhooks/resend", express.raw({ type: "application/json", limit: "256kb" }), resendWebhookRoutes);
+app.use("/api/webhooks/payouts/sunpay", express.raw({ type: "application/json", limit: "64kb" }), sunpayPayoutWebhookRoutes);
 app.use(express.json({
   limit: "128kb",
   verify(req, _res, buffer) {
@@ -69,6 +75,11 @@ app.get("/health", (req, res) => res.json({
   tradingCredentialEmailConfigured: Boolean(process.env.RESEND_API_KEY && process.env.TRADING_EMAIL_FROM),
   rupexConfigured: Boolean(env.RUPEX_BASE_URL && env.RUPEX_API_TOKEN && env.RUPEX_CALLBACK_URL),
   sunpayConfigured: Boolean(env.SUNPAY_BASE_URL && env.SUNPAY_API_KEY && env.SUNPAY_API_SECRET && env.SUNPAY_CALLBACK_URL),
+  sunpayWebhookConfigured: Boolean(env.SUNPAY_WEBHOOK_SECRET),
+  payoutDestinationEncryptionConfigured: payoutDestinationEncryptionConfigured(),
+  payoutQuoteSigningConfigured: payoutQuoteConfigured(),
+  payoutAutomationConfigured: automaticPayoutExecutionAvailable(),
+  sunpayPayoutFeePolicy: PAYOUT_PROVIDER_FEE_POLICY,
   simulatorRoutesEnabled: env.ENABLE_SIMULATOR_ROUTES,
   localAdminRoutesEnabled: env.ENABLE_LOCAL_ADMIN_ROUTES,
 }));

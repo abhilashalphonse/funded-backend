@@ -56,6 +56,7 @@ const gateways = [
       && env.SUNPAY_API_KEY
       && env.SUNPAY_API_SECRET
       && env.SUNPAY_CALLBACK_URL
+      && (env.SUNPAY_WEBHOOK_SECRET || env.SUNPAY_API_SECRET)
     ),
     callbackUrl: () => env.SUNPAY_CALLBACK_URL,
     quoteSecret: () => env.SUNPAY_API_SECRET,

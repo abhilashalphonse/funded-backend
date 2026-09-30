@@ -36,6 +36,13 @@ function validUrl(name, value) {
   catch { throw new Error(`${name} must be a valid URL.`); }
 }
 
+function httpsUrl(name, value) {
+  const url = validUrl(name, value);
+  if (!url) return url;
+  if (new URL(url).protocol !== "https:") throw new Error(`${name} must use HTTPS.`);
+  return url;
+}
+
 const fundedRiskPolicyVersion = String(process.env.ACG_FUNDED_RISK_POLICY_VERSION || "ACG_FUNDED_V1").trim().toUpperCase();
 if (!["ACG_FUNDED_V1", "ACG_FUNDED_V2"].includes(fundedRiskPolicyVersion)) {
   throw new Error("ACG_FUNDED_RISK_POLICY_VERSION must be ACG_FUNDED_V1 or ACG_FUNDED_V2.");
@@ -64,6 +71,10 @@ const sunpayBaseUrl = String(process.env.SUNPAY_BASE_URL || "https://ttpay.busin
 const sunpayApiKey = String(process.env.SUNPAY_API_KEY || "").trim() || undefined;
 const sunpayApiSecret = String(process.env.SUNPAY_API_SECRET || "").trim() || undefined;
 const sunpayCallbackUrl = String(process.env.SUNPAY_CALLBACK_URL || "").trim() || undefined;
+const sunpayPayoutApiKey = String(process.env.SUNPAY_PAYOUT_API_KEY || "").trim() || undefined;
+const sunpayPayoutApiSecret = String(process.env.SUNPAY_PAYOUT_API_SECRET || "").trim() || undefined;
+const sunpayPayoutCallbackUrl = String(process.env.SUNPAY_PAYOUT_CALLBACK_URL || "").trim() || undefined;
+const sunpayWebhookSecret = String(process.env.SUNPAY_WEBHOOK_SECRET || "").trim() || undefined;
 
 const env = Object.freeze({
   NODE_ENV: nodeEnv,
@@ -133,6 +144,10 @@ const env = Object.freeze({
   SUNPAY_API_KEY: sunpayApiKey,
   SUNPAY_API_SECRET: sunpayApiSecret,
   SUNPAY_CALLBACK_URL: validUrl("SUNPAY_CALLBACK_URL", sunpayCallbackUrl),
+  SUNPAY_PAYOUT_API_KEY: sunpayPayoutApiKey,
+  SUNPAY_PAYOUT_API_SECRET: sunpayPayoutApiSecret,
+  SUNPAY_PAYOUT_CALLBACK_URL: httpsUrl("SUNPAY_PAYOUT_CALLBACK_URL", sunpayPayoutCallbackUrl),
+  SUNPAY_WEBHOOK_SECRET: sunpayWebhookSecret,
 
   ENABLE_SIMULATOR_ROUTES: bool("ENABLE_SIMULATOR_ROUTES", !isProduction),
   ENABLE_LOCAL_ADMIN_ROUTES: bool("ENABLE_LOCAL_ADMIN_ROUTES", !isProduction),
@@ -145,6 +160,15 @@ if (
   && !(env.SUNPAY_BASE_URL && env.SUNPAY_API_KEY && env.SUNPAY_API_SECRET && env.SUNPAY_CALLBACK_URL)
 ) {
   throw new Error("At least one UPI gateway (Rupex or Sunpay) must be fully configured in production.");
+}
+// Sunpay payout/webhook configuration is optional and may be rolled out in
+// stages. Do not crash the whole API on a partial optional configuration;
+// provider registries fail closed until every credential they require exists.
+if (env.SUNPAY_PAYOUT_API_SECRET && env.SUNPAY_PAYOUT_API_SECRET.length < 16) {
+  throw new Error("SUNPAY_PAYOUT_API_SECRET must be at least 16 characters.");
+}
+if (env.SUNPAY_WEBHOOK_SECRET && env.SUNPAY_WEBHOOK_SECRET.length < 16) {
+  throw new Error("SUNPAY_WEBHOOK_SECRET must be at least 16 characters.");
 }
 if (env.ACG_TRADER_WEBHOOK_SECRET && env.ACG_TRADER_WEBHOOK_SECRET.length < 16) throw new Error("ACG_TRADER_WEBHOOK_SECRET must be at least 16 characters.");
 
