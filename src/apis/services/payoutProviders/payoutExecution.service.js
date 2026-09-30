@@ -6,6 +6,7 @@ import {
   getSunpayPayoutBalance,
   getSunpayPayoutStatus,
 } from "./sunpayPayout.service.js";
+import { assertAutomaticPayoutExecutionAllowed } from "./payoutProvider.registry.js";
 
 function plain(record) {
   if (!record) return null;
@@ -72,6 +73,7 @@ export async function executeApprovedSunpayPayout(
     balanceFetcher = getSunpayPayoutBalance,
     payoutCreator = createSunpayPayout,
     statusFetcher = getSunpayPayoutStatus,
+    executionGuard = assertAutomaticPayoutExecutionAllowed,
   } = {},
 ) {
   const record = await findPayoutWithDestination(payoutModel, payoutId);
@@ -93,6 +95,12 @@ export async function executeApprovedSunpayPayout(
     error.code = "PAYOUT_NOT_APPROVED_FOR_EXECUTION";
     throw error;
   }
+
+  // Defense in depth: callers cannot bypass provider readiness by invoking this
+  // service directly. Reconciliation remains available for already-submitted
+  // payouts, but creating a new Sunpay payout requires an explicitly ready
+  // automatic provider.
+  executionGuard(record.method, "sunpay");
 
   const settlementAmount = money2(record.settlementAmount);
   if (
