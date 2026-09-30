@@ -161,27 +161,11 @@ if (
 ) {
   throw new Error("At least one UPI gateway (Rupex or Sunpay) must be fully configured in production.");
 }
-const sunpayPayoutConfigCount = [
-  env.SUNPAY_PAYOUT_API_KEY,
-  env.SUNPAY_PAYOUT_API_SECRET,
-  env.SUNPAY_PAYOUT_CALLBACK_URL,
-].filter(Boolean).length;
-if (sunpayPayoutConfigCount > 0 && sunpayPayoutConfigCount < 3) {
-  throw new Error("SUNPAY_PAYOUT_API_KEY, SUNPAY_PAYOUT_API_SECRET, and SUNPAY_PAYOUT_CALLBACK_URL must be configured together.");
-}
+// Sunpay payout/webhook configuration is optional and may be rolled out in
+// stages. Do not crash the whole API on a partial optional configuration;
+// provider registries fail closed until every credential they require exists.
 if (env.SUNPAY_PAYOUT_API_SECRET && env.SUNPAY_PAYOUT_API_SECRET.length < 16) {
   throw new Error("SUNPAY_PAYOUT_API_SECRET must be at least 16 characters.");
-}
-const sunpayAnyConfigured = Boolean(
-  env.SUNPAY_API_KEY
-  || env.SUNPAY_API_SECRET
-  || env.SUNPAY_CALLBACK_URL
-  || env.SUNPAY_PAYOUT_API_KEY
-  || env.SUNPAY_PAYOUT_API_SECRET
-  || env.SUNPAY_PAYOUT_CALLBACK_URL
-);
-if (sunpayAnyConfigured && !env.SUNPAY_WEBHOOK_SECRET) {
-  throw new Error("SUNPAY_WEBHOOK_SECRET is required when Sunpay pay-in or payout is configured.");
 }
 if (env.SUNPAY_WEBHOOK_SECRET && env.SUNPAY_WEBHOOK_SECRET.length < 16) {
   throw new Error("SUNPAY_WEBHOOK_SECRET must be at least 16 characters.");
