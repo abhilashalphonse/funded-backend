@@ -74,6 +74,7 @@ const sunpayCallbackUrl = String(process.env.SUNPAY_CALLBACK_URL || "").trim() |
 const sunpayPayoutApiKey = String(process.env.SUNPAY_PAYOUT_API_KEY || "").trim() || undefined;
 const sunpayPayoutApiSecret = String(process.env.SUNPAY_PAYOUT_API_SECRET || "").trim() || undefined;
 const sunpayPayoutCallbackUrl = String(process.env.SUNPAY_PAYOUT_CALLBACK_URL || "").trim() || undefined;
+const sunpayWebhookSecret = String(process.env.SUNPAY_WEBHOOK_SECRET || "").trim() || undefined;
 
 const env = Object.freeze({
   NODE_ENV: nodeEnv,
@@ -146,6 +147,7 @@ const env = Object.freeze({
   SUNPAY_PAYOUT_API_KEY: sunpayPayoutApiKey,
   SUNPAY_PAYOUT_API_SECRET: sunpayPayoutApiSecret,
   SUNPAY_PAYOUT_CALLBACK_URL: httpsUrl("SUNPAY_PAYOUT_CALLBACK_URL", sunpayPayoutCallbackUrl),
+  SUNPAY_WEBHOOK_SECRET: sunpayWebhookSecret,
 
   ENABLE_SIMULATOR_ROUTES: bool("ENABLE_SIMULATOR_ROUTES", !isProduction),
   ENABLE_LOCAL_ADMIN_ROUTES: bool("ENABLE_LOCAL_ADMIN_ROUTES", !isProduction),
@@ -169,6 +171,20 @@ if (sunpayPayoutConfigCount > 0 && sunpayPayoutConfigCount < 3) {
 }
 if (env.SUNPAY_PAYOUT_API_SECRET && env.SUNPAY_PAYOUT_API_SECRET.length < 16) {
   throw new Error("SUNPAY_PAYOUT_API_SECRET must be at least 16 characters.");
+}
+const sunpayAnyConfigured = Boolean(
+  env.SUNPAY_API_KEY
+  || env.SUNPAY_API_SECRET
+  || env.SUNPAY_CALLBACK_URL
+  || env.SUNPAY_PAYOUT_API_KEY
+  || env.SUNPAY_PAYOUT_API_SECRET
+  || env.SUNPAY_PAYOUT_CALLBACK_URL
+);
+if (sunpayAnyConfigured && !env.SUNPAY_WEBHOOK_SECRET) {
+  throw new Error("SUNPAY_WEBHOOK_SECRET is required when Sunpay pay-in or payout is configured.");
+}
+if (env.SUNPAY_WEBHOOK_SECRET && env.SUNPAY_WEBHOOK_SECRET.length < 16) {
+  throw new Error("SUNPAY_WEBHOOK_SECRET must be at least 16 characters.");
 }
 if (env.ACG_TRADER_WEBHOOK_SECRET && env.ACG_TRADER_WEBHOOK_SECRET.length < 16) throw new Error("ACG_TRADER_WEBHOOK_SECRET must be at least 16 characters.");
 
