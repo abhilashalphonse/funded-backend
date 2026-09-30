@@ -190,6 +190,44 @@ function payoutModel(initial) {
   };
 }
 
+test("direct approved Sunpay execution is hard-blocked while automatic provider readiness is disabled", async () => {
+  const model = payoutModel({
+    payoutId: "PAYOUT-GUARD",
+    accountId: "MASTER-GUARD",
+    status: "APPROVED",
+    activeKey: "MASTER-GUARD",
+    method: "UPI",
+    settlementCurrency: "INR",
+    settlementAmount: 1000,
+  });
+  let balanceCalls = 0;
+  let createCalls = 0;
+
+  await assert.rejects(
+    () => executeApprovedSunpayPayout("PAYOUT-GUARD", {
+      payoutModel: model,
+      destinationDecryptor: () => ({
+        upiId: "trader@upi",
+        beneficiaryName: "Trader One",
+      }),
+      balanceFetcher: async () => {
+        balanceCalls += 1;
+        return { currency: "INR", balance: 50000 };
+      },
+      payoutCreator: async () => {
+        createCalls += 1;
+        return {};
+      },
+    }),
+    error => error?.code === "PAYOUT_AUTOMATIC_EXECUTION_DISABLED",
+  );
+
+  assert.equal(balanceCalls, 0);
+  assert.equal(createCalls, 0);
+  assert.equal(model.record.status, "APPROVED");
+  assert.equal(model.record.activeKey, "MASTER-GUARD");
+});
+
 test("approved UPI payout executes through Sunpay then remains PROCESSING until status verification succeeds", async () => {
   const model = payoutModel({
     payoutId: "PAYOUT-EXEC-1",
@@ -204,6 +242,7 @@ test("approved UPI payout executes through Sunpay then remains PROCESSING until 
 
   const result = await executeApprovedSunpayPayout("PAYOUT-EXEC-1", {
     payoutModel: model,
+    executionGuard: () => true,
     now: () => new Date("2026-09-29T20:00:00.000Z"),
     destinationDecryptor: () => ({
       method: "UPI",
@@ -471,6 +510,7 @@ test("insufficient Sunpay balance leaves approved payout reserved for retry", as
   await assert.rejects(
     () => executeApprovedSunpayPayout("PAYOUT-EXEC-3", {
       payoutModel: model,
+      executionGuard: () => true,
       destinationDecryptor: () => ({
         upiId: "trader@upi",
         beneficiaryName: "Trader One",
