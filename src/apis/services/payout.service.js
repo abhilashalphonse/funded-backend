@@ -19,11 +19,9 @@ export const PAYOUT_METHODS = Object.freeze([
     id: "UPI",
     label: "UPI",
     settlementCurrency: "INR",
-    limits: Object.freeze({
-      min: 100,
-      max: 20000,
-      unit: "INR",
-    }),
+    // Sunpay documents provider-configured payout minimums/maximums but does
+    // not publish fixed values. Do not hardcode provider limits here.
+    limits: null,
   }),
   Object.freeze({
     id: "BANK",
@@ -622,19 +620,6 @@ export async function quotePayoutSettlement(
     available: true,
   };
 
-  if (configured.id === "UPI") {
-    const min = configured.limits.min;
-    const max = configured.limits.max;
-    if (settlementAmount < min || settlementAmount > max) {
-      return {
-        ...quote,
-        available: false,
-        blocker: "UPI_AMOUNT_OUT_OF_RANGE",
-        limits: { ...configured.limits },
-      };
-    }
-  }
-
   return quote;
 }
 
@@ -766,19 +751,6 @@ export async function createCustomerPayoutRequest(
     error.status = 409;
     error.code = "PAYOUT_QUOTE_MISMATCH";
     throw error;
-  }
-
-  if (configuredMethod.id === "UPI") {
-    const settlementAmount = money2(quote?.settlementAmount);
-    if (
-      settlementAmount < configuredMethod.limits.min
-      || settlementAmount > configuredMethod.limits.max
-    ) {
-      const error = new Error("UPI is not available for the quoted payout amount.");
-      error.status = 409;
-      error.code = "UPI_AMOUNT_OUT_OF_RANGE";
-      throw error;
-    }
   }
 
   const destination = normalizePayoutDestination(configuredMethod.id, input.destination || {});
