@@ -27,6 +27,7 @@ async function main() {
   const security = {
     destinationEncryption: payoutDestinationEncryptionConfigured(),
     signedQuotes: payoutQuoteConfigured(),
+    sunpayWebhookSecret: Boolean(env.SUNPAY_WEBHOOK_SECRET),
   };
   const providers = listPayoutExecutionProviders();
   const sunpay = providers.find(provider => provider.id === "sunpay") || null;
@@ -38,7 +39,7 @@ async function main() {
       balanceProbe = {
         ok: false,
         skipped: true,
-        reason: "SUNPAY_PAYOUT_API_KEY / SUNPAY_PAYOUT_API_SECRET / SUNPAY_PAYOUT_CALLBACK_URL are not fully configured.",
+        reason: "SUNPAY_PAYOUT_API_KEY / SUNPAY_PAYOUT_API_SECRET / SUNPAY_PAYOUT_CALLBACK_URL / SUNPAY_WEBHOOK_SECRET are not fully configured.",
       };
     } else {
       try {
@@ -73,6 +74,7 @@ async function main() {
     manualSettlementReady: Boolean(
       security.destinationEncryption
       && security.signedQuotes
+      && security.sunpayWebhookSecret
       && callbackUrl
       && callbackUrl.startsWith("https://")
     ),
