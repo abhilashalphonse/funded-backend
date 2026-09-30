@@ -221,12 +221,13 @@ test("payout destinations are validated and customer-facing snapshots are masked
   assert.equal(bank.payload.accountNumber, "123456789012");
   assert.equal(bank.masked.destination, "•••• 9012");
 
-  const usdt = normalizePayoutDestination("USDT", {
-    network: "TRC20",
-    walletAddress: "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE",
-  });
-  assert.equal(usdt.masked.network, "TRC20");
-  assert.equal(usdt.masked.destination, "TQn9Y2…bLSE");
+  assert.throws(
+    () => normalizePayoutDestination("USDT", {
+      network: "TRC20",
+      walletAddress: "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE",
+    }),
+    error => error?.code === "USDT_NETWORK_NOT_CONFIGURED",
+  );
 });
 
 test("invalid payout destinations fail before a payout can be reserved", () => {
@@ -249,7 +250,7 @@ test("invalid payout destinations fail before a payout can be reserved", () => {
       network: "ERC20",
       walletAddress: "0x123",
     }),
-    error => error?.code === "UNSUPPORTED_USDT_NETWORK",
+    error => error?.code === "USDT_NETWORK_NOT_CONFIGURED",
   );
 });
 
