@@ -79,6 +79,38 @@ export function getAutomaticPayoutProvider(method) {
   ) || null;
 }
 
+export function assertAutomaticPayoutExecutionAllowed(method, providerId = "sunpay") {
+  const normalizedMethod = String(method || "").trim().toUpperCase();
+  const normalizedProviderId = String(providerId || "").trim().toLowerCase();
+  const provider = PAYOUT_EXECUTION_PROVIDERS.find(candidate =>
+    candidate.id === normalizedProviderId
+    && candidate.automatic
+    && candidate.methods.includes(normalizedMethod)
+  );
+
+  const ready = Boolean(
+    provider
+    && provider.implemented
+    && provider.configured()
+    && provider.automaticReady()
+  );
+
+  if (!ready) {
+    const error = new Error(
+      normalizedProviderId === "sunpay" && PAYOUT_PROVIDER_FEE_POLICY === "ACG_COVERS"
+        ? "Automatic Sunpay payout execution is disabled until provider fee handling can guarantee the trader receives the exact quoted amount."
+        : "Automatic payout execution is not available for this method.",
+    );
+    error.status = 409;
+    error.code = "PAYOUT_AUTOMATIC_EXECUTION_DISABLED";
+    error.provider = normalizedProviderId || null;
+    error.method = normalizedMethod || null;
+    throw error;
+  }
+
+  return provider;
+}
+
 export function automaticPayoutExecutionAvailable() {
   return PAYOUT_EXECUTION_PROVIDERS.some(provider =>
     provider.automatic
