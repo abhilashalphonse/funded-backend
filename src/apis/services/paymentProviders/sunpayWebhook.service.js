@@ -2,7 +2,11 @@ import crypto from "node:crypto";
 import env from "../../../config/env.js";
 
 function webhookSecret() {
-  const value = String(env.SUNPAY_WEBHOOK_SECRET || "").trim();
+  // Migration compatibility: prefer the dedicated merchant webhook secret.
+  // Until the staged production variable is accepted, keep the existing
+  // pay-in callback behavior available via the pay-in API secret. Payout
+  // readiness still requires SUNPAY_WEBHOOK_SECRET explicitly.
+  const value = String(env.SUNPAY_WEBHOOK_SECRET || env.SUNPAY_API_SECRET || "").trim();
   if (!value) {
     const error = new Error("SUNPAY_WEBHOOK_SECRET is not configured.");
     error.status = 503;
