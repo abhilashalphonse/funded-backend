@@ -74,6 +74,7 @@ export function isSunpayPayoutConfigured() {
     && env.SUNPAY_PAYOUT_API_KEY
     && env.SUNPAY_PAYOUT_API_SECRET
     && env.SUNPAY_PAYOUT_CALLBACK_URL
+    && env.SUNPAY_WEBHOOK_SECRET
   );
 }
 
