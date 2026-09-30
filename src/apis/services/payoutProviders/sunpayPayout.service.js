@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import env from "../../../config/env.js";
+import { verifySunpayWebhookSignature } from "../paymentProviders/sunpayWebhook.service.js";
 
 function baseUrl() {
   return String(env.SUNPAY_BASE_URL || "https://ttpay.business").trim().replace(/\/$/, "");
@@ -38,12 +39,6 @@ function callbackUrl() {
   return value;
 }
 
-function safeEqualHex(leftValue, rightValue) {
-  const left = Buffer.from(String(leftValue || "").trim().toLowerCase());
-  const right = Buffer.from(String(rightValue || "").trim().toLowerCase());
-  return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
-
 function providerError(data, response, fallback) {
   const error = new Error(data?.message || data?.error || fallback);
   error.status = response?.status >= 400 ? response.status : 502;
@@ -62,9 +57,7 @@ export function computeSunpayPayoutSignature(rawBody, secret = payoutApiSecret()
 }
 
 export function verifySunpayPayoutWebhook(rawBody, signature, secret = null) {
-  const raw = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody || ""), "utf8");
-  if (!raw.length || !signature) return false;
-  return safeEqualHex(computeSunpayPayoutSignature(raw, secret || payoutApiSecret()), signature);
+  return verifySunpayWebhookSignature(rawBody, signature, secret);
 }
 
 export function normalizeSunpayPayoutStatus(value) {
