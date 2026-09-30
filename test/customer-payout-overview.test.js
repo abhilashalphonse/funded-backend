@@ -192,14 +192,10 @@ test("negative realized performance never creates a positive payout preview", ()
   assert.ok(overview.eligibility.blockers.includes("NO_REALIZED_PROFIT"));
 });
 
-test("UPI payout method exposes the configured INR payout limits", () => {
+test("UPI payout method does not expose undocumented fixed provider limits", () => {
   const upi = PAYOUT_METHODS.find(method => method.id === "UPI");
 
-  assert.deepEqual(upi?.limits, {
-    min: 100,
-    max: 20000,
-    unit: "INR",
-  });
+  assert.equal(upi?.limits, null);
 });
 
 test("payout ledger schema enforces one active payout and idempotency uniqueness", () => {
