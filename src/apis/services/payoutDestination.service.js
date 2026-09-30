@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 
-export const SUPPORTED_USDT_NETWORKS = Object.freeze(["TRC20"]);
+// Sunpay's supplied public docs list USDT as a payout method but do not
+// document an allowed network. Keep USDT disabled until the provider gives an
+// explicit network contract; never infer TRC20/ERC20 from the address.
+export const SUPPORTED_USDT_NETWORKS = Object.freeze([]);
 
 function encryptionKey() {
   const raw = String(process.env.PAYOUT_DESTINATION_ENCRYPTION_KEY || "").trim();
@@ -100,6 +103,13 @@ function normalizeBankDestination(input = {}) {
 }
 
 function normalizeUsdtDestination(input = {}) {
+  if (SUPPORTED_USDT_NETWORKS.length === 0) {
+    throw validationError(
+      "USDT payout network is not configured.",
+      "USDT_NETWORK_NOT_CONFIGURED",
+    );
+  }
+
   const network = String(input.network || "").trim().toUpperCase();
   if (!SUPPORTED_USDT_NETWORKS.includes(network)) {
     throw validationError(
