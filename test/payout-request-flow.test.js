@@ -109,35 +109,18 @@ function quotedUpi160() {
   };
 }
 
-test("UPI quote enforces the ₹100 to ₹20,000 payout range", async () => {
+test("UPI payout quotes do not invent provider minimum or maximum values", async () => {
   const small = await quotePayoutSettlement("UPI", 1, {
     fxResolver: async () => ({ amountInr: 83, usdToInr: 83, source: "test", quoteDate: "2026-09-29" }),
   });
-  assert.equal(small.available, false);
-  assert.equal(small.blocker, "UPI_AMOUNT_OUT_OF_RANGE");
-
-  const valid = await quotePayoutSettlement("UPI", 200, { fxResolver: fixedFx });
-  assert.equal(valid.available, true);
-  assert.equal(valid.settlementAmount, 16600);
-
   const large = await quotePayoutSettlement("UPI", 300, { fxResolver: fixedFx });
-  assert.equal(large.available, false);
+
+  assert.equal(small.available, true);
+  assert.equal(small.settlementAmount, 83);
+  assert.equal(large.available, true);
   assert.equal(large.settlementAmount, 24900);
-  assert.deepEqual(large.limits, { min: 100, max: 20000, unit: "INR" });
-});
-
-test("UPI payout accepts the exact ₹100 and ₹20,000 boundaries", async () => {
-  const min = await quotePayoutSettlement("UPI", 1, {
-    fxResolver: async () => ({ amountInr: 100, usdToInr: 100, source: "test", quoteDate: "2026-09-29" }),
-  });
-  const max = await quotePayoutSettlement("UPI", 200, {
-    fxResolver: async () => ({ amountInr: 20000, usdToInr: 100, source: "test", quoteDate: "2026-09-29" }),
-  });
-
-  assert.equal(min.available, true);
-  assert.equal(min.settlementAmount, 100);
-  assert.equal(max.available, true);
-  assert.equal(max.settlementAmount, 20000);
+  assert.equal(small.limits, undefined);
+  assert.equal(large.limits, undefined);
 });
 
 test("bank payout quote snapshots the current USD/INR rate without inventing provider limits", async () => {
