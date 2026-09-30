@@ -8,6 +8,18 @@ import {
   sunpayPayoutWebhookIdentity,
 } from "../src/apis/services/payoutProviders/sunpayPayoutWebhook.service.js";
 
+function matchesCondition(record, condition = {}) {
+  if (condition.status !== undefined) {
+    if (typeof condition.status === "string" && record.status !== condition.status) return false;
+    if (condition.status?.$in && !condition.status.$in.includes(record.status)) return false;
+  }
+  if (condition.processingStartedAt?.$lte) {
+    if (!record.processingStartedAt) return false;
+    if (new Date(record.processingStartedAt) > new Date(condition.processingStartedAt.$lte)) return false;
+  }
+  return true;
+}
+
 function memoryEventModel() {
   const records = new Map();
 
@@ -31,10 +43,8 @@ function memoryEventModel() {
       const current = records.get(filter.eventKey);
       if (!current) return null;
 
-      if (filter.status) {
-        if (typeof filter.status === "string" && current.status !== filter.status) return null;
-        if (filter.status?.$in && !filter.status.$in.includes(current.status)) return null;
-      }
+      if (filter.$or && !filter.$or.some(condition => matchesCondition(current, condition))) return null;
+      if (!filter.$or && !matchesCondition(current, filter)) return null;
 
       const next = {
         ...current,
@@ -173,6 +183,77 @@ test("failed webhook processing is durable and can be retried safely", async () 
   assert.equal(retried.status, "PROCESSED");
   assert.equal(stored.attempts, 2);
   assert.equal(reconcileCalls, 2);
+});
+
+test("a later status for the same Sunpay payout event id is requeued for authoritative reconciliation", async () => {
+  const eventModel = memoryEventModel();
+  const pending = { ...event, status: "processing" };
+  const registration = await registerSunpayPayoutWebhook(pending, {
+    eventModel,
+    now: () => new Date("2026-09-30T10:00:00.000Z"),
+  });
+
+  await processSunpayPayoutWebhook(registration.eventKey, {
+    eventModel,
+    now: () => new Date("2026-09-30T10:00:10.000Z"),
+    noteWebhook: async () => {},
+    reconcile: async () => ({ status: "PROCESSING" }),
+  });
+  assert.equal(eventModel.records.get(registration.eventKey).status, "PROCESSED");
+
+  const changed = await registerSunpayPayoutWebhook(
+    { ...event, status: "success" },
+    {
+      eventModel,
+      now: () => new Date("2026-09-30T10:01:00.000Z"),
+    },
+  );
+
+  assert.equal(changed.duplicate, true);
+  assert.equal(changed.requeued, true);
+  assert.equal(eventModel.records.get(registration.eventKey).status, "RECEIVED");
+
+  let reconciles = 0;
+  await processSunpayPayoutWebhook(registration.eventKey, {
+    eventModel,
+    now: () => new Date("2026-09-30T10:01:01.000Z"),
+    noteWebhook: async () => {},
+    reconcile: async () => {
+      reconciles += 1;
+      return { status: "PAID" };
+    },
+  });
+
+  assert.equal(reconciles, 1);
+  assert.equal(eventModel.records.get(registration.eventKey).status, "PROCESSED");
+  assert.equal(eventModel.records.get(registration.eventKey).attempts, 2);
+});
+
+test("stale PROCESSING webhook work can be reclaimed after the processing lease", async () => {
+  const eventModel = memoryEventModel();
+  const registration = await registerSunpayPayoutWebhook(event, { eventModel });
+  const stored = eventModel.records.get(registration.eventKey);
+  eventModel.records.set(registration.eventKey, {
+    ...stored,
+    status: "PROCESSING",
+    attempts: 1,
+    processingStartedAt: new Date("2026-09-30T10:00:00.000Z"),
+  });
+
+  let reconciles = 0;
+  const result = await processSunpayPayoutWebhook(registration.eventKey, {
+    eventModel,
+    now: () => new Date("2026-09-30T10:03:00.000Z"),
+    noteWebhook: async () => {},
+    reconcile: async () => {
+      reconciles += 1;
+      return { status: "PROCESSING" };
+    },
+  });
+
+  assert.equal(result.status, "PROCESSED");
+  assert.equal(reconciles, 1);
+  assert.equal(eventModel.records.get(registration.eventKey).attempts, 2);
 });
 
 test("provider webhook ledger enforces durable event uniqueness", () => {
