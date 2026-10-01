@@ -76,7 +76,31 @@ async function writeAudit(req, event) {
 }
 
 const TRADABLE_ACCOUNT_STATUSES = new Set(["ACTIVE", "PHASE_2", "FUNDED"]);
-const PAYMENT_ADMIN_FIELDS = "orderId customerId email amount currency paymentMethod provider providerStatus status providerAmount providerCurrency paidAmount paidCurrency paidAt utr accountId activatedAt activation createdAt updatedAt";
+const PAYMENT_ADMIN_FIELDS = [
+  "orderId",
+  "customerId",
+  "email",
+  "challengeDefinition",
+  "commercialConfig",
+  "amount",
+  "currency",
+  "paymentMethod",
+  "provider",
+  "providerPaymentId",
+  "providerInvoiceId",
+  "providerStatus",
+  "providerAmount",
+  "providerCurrency",
+  "paidAmount",
+  "paidCurrency",
+  "paidAt",
+  "utr",
+  "accountId",
+  "activatedAt",
+  "activation",
+  "createdAt",
+  "updatedAt",
+].join(" ");
 
 function platformRecord(account) {
   return (account.platformAccounts || []).find(item =>
