@@ -111,7 +111,7 @@ export async function auditAndReconcileHistoricalTradingDays({
 } = {}) {
   const query = {
     platform: "acg-trader",
-    platformAccountId: { $type: "string" },
+    platformAccountId: mongoose.trusted({ $type: "string" }),
   };
   if (accountId) query.accountId = String(accountId);
   if (!accountId && afterAccountId) query.accountId = mongoose.trusted({ $gt: String(afterAccountId) });
@@ -283,7 +283,7 @@ async function applyCanonicalRows({ scope, plan, tradingDayModel }) {
 
   if (plan.staleRows.length) {
     await tradingDayModel.deleteMany({
-      _id: { $in: plan.staleRows.map(row => row._id) },
+      _id: mongoose.trusted({ $in: plan.staleRows.map(row => row._id) }),
       accountId: scope.accountId,
       phase: scope.phase,
       platformAccountId: scope.platformAccountId,
@@ -347,7 +347,7 @@ async function updateCurrentPhaseProjection({
       status: current.status,
     };
     if (expectedVersion === 0) {
-      filter.$or = [{ version: 0 }, { version: { $exists: false } }];
+      filter.$or = [{ version: 0 }, { version: mongoose.trusted({ $exists: false }) }];
     } else {
       filter.version = expectedVersion;
     }
