@@ -66,12 +66,46 @@ export function buildTradingDayReconciliationPlan({
       reason: "DEAL_HISTORY_MISSING",
       canonical,
       staleRows: [],
+      uncertainRows: rows,
       missingDays: [],
       provenanceFixes: [],
     };
   }
 
-  const staleRows = rows.filter(row => !canonical.has(String(row.dayKey)));
+  const eventsById = new Map(
+    events
+      .filter(event => event?.eventId)
+      .map(event => [String(event.eventId), event])
+  );
+  const staleRows = [];
+  const uncertainRows = [];
+
+  for (const row of rows) {
+    if (canonical.has(String(row.dayKey))) continue;
+
+    const firstDealEventId = row?.firstDealEventId == null ? null : String(row.firstDealEventId);
+    const provenanceEvent = firstDealEventId ? eventsById.get(firstDealEventId) : null;
+    const provenanceType = String(provenanceEvent?.payload?.type || "").toUpperCase();
+
+    // A stale day is safe to delete only when its original provenance event is
+    // still durable and proves it was a non-opening deal. Missing provenance
+    // means event history may be incomplete, so stop rather than guessing.
+    if (provenanceEvent && !OPEN_DEAL_TYPES.has(provenanceType)) staleRows.push(row);
+    else uncertainRows.push(row);
+  }
+
+  if (uncertainRows.length) {
+    return {
+      safeToMutate: false,
+      reason: "DEAL_HISTORY_INCOMPLETE",
+      canonical,
+      staleRows: [],
+      uncertainRows,
+      missingDays: [],
+      provenanceFixes: [],
+    };
+  }
+
   const missingDays = [...canonical.values()].filter(day => !rowsByDay.has(day.dayKey));
   const provenanceFixes = [];
 
@@ -95,6 +129,7 @@ export function buildTradingDayReconciliationPlan({
     reason: null,
     canonical,
     staleRows,
+    uncertainRows: [],
     missingDays,
     provenanceFixes,
   };
@@ -389,6 +424,7 @@ function metrics(rows, plan) {
     staleDays: plan.staleRows.map(row => String(row.dayKey)).sort(),
     missingDays: plan.missingDays.map(day => day.dayKey).sort(),
     provenanceFixes: plan.provenanceFixes.map(item => String(item.row.dayKey)).sort(),
+    uncertainDays: (plan.uncertainRows || []).map(row => String(row.dayKey)).sort(),
     latestStoredDay: dayKeys.length ? dayKeys[dayKeys.length - 1] : null,
   };
 }
@@ -405,6 +441,7 @@ function summarize(records) {
     staleDaysFound: records.reduce((sum, record) => sum + record.before.staleDays.length, 0),
     missingDaysFound: records.reduce((sum, record) => sum + record.before.missingDays.length, 0),
     provenanceFixesFound: records.reduce((sum, record) => sum + record.before.provenanceFixes.length, 0),
+    uncertainDaysFound: records.reduce((sum, record) => sum + (record.before.uncertainDays || []).length, 0),
     accountsChanged: records.filter(record => record.changed).length,
     projectionsUpdated: records.filter(record => record.projectionUpdated).length,
     manualReviewRequired: records.filter(record => record.manualReview).length,
