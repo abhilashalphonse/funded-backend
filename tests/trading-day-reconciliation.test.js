@@ -78,6 +78,22 @@ test("reconciliation plan removes close-only days and restores missing opening d
   assert.deepEqual(plan.provenanceFixes.map(item => item.row.dayKey), ["2026-10-05"]);
 });
 
+
+test("reconciliation stops when a stale row's provenance event is missing", () => {
+  const rows = [
+    { _id: "row-mon", dayKey: "2026-10-05", firstDealEventId: "missing-event", firstExecutedAt: new Date("2026-10-05T10:00:00.000Z") },
+  ];
+  const events = [
+    deal({ eventId: "close-tue", type: "CLOSE", executedAt: "2026-10-06T01:00:00.000Z" }),
+  ];
+
+  const plan = buildTradingDayReconciliationPlan({ rows, events, platformAccountId: "platform-p1" });
+  assert.equal(plan.safeToMutate, false);
+  assert.equal(plan.reason, "DEAL_HISTORY_INCOMPLETE");
+  assert.deepEqual(plan.uncertainRows.map(row => row.dayKey), ["2026-10-05"]);
+  assert.equal(plan.staleRows.length, 0);
+});
+
 test("reconciliation refuses destructive mutation when stored days have no deal history", () => {
   const rows = [
     { _id: "row-mon", dayKey: "2026-10-05", firstDealEventId: "unknown", firstExecutedAt: new Date("2026-10-05T10:00:00.000Z") },
