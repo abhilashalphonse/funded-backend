@@ -45,7 +45,7 @@ test("affected market labels stay narrow and deterministic", () => {
   );
   assert.deepEqual(
     affectedMarketsFor({ currency: "USD", title: "EIA Crude Oil Inventories" }).groups,
-    ["USD FX pairs", "Gold (XAUUSD)", "US indices", "DXY", "USOIL", "UKOIL"],
+    ["USOIL", "UKOIL"],
   );
 });
 
