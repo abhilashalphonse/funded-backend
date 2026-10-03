@@ -9,7 +9,8 @@ import { trialMetadata } from "../../apis/services/freeTrialPolicy.js";
 const SNAPSHOT_EVENT = "ACG_TRADER_ACCOUNT_SNAPSHOT";
 const DEAL_EVENT = "ACG_TRADER_DEAL_CREATED";
 const CONTROL_EVENT = "ACG_TRADER_ACCOUNT_CONTROLLED";
-const CLOSE_DEAL_TYPES = new Set(["CLOSE", "PARTIAL_CLOSE", "REVERSE_CLOSE", "STOP_LOSS", "TAKE_PROFIT", "LIQUIDATION"]);\nconst TRADING_DAY_OPEN_DEAL_TYPES = new Set(["OPEN", "REVERSE_OPEN"]);
+const CLOSE_DEAL_TYPES = new Set(["CLOSE", "PARTIAL_CLOSE", "REVERSE_CLOSE", "STOP_LOSS", "TAKE_PROFIT", "LIQUIDATION"]);
+const TRADING_DAY_OPEN_DEAL_TYPES = new Set(["OPEN", "REVERSE_OPEN"]);
 
 export async function processEvent(event, boss, {
   accountModel = Account,
