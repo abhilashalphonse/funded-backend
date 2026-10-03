@@ -19,6 +19,7 @@ export class ACGTraderConnector extends TradingProviderConnector {
       activate: input.activate !== false,
       ...(input.accountCode ? { accountCode: String(input.accountCode) } : {}),
       ...(input.riskPolicy ? { riskPolicy: input.riskPolicy } : {}),
+      ...(input.tradingPermissions ? { tradingPermissions: input.tradingPermissions } : {}),
       ...(input.riskTimezone ? { riskTimezone: input.riskTimezone } : {}),
       ...(input.metadata ? { metadata: primitiveMetadata(input.metadata) } : {}),
     };
@@ -56,9 +57,10 @@ export class ACGTraderConnector extends TradingProviderConnector {
     return this.client.listAdminTrades(query);
   }
 
-  async syncChallenge({ platformAccountId, riskPolicy, riskPolicyVersion, phase, challengeStatus, challengeId, payoutStatus } = {}) {
+  async syncChallenge({ platformAccountId, riskPolicy, tradingPermissions, riskPolicyVersion, phase, challengeStatus, challengeId, payoutStatus } = {}) {
     return this.client.syncChallenge(required(platformAccountId, "platformAccountId"), {
       ...(riskPolicy ? { riskPolicy } : {}),
+      ...(tradingPermissions ? { tradingPermissions } : {}),
       ...(riskPolicyVersion !== undefined ? { riskPolicyVersion } : {}),
       ...(phase !== undefined ? { phase } : {}),
       ...(challengeStatus !== undefined ? { challengeStatus } : {}),
