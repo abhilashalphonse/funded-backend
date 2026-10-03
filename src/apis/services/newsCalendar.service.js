@@ -3,7 +3,8 @@ import { FinanceCalendarProvider } from "../../economic-calendar/finance-calenda
 
 const provider = new FinanceCalendarProvider();
 const cache = new Map();
-const CACHE_TTL_MS = 10 * 60 * 1000;
+const CURRENT_RANGE_CACHE_TTL_MS = 60 * 1000;
+const FUTURE_RANGE_CACHE_TTL_MS = 10 * 60 * 1000;
 const STALE_TTL_MS = 6 * 60 * 60 * 1000;
 const SUPPORTED_CURRENCIES = new Set(["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]);
 
@@ -29,7 +30,7 @@ export async function getCustomerNewsCalendar(customer, input = {}) {
   let cached = cache.get(key);
   let status = "LIVE";
 
-  if (!cached || now - cached.fetchedAt > CACHE_TTL_MS) {
+  if (!cached || now - cached.fetchedAt > cacheTtlMs(from, to, now)) {
     try {
       const result = await provider.highImpact({ from, to });
       cached = { ...result, fetchedAt: now };
@@ -49,7 +50,8 @@ export async function getCustomerNewsCalendar(customer, input = {}) {
     .sort((a, b) => eventTime(a) - eventTime(b))
     .map(event => ({
       ...event,
-      restriction: restrictionFor(account, event),
+      affectedMarkets: affectedMarketsFor(event),
+      restriction: restrictionFor(account, event, status),
     }));
 
   return {
@@ -68,36 +70,66 @@ export async function getCustomerNewsCalendar(customer, input = {}) {
   };
 }
 
-function restrictionFor(account, event) {
+export function restrictionFor(account, event, dataStatus = "LIVE") {
   if (!account) return { status: "NO_ACCOUNT", applies: false };
 
+  // Historical accounts with no explicit value are permissive by product decision.
   const configured = account.commercialTerms?.newsTrading;
-  if (configured === true) return { status: "ALLOWED", applies: false };
-  if (configured !== false) return { status: "NOT_SPECIFIED", applies: false };
+  if (configured !== false) return { status: "ALLOWED", applies: false };
 
-  if (!event.timestamp || event.allDay) {
-    return { status: "RESTRICTED", applies: true, beforeMinutes: beforeMinutes(), afterMinutes: afterMinutes(), blockedFrom: null, blockedUntil: null };
-  }
+  const window = {
+    beforeMinutes: beforeMinutes(),
+    afterMinutes: afterMinutes(),
+    blockedFrom: null,
+    blockedUntil: null,
+  };
+
+  // Cached/stale or unscheduled news may still be displayed, but is never an
+  // authoritative basis for restricting execution.
+  if (dataStatus !== "LIVE") return { status: "DATA_STALE", applies: false, wouldApply: true, ...window };
+  if (!event.timestamp || event.allDay) return { status: "TIME_UNAVAILABLE", applies: false, wouldApply: true, ...window };
 
   const time = new Date(event.timestamp).getTime();
+  if (!Number.isFinite(time)) return { status: "TIME_UNAVAILABLE", applies: false, wouldApply: true, ...window };
+
   return {
     status: "RESTRICTED",
     applies: true,
-    beforeMinutes: beforeMinutes(),
-    afterMinutes: afterMinutes(),
-    blockedFrom: new Date(time - beforeMinutes() * 60_000).toISOString(),
-    blockedUntil: new Date(time + afterMinutes() * 60_000).toISOString(),
+    ...window,
+    blockedFrom: new Date(time - window.beforeMinutes * 60_000).toISOString(),
+    blockedUntil: new Date(time + window.afterMinutes * 60_000).toISOString(),
   };
 }
 
+export function affectedMarketsFor(event) {
+  const currency = String(event?.currency || "").toUpperCase();
+  const title = String(event?.title || "").toLowerCase();
+
+  // Inventory releases are mapped as commodity-specific events rather than a
+  // blanket USD restriction simply because the provider tags them USD.
+  if (/crude|petroleum|oil inventories|eia/.test(title)) {
+    return { currency: currency || null, groups: ["USOIL", "UKOIL"] };
+  }
+
+  const groups = [];
+  if (SUPPORTED_CURRENCIES.has(currency)) groups.push(currency + " FX pairs");
+  if (currency === "USD") groups.push("Gold (XAUUSD)", "US indices", "DXY");
+  return { currency: currency || null, groups: [...new Set(groups)] };
+}
+
+export function cacheTtlMs(from, to, nowMs = Date.now()) {
+  const today = new Date(nowMs).toISOString().slice(0, 10);
+  return from <= today && today <= to ? CURRENT_RANGE_CACHE_TTL_MS : FUTURE_RANGE_CACHE_TTL_MS;
+}
+
 function beforeMinutes() {
-  const value = Number(process.env.NEWS_RESTRICTION_BEFORE_MINUTES ?? 2);
-  return Number.isFinite(value) && value >= 0 ? Math.min(120, Math.round(value)) : 2;
+  const value = Number(process.env.NEWS_RESTRICTION_BEFORE_MINUTES ?? 5);
+  return Number.isFinite(value) && value >= 0 ? Math.min(120, Math.round(value)) : 5;
 }
 
 function afterMinutes() {
-  const value = Number(process.env.NEWS_RESTRICTION_AFTER_MINUTES ?? 2);
-  return Number.isFinite(value) && value >= 0 ? Math.min(120, Math.round(value)) : 2;
+  const value = Number(process.env.NEWS_RESTRICTION_AFTER_MINUTES ?? 5);
+  return Number.isFinite(value) && value >= 0 ? Math.min(120, Math.round(value)) : 5;
 }
 
 function normalizeCurrencies(value) {

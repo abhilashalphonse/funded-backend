@@ -32,6 +32,29 @@ export const ACG_FUNDED_V2_EXECUTION_POLICY = Object.freeze({
 export const ACG_FUNDED_RISK_POLICY_VERSION = ACG_FUNDED_RISK_POLICY_V2_VERSION;
 export const ACG_FUNDED_EXECUTION_POLICY = ACG_FUNDED_V2_EXECUTION_POLICY;
 
+export const ACG_FUNDED_TRADING_PERMISSION_DEFAULTS = Object.freeze({
+  newsTrading: true,
+  weekendHolding: true,
+  highImpactOnly: true,
+  newsRestrictionBeforeMinutes: 5,
+  newsRestrictionAfterMinutes: 5,
+  closeReduceAlwaysAllowed: true,
+  pendingEntriesBlocked: true,
+  weekendCloseBufferMinutes: 5,
+  weekendBreach: false,
+  carryToMaster: true,
+});
+
+export function buildTradingPermissions(account = {}) {
+  const commercial = account?.commercialTerms || {};
+  return {
+    ...ACG_FUNDED_TRADING_PERMISSION_DEFAULTS,
+    // Missing historical values stay permissive by product decision.
+    newsTrading: commercial.newsTrading !== false,
+    weekendHolding: commercial.weekendHolding !== false,
+  };
+}
+
 export function resolveProvisioningRiskPolicyVersion(env = process.env) {
   const configured = String(env.ACG_FUNDED_RISK_POLICY_VERSION || ACG_FUNDED_RISK_POLICY_V1_VERSION).trim().toUpperCase();
   if (![ACG_FUNDED_RISK_POLICY_V1_VERSION, ACG_FUNDED_RISK_POLICY_V2_VERSION].includes(configured)) {
@@ -67,6 +90,7 @@ export async function provisionTradingAccount(account, {
     includeProfitTarget: normalizedAccountType !== "FUNDED",
     riskPolicyVersion,
   });
+  const tradingPermissions = buildTradingPermissions(account);
 
   account.provisioning = { status: "PENDING", error: null, updatedAt: new Date() };
   await account.save();
@@ -81,6 +105,7 @@ export async function provisionTradingAccount(account, {
       initialBalance: account.initialDeposit || account.accountSize,
       activate,
       riskPolicy,
+      tradingPermissions,
       riskTimezone: "UTC",
       metadata: {
         fundedAccountId: account.accountId,
