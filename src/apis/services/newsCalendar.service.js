@@ -70,7 +70,7 @@ export async function getCustomerNewsCalendar(customer, input = {}) {
   };
 }
 
-function restrictionFor(account, event, dataStatus = "LIVE") {
+export function restrictionFor(account, event, dataStatus = "LIVE") {
   if (!account) return { status: "NO_ACCOUNT", applies: false };
 
   // Historical accounts with no explicit value are permissive by product decision.
@@ -101,7 +101,7 @@ function restrictionFor(account, event, dataStatus = "LIVE") {
   };
 }
 
-function affectedMarketsFor(event) {
+export function affectedMarketsFor(event) {
   const currency = String(event?.currency || "").toUpperCase();
   const groups = [];
   if (SUPPORTED_CURRENCIES.has(currency)) groups.push(currency + " FX pairs");
@@ -113,7 +113,7 @@ function affectedMarketsFor(event) {
   return { currency: currency || null, groups: [...new Set(groups)] };
 }
 
-function cacheTtlMs(from, to, nowMs = Date.now()) {
+export function cacheTtlMs(from, to, nowMs = Date.now()) {
   const today = new Date(nowMs).toISOString().slice(0, 10);
   return from <= today && today <= to ? CURRENT_RANGE_CACHE_TTL_MS : FUTURE_RANGE_CACHE_TTL_MS;
 }
