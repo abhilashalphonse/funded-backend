@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { recordTradingDay } from "../src/workers/state-engine/processEvent.js";
+import { applyDealEvent, recordTradingDay } from "../src/workers/state-engine/processEvent.js";
 import Account from "../src/accounts/account.model.js";
 
 function fakeTradingDayModel() {
@@ -80,6 +80,134 @@ test("trading-day uniqueness is scoped to phase and platform generation", async 
     new Date("2026-09-21T11:00:00Z"),
     model,
   );
+  assert.equal(account.projections.tradingDays, 1);
+});
+
+
+test("only opening deals create UTC trading days", async () => {
+  const account = {
+    accountId: "ACG-DAY-OPEN-ONLY",
+    currentPhase: 1,
+    platformAccountId: "platform-p1",
+    projections: { tradingDays: 0 },
+    totalTrades: 0,
+    winningTrades: 0,
+    losingTrades: 0,
+  };
+  const model = fakeTradingDayModel();
+
+  await applyDealEvent(account, {
+    eventId: "open-mon",
+    occurredAt: "2026-10-05T23:30:00.000Z",
+    payload: {
+      platformAccountId: "platform-p1",
+      type: "OPEN",
+      executedAt: "2026-10-05T23:30:00.000Z",
+    },
+  }, model);
+  assert.equal(account.projections.tradingDays, 1);
+
+  await applyDealEvent(account, {
+    eventId: "close-tue",
+    occurredAt: "2026-10-06T01:00:00.000Z",
+    payload: {
+      platformAccountId: "platform-p1",
+      type: "CLOSE",
+      executedAt: "2026-10-06T01:00:00.000Z",
+      realizedPnl: 10,
+      commission: 0,
+    },
+  }, model);
+  assert.equal(account.projections.tradingDays, 1);
+
+  for (const [eventId, type] of [
+    ["partial-close", "PARTIAL_CLOSE"],
+    ["reverse-close", "REVERSE_CLOSE"],
+    ["stop-loss", "STOP_LOSS"],
+    ["take-profit", "TAKE_PROFIT"],
+    ["liquidation", "LIQUIDATION"],
+  ]) {
+    await applyDealEvent(account, {
+      eventId,
+      occurredAt: "2026-10-06T12:00:00.000Z",
+      payload: {
+        platformAccountId: "platform-p1",
+        type,
+        executedAt: "2026-10-06T12:00:00.000Z",
+        realizedPnl: 0,
+        commission: 0,
+      },
+    }, model);
+  }
+  assert.equal(account.projections.tradingDays, 1);
+
+  await applyDealEvent(account, {
+    eventId: "reverse-open-tue",
+    occurredAt: "2026-10-06T12:00:01.000Z",
+    payload: {
+      platformAccountId: "platform-p1",
+      type: "REVERSE_OPEN",
+      executedAt: "2026-10-06T12:00:01.000Z",
+    },
+  }, model);
+  assert.equal(account.projections.tradingDays, 2);
+});
+
+test("UTC calendar boundary defines distinct trading days", async () => {
+  const account = {
+    accountId: "ACG-DAY-UTC-BOUNDARY",
+    currentPhase: 1,
+    platformAccountId: "platform-p1",
+    projections: { tradingDays: 0 },
+  };
+  const model = fakeTradingDayModel();
+
+  await applyDealEvent(account, {
+    eventId: "before-midnight",
+    payload: {
+      platformAccountId: "platform-p1",
+      type: "OPEN",
+      executedAt: "2026-10-05T23:59:59.999Z",
+    },
+  }, model);
+
+  await applyDealEvent(account, {
+    eventId: "after-midnight",
+    payload: {
+      platformAccountId: "platform-p1",
+      type: "OPEN",
+      executedAt: "2026-10-06T00:00:00.000Z",
+    },
+  }, model);
+
+  assert.equal(account.projections.tradingDays, 2);
+  assert.equal(account.lastTradingDay, "2026-10-06");
+});
+
+test("multiple opening deals on the same UTC date count once", async () => {
+  const account = {
+    accountId: "ACG-DAY-SAME-DAY",
+    currentPhase: 1,
+    platformAccountId: "platform-p1",
+    projections: { tradingDays: 0 },
+  };
+  const model = fakeTradingDayModel();
+
+  for (const [eventId, executedAt] of [
+    ["open-1", "2026-10-05T01:00:00.000Z"],
+    ["open-2", "2026-10-05T08:00:00.000Z"],
+    ["reverse-open", "2026-10-05T20:00:00.000Z"],
+  ]) {
+    await applyDealEvent(account, {
+      eventId,
+      payload: {
+        platformAccountId: "platform-p1",
+        type: eventId === "reverse-open" ? "REVERSE_OPEN" : "OPEN",
+        executedAt,
+      },
+    }, model);
+  }
+
   assert.equal(account.projections.tradingDays, 1);
 });
 
