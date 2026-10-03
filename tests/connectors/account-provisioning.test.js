@@ -6,6 +6,7 @@ import {
   ACG_FUNDED_V1_EXECUTION_POLICY,
   ACG_FUNDED_V2_EXECUTION_POLICY,
   buildRiskPolicy,
+  buildTradingPermissions,
   resolveProvisioningRiskPolicyVersion,
 } from "../../src/connectors/trading/account-provisioning.js";
 
@@ -139,4 +140,24 @@ test("new V2 provisioning is rollout-gated so production can remain V1 until sta
     () => resolveProvisioningRiskPolicyVersion({ ACG_FUNDED_RISK_POLICY_VERSION: "ACG_FUNDED_V3" }),
     error => error.code === "INVALID_ACG_FUNDED_RISK_POLICY_VERSION",
   );
+});
+
+
+test("trading permissions preserve explicit selections and default historical missing values to permissive", () => {
+  assert.deepEqual(buildTradingPermissions({ commercialTerms: { newsTrading: false, weekendHolding: true } }), {
+    newsTrading: false,
+    weekendHolding: true,
+    highImpactOnly: true,
+    newsRestrictionBeforeMinutes: 5,
+    newsRestrictionAfterMinutes: 5,
+    closeReduceAlwaysAllowed: true,
+    pendingEntriesBlocked: true,
+    weekendCloseBufferMinutes: 5,
+    weekendBreach: false,
+    carryToMaster: true,
+  });
+
+  const missing = buildTradingPermissions({ commercialTerms: {} });
+  assert.equal(missing.newsTrading, true);
+  assert.equal(missing.weekendHolding, true);
 });
