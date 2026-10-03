@@ -103,13 +103,17 @@ export function restrictionFor(account, event, dataStatus = "LIVE") {
 
 export function affectedMarketsFor(event) {
   const currency = String(event?.currency || "").toUpperCase();
+  const title = String(event?.title || "").toLowerCase();
+
+  // Inventory releases are mapped as commodity-specific events rather than a
+  // blanket USD restriction simply because the provider tags them USD.
+  if (/crude|petroleum|oil inventories|eia/.test(title)) {
+    return { currency: currency || null, groups: ["USOIL", "UKOIL"] };
+  }
+
   const groups = [];
   if (SUPPORTED_CURRENCIES.has(currency)) groups.push(currency + " FX pairs");
   if (currency === "USD") groups.push("Gold (XAUUSD)", "US indices", "DXY");
-
-  const title = String(event?.title || "").toLowerCase();
-  if (/crude|petroleum|oil inventories|eia/.test(title)) groups.push("USOIL", "UKOIL");
-
   return { currency: currency || null, groups: [...new Set(groups)] };
 }
 
