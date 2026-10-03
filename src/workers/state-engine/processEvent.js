@@ -9,7 +9,7 @@ import { trialMetadata } from "../../apis/services/freeTrialPolicy.js";
 const SNAPSHOT_EVENT = "ACG_TRADER_ACCOUNT_SNAPSHOT";
 const DEAL_EVENT = "ACG_TRADER_DEAL_CREATED";
 const CONTROL_EVENT = "ACG_TRADER_ACCOUNT_CONTROLLED";
-const CLOSE_DEAL_TYPES = new Set(["CLOSE", "PARTIAL_CLOSE", "REVERSE_CLOSE", "STOP_LOSS", "TAKE_PROFIT", "LIQUIDATION"]);
+const CLOSE_DEAL_TYPES = new Set(["CLOSE", "PARTIAL_CLOSE", "REVERSE_CLOSE", "STOP_LOSS", "TAKE_PROFIT", "LIQUIDATION"]);\nconst TRADING_DAY_OPEN_DEAL_TYPES = new Set(["OPEN", "REVERSE_OPEN"]);
 
 export async function processEvent(event, boss, {
   accountModel = Account,
@@ -530,13 +530,16 @@ function applySnapshotEvent(account, event) {
   account.projections.totalLoss = Math.max(0, initialBalance - equity);
 }
 
-async function applyDealEvent(account, event, tradingDayModel) {
+export async function applyDealEvent(account, event, tradingDayModel) {
   const p = event.payload || {};
   const type = String(p.type || "").toUpperCase();
   const executedAt = new Date(p.executedAt || event.occurredAt || event.receivedAt || Date.now());
   const tradingDay = Number.isNaN(executedAt.getTime()) ? null : executedAt.toISOString().slice(0, 10);
 
-  if (tradingDay) {
+  // ACG Funded defines a Trading Day as a UTC calendar day in which the
+  // trader opens new exposure. Closing an overnight position, including via
+  // SL/TP/liquidation, must not manufacture another minimum-trading day.
+  if (tradingDay && TRADING_DAY_OPEN_DEAL_TYPES.has(type)) {
     await recordTradingDay(account, event, tradingDay, executedAt, tradingDayModel);
   }
 
