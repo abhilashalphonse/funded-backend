@@ -27,7 +27,8 @@
     "maintenance:trading-days:dry-run": "node scripts/reconcile-trading-days.js",
     "maintenance:trading-days:apply": "node scripts/reconcile-trading-days.js --apply",
     "maintenance:trading-permissions:dry-run": "node scripts/sync-trading-permissions.js",
-    "maintenance:trading-permissions:apply": "node scripts/sync-trading-permissions.js --apply"
+    "maintenance:trading-permissions:apply": "node scripts/sync-trading-permissions.js --apply",
+    "maintenance:trading-permissions:reconcile": "node scripts/reconcile-trading-permissions.js"
   },
   "dependencies": {
     "compression": "^1.8.1",
