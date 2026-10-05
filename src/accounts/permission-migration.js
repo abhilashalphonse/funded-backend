@@ -10,11 +10,23 @@ resultSchema.index({ runId: 1, accountObjectId: 1 }, { unique: true });
 export const PermissionMigrationRun = mongoose.models.PermissionMigrationRun || mongoose.model('PermissionMigrationRun', runSchema);
 export const PermissionMigrationResult = mongoose.models.PermissionMigrationResult || mongoose.model('PermissionMigrationResult', resultSchema);
 
+export function isFreeTrialPermissionFallback(account = {}) {
+  return String(account.accountMode || '').toUpperCase() === 'DEMO'
+    || /^TRIAL-/i.test(String(account.accountId || ''));
+}
+
 export function permissionMigrationPayload(account, legacyBefore = null) {
   const terms = account.commercialTerms || {};
   const missing = typeof terms.newsTrading !== 'boolean' || typeof terms.weekendHolding !== 'boolean';
-  if (missing && !(legacyBefore && account.createdAt && new Date(account.createdAt) < new Date(legacyBefore))) {
-    throw new Error('MISSING_PERMISSION_HISTORY: explicit permissions or an approved historical cutoff are required');
+  const historicalFallback = Boolean(
+    legacyBefore
+    && account.createdAt
+    && new Date(account.createdAt) < new Date(legacyBefore)
+  );
+  const trialFallback = missing && isFreeTrialPermissionFallback(account);
+
+  if (missing && !historicalFallback && !trialFallback) {
+    throw new Error('MISSING_PERMISSION_HISTORY: explicit paid-account permissions or an approved historical cutoff are required');
   }
   const version = account.tradingPermissionsVersion ?? 1;
   if (!Number.isSafeInteger(version) || version < 1) throw new Error('INVALID_PERMISSION_VERSION');
