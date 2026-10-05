@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { compareTradingPermissions } from "../scripts/reconcile-trading-permissions.js";
+import { compareTradingPermissions } from "../src/accounts/permission-reconciliation.js";
 
 test("permission reconciliation accepts exact News/Weekend/version matches", () => {
   assert.deepEqual(compareTradingPermissions(
