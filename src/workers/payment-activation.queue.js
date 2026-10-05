@@ -8,6 +8,7 @@ export async function enqueuePaymentActivation(boss, paymentId, options = {}) {
     PAYMENT_ACTIVATION_QUEUE,
     { paymentId: id, queuedAt: new Date().toISOString() },
     {
+      ...(options.singletonKey ? { singletonKey: options.singletonKey } : {}),
       retryLimit: options.retryLimit ?? 12,
       retryBackoff: true,
       retryDelay: options.retryDelay ?? 5,

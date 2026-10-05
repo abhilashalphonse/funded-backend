@@ -8,6 +8,7 @@ import {
   buildRiskPolicy,
   buildTradingPermissions,
   resolveProvisioningRiskPolicyVersion,
+  provisionTradingAccount,
 } from "../../src/connectors/trading/account-provisioning.js";
 
 test("risk policy converts Funded percentage rules into account-specific execution limits", () => {
@@ -160,4 +161,28 @@ test("trading permissions preserve explicit selections and default historical mi
   const missing = buildTradingPermissions({ commercialTerms: {} });
   assert.equal(missing.newsTrading, true);
   assert.equal(missing.weekendHolding, true);
+});
+
+test('new provisioning rejects missing permissions, while an explicit historical cutoff permits fallback', () => {
+  assert.throws(() => buildTradingPermissions({ commercialTerms: {} }, { strict: true }), { code: 'PROVISIONING_CONTRACT_INVALID' });
+  assert.equal(buildTradingPermissions({ commercialTerms: {}, createdAt: '2025-01-01' }, { strict: true, legacyBefore: '2026-01-01' }).newsTrading, true);
+});
+
+test('Funded provisioning carries purchased permissions and version through Phase 1, Phase 2 and Master', async () => {
+  const account = { accountId: 'ACG-contract', ownerExternalRef: 'owner', platform: 'acg-trader', platformAccounts: [],
+    accountSize: 100000, initialDeposit: 100000, challengeType: 'TWO_STEP', tradingPermissionsVersion: 7,
+    commercialTerms: { newsTrading: false, weekendHolding: true }, rules: { dailyDrawdown: 5, maxDrawdown: 10, phases: [{ phase: 1, profitTarget: 8 }, { phase: 2, profitTarget: 5 }] },
+    save: async () => {} };
+  const payloads = [];
+  const connector = { provisionAccount: async payload => { payloads.push(payload); return { platformAccountId: `trader-${payloads.length}`, raw: { status: 'ACTIVE' } }; } };
+  await provisionTradingAccount(account, { phase: 1, connector });
+  await provisionTradingAccount(account, { phase: 2, connector });
+  await provisionTradingAccount(account, { phase: 2, accountType: 'FUNDED', connector });
+  assert.equal(new Set(payloads.map(item => item.externalRef)).size, 3);
+  assert.deepEqual(payloads.map(item => item.accountType), ['CHALLENGE', 'CHALLENGE', 'FUNDED']);
+  for (const payload of payloads) {
+    assert.equal(payload.tradingPermissions.newsTrading, false);
+    assert.equal(payload.tradingPermissions.weekendHolding, true);
+    assert.equal(payload.tradingPermissionsVersion, 7);
+  }
 });

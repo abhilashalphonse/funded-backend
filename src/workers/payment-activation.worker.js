@@ -1,3 +1,4 @@
+import { recoverPages, periodicRecovery } from "./recovery-sweep.js";
 import Payment from "../models/payment.model.js";
 import { activatePaidPayment } from "../apis/services/payment.service.js";
 import { recordAnalyticsEventOnce } from "../apis/services/analytics.service.js";
@@ -11,7 +12,8 @@ export class PaymentActivationWorker {
   }
 
   async start() {
-    await this.recoverOutstanding();
+    if (!this.recovery) this.recovery = periodicRecovery(() => this.recoverOutstanding());
+    await this.recovery.tick();
     await this.boss.work(PAYMENT_ACTIVATION_QUEUE, { batchSize: 5, newJobCheckInterval: 250 }, async jobOrJobs => {
       const jobs = Array.isArray(jobOrJobs) ? jobOrJobs : [jobOrJobs];
       for (const job of jobs) await this.handle(job);
@@ -19,9 +21,11 @@ export class PaymentActivationWorker {
     console.log("PaymentActivationWorker listening on payment-activation");
   }
 
+  async stop() { await this.recovery?.stop(); this.recovery = null; }
+
   async recoverOutstanding() {
     const staleBefore = new Date(Date.now() - 5 * 60 * 1000);
-    const outstanding = await Payment.find({
+    return recoverPages({ model: Payment, filter: {
       status: "PAID",
       accountId: { $exists: false },
       $or: [
@@ -29,13 +33,10 @@ export class PaymentActivationWorker {
         { "activation.status": { $in: ["NOT_STARTED", "FAILED"] } },
         { "activation.status": "PENDING", "activation.attemptedAt": { $lt: staleBefore } },
       ],
-    }).select("_id").limit(500).lean();
-
-    for (const payment of outstanding) {
-      await enqueuePaymentActivation(this.boss, payment._id).catch(error => {
-        console.error("[PAYMENT ACTIVATION] Failed to recover payment:", payment._id, error?.message || error);
-      });
-    }
+    },
+      enqueue: id => enqueuePaymentActivation(this.boss, id, { singletonKey: String(id) }),
+      onError: (error, id) => console.error("Recovery enqueue failed", String(id), error.message),
+    });
   }
 
   async handle(job) {

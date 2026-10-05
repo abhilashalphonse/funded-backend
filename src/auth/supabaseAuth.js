@@ -52,6 +52,7 @@ async function resolveCustomer(token) {
   }
 
   const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
+    signal: AbortSignal.timeout(8000),
     headers: {
       apikey: env.SUPABASE_ANON_KEY,
       Authorization: `Bearer ${token}`,

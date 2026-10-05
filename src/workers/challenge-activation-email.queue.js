@@ -9,6 +9,7 @@ export async function enqueueChallengeActivationEmail(boss, paymentId, options =
     CHALLENGE_ACTIVATION_EMAIL_QUEUE,
     { paymentId: id, queuedAt: new Date().toISOString() },
     {
+      ...(options.singletonKey ? { singletonKey: options.singletonKey } : {}),
       retryLimit: options.retryLimit ?? 10,
       retryBackoff: true,
       retryDelay: options.retryDelay ?? 10,

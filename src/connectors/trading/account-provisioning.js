@@ -45,8 +45,14 @@ export const ACG_FUNDED_TRADING_PERMISSION_DEFAULTS = Object.freeze({
   carryToMaster: true,
 });
 
-export function buildTradingPermissions(account = {}) {
+export function buildTradingPermissions(account = {}, { strict = false, legacyBefore = null } = {}) {
   const commercial = account?.commercialTerms || {};
+  if (strict && (typeof commercial.newsTrading !== 'boolean' || typeof commercial.weekendHolding !== 'boolean')
+    && !(legacyBefore && account.createdAt && new Date(account.createdAt) < new Date(legacyBefore))) {
+    const error = new Error('Explicit news/weekend permissions are required; historical fallback requires a configured cutoff.');
+    error.code = 'PROVISIONING_CONTRACT_INVALID';
+    throw error;
+  }
   return {
     ...ACG_FUNDED_TRADING_PERMISSION_DEFAULTS,
     // Missing historical values stay permissive by product decision.
@@ -79,9 +85,8 @@ export async function provisionTradingAccount(account, {
   accountType = "CHALLENGE",
   activate = true,
   riskPolicyVersion = resolveProvisioningRiskPolicyVersion(),
+  connector = getTradingConnector(account.platform),
 } = {}) {
-  const provider = account.platform;
-  const connector = getTradingConnector(provider);
   const normalizedAccountType = String(accountType || "CHALLENGE").toUpperCase();
   const externalRef = normalizedAccountType === "FUNDED"
     ? `${account.accountId}:funded:${phase}`
@@ -90,7 +95,9 @@ export async function provisionTradingAccount(account, {
     includeProfitTarget: normalizedAccountType !== "FUNDED",
     riskPolicyVersion,
   });
-  const tradingPermissions = buildTradingPermissions(account);
+  const tradingPermissions = buildTradingPermissions(account, {
+    strict: normalizedAccountType !== 'DEMO', legacyBefore: process.env.TRADING_PERMISSION_LEGACY_BEFORE || null,
+  });
 
   account.provisioning = { status: "PENDING", error: null, updatedAt: new Date() };
   await account.save();
@@ -106,6 +113,7 @@ export async function provisionTradingAccount(account, {
       activate,
       riskPolicy,
       tradingPermissions,
+      tradingPermissionsVersion: account.tradingPermissionsVersion || 1,
       riskTimezone: "UTC",
       metadata: {
         fundedAccountId: account.accountId,

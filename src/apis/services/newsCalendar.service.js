@@ -93,8 +93,10 @@ export function restrictionFor(account, event, dataStatus = "LIVE") {
   if (!Number.isFinite(time)) return { status: "TIME_UNAVAILABLE", applies: false, wouldApply: true, ...window };
 
   return {
-    status: "RESTRICTED",
-    applies: true,
+    status: "CONFIGURED",
+    applies: false,
+    wouldApply: true,
+    enforcementSource: "ACG_TRADER",
     ...window,
     blockedFrom: new Date(time - window.beforeMinutes * 60_000).toISOString(),
     blockedUntil: new Date(time + window.afterMinutes * 60_000).toISOString(),
