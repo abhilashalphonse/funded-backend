@@ -19,8 +19,10 @@ test("restricted accounts use the approved five-minute live window", () => {
     { timestamp: "2026-10-04T13:30:00.000Z", allDay: false },
     "LIVE",
   );
-  assert.equal(result.status, "RESTRICTED");
-  assert.equal(result.applies, true);
+  assert.equal(result.status, "CONFIGURED");
+  assert.equal(result.applies, false);
+  assert.equal(result.wouldApply, true);
+  assert.equal(result.enforcementSource, "ACG_TRADER");
   assert.equal(result.beforeMinutes, 5);
   assert.equal(result.afterMinutes, 5);
   assert.equal(result.blockedFrom, "2026-10-04T13:25:00.000Z");

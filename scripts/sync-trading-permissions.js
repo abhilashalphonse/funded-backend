@@ -3,13 +3,17 @@ import mongoose from "mongoose";
 import { connectDatabase } from "../src/config/database.js";
 import Account from "../src/accounts/account.model.js";
 import { getTradingConnector } from "../src/connectors/trading/registry.js";
-import { buildTradingPermissions } from "../src/connectors/trading/account-provisioning.js";
+import crypto from "node:crypto";
+import { migratePermissions, PermissionMigrationRun, PermissionMigrationResult } from "../src/accounts/permission-migration.js";
 
 const apply = process.argv.includes("--apply");
 const allowBulk = process.argv.includes("--allow-bulk");
 const allowProduction = process.argv.includes("--allow-production");
 const accountId = argValue("--account-id");
 const limit = Number(argValue("--limit") || 200);
+const runId = argValue("--run-id") || crypto.randomUUID();
+const legacyBefore = argValue("--legacy-before");
+if (legacyBefore && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(legacyBefore)) fail("INVALID_LEGACY_CUTOFF", "--legacy-before requires an explicit UTC timestamp, e.g. 2026-01-01T00:00:00.000Z");
 
 if (!Number.isInteger(limit) || limit <= 0 || limit > 1000) fail("INVALID_LIMIT", "--limit must be between 1 and 1000.");
 const environmentName = String(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || "unknown");
@@ -21,47 +25,15 @@ const mode = apply ? "APPLY" : "DRY_RUN";
 
 try {
   await connectDatabase();
-  const query = {
-    platform: "acg-trader",
-    platformAccountId: { $nin: [null, ""] },
-    ...(accountId ? { accountId } : {}),
-  };
-  const accounts = await Account.find(query)
-    .sort({ accountId: 1 })
-    .limit(limit)
-    .select("accountId platform platformAccountId commercialTerms status currentPhase")
-    .lean();
-
+  await PermissionMigrationRun.createIndexes();
+  await PermissionMigrationResult.createIndexes();
   const connector = getTradingConnector("acg-trader");
-  const records = [];
-  for (const account of accounts) {
-    const tradingPermissions = buildTradingPermissions(account);
-    const record = {
-      accountId: account.accountId,
-      platformAccountId: account.platformAccountId,
-      status: account.status,
-      phase: account.currentPhase,
-      tradingPermissions,
-      synced: false,
-    };
-
-    if (apply) {
-      await connector.syncChallenge({
-        platformAccountId: account.platformAccountId,
-        tradingPermissions,
-      });
-      record.synced = true;
-    }
-    records.push(record);
-    console.log(`[ACG_TRADING_PERMISSIONS] ${mode} ACCOUNT ${JSON.stringify(record)}`);
-  }
-
-  console.log(`[ACG_TRADING_PERMISSIONS] ${mode} SUMMARY ${JSON.stringify({
-    environment: environmentName,
-    matched: accounts.length,
-    synced: records.filter(item => item.synced).length,
-    permissiveMissingValues: true,
-  })}`);
+  console.log(`[ACG_TRADING_PERMISSIONS] ${mode} RUN ${runId}`);
+  const result = await migratePermissions({ runId, config: { apply, accountId, legacyBefore, environment: environmentName },
+    accountModel: Account, connector, pageSize: limit,
+    log: record => console.log(`[ACG_TRADING_PERMISSIONS] ${mode} ACCOUNT ${JSON.stringify(record)}`) });
+  console.log(`[ACG_TRADING_PERMISSIONS] ${mode} SUMMARY ${JSON.stringify(result)}`);
+  if (result.failed) process.exitCode = 1;
 } catch (error) {
   console.error("[ACG_TRADING_PERMISSIONS] FAILED", {
     code: error?.code,

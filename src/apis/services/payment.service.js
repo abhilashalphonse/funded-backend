@@ -702,6 +702,11 @@ export async function activatePaidPayment(payment) {
 
     let account = await Account.findOne({ accountId });
     if (!account) {
+      if (typeof claimed.commercialConfig?.newsTrading !== 'boolean' || typeof claimed.commercialConfig?.weekendHolding !== 'boolean') {
+        const error = new Error('Payment is missing the purchased news/weekend permission selections.');
+        error.code = 'PROVISIONING_CONTRACT_INVALID';
+        throw error;
+      }
       account = await Account.create({
         accountId,
         ownerExternalRef: claimed.ownerExternalRef || claimed.customerId || claimed.email,

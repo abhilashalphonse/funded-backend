@@ -1,3 +1,4 @@
+import { recoverPages, periodicRecovery } from "./recovery-sweep.js";
 import Payment from "../models/payment.model.js";
 import Customer from "../customers/customer.model.js";
 import { sendChallengeActivationEmail } from "../email/challengeActivationEmail.service.js";
@@ -13,7 +14,8 @@ export class ChallengeActivationEmailWorker {
   }
 
   async start() {
-    await this.recoverOutstanding();
+    if (!this.recovery) this.recovery = periodicRecovery(() => this.recoverOutstanding());
+    await this.recovery.tick();
     await this.boss.work(CHALLENGE_ACTIVATION_EMAIL_QUEUE, { batchSize: 5, newJobCheckInterval: 500 }, async jobOrJobs => {
       const jobs = Array.isArray(jobOrJobs) ? jobOrJobs : [jobOrJobs];
       for (const job of jobs) await this.handle(job);
@@ -21,9 +23,11 @@ export class ChallengeActivationEmailWorker {
     console.log("ChallengeActivationEmailWorker listening on challenge-activation-email");
   }
 
+  async stop() { await this.recovery?.stop(); this.recovery = null; }
+
   async recoverOutstanding() {
     const staleBefore = new Date(Date.now() - STALE_PENDING_MS);
-    const payments = await Payment.find({
+    return recoverPages({ model: Payment, filter: {
       status: "PAID",
       accountId: { $type: "string" },
       "activation.status": "ACTIVE",
@@ -32,13 +36,10 @@ export class ChallengeActivationEmailWorker {
         { "activationEmail.status": { $in: ["NOT_SENT", "FAILED"] } },
         { "activationEmail.status": "PENDING", "activationEmail.attemptedAt": { $lt: staleBefore } },
       ],
-    }).select("_id").limit(500).lean();
-
-    for (const payment of payments) {
-      await enqueueChallengeActivationEmail(this.boss, payment._id).catch(error => {
-        console.error("[CHALLENGE EMAIL] Failed to recover payment:", payment._id, error?.message || error);
-      });
-    }
+    },
+      enqueue: id => enqueueChallengeActivationEmail(this.boss, id, { singletonKey: String(id) }),
+      onError: (error, id) => console.error("Recovery enqueue failed", String(id), error.message),
+    });
   }
 
   async handle(job) {

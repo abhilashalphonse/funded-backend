@@ -102,6 +102,7 @@ const AccountSchema = new mongoose.Schema(
             newsTrading: Boolean,
             weekendHolding: Boolean
         },
+        tradingPermissionsVersion: { type: Number, default: 1, min: 1 },
 
         rules: {
             dailyDrawdown: Number,
