@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Account from "../src/accounts/account.model.js";
 import { permissionMigrationPayload } from "../src/accounts/permission-migration.js";
 import { getTradingConnector } from "../src/connectors/trading/registry.js";
+import { compareTradingPermissions } from "../src/accounts/permission-reconciliation.js";
 
 const limit = Number(argValue("--limit") || 500);
 if (!Number.isInteger(limit) || limit <= 0 || limit > 5000) fail("INVALID_LIMIT", "--limit must be between 1 and 5000.");
@@ -95,19 +96,6 @@ try {
   process.exitCode = 1;
 } finally {
   await mongoose.disconnect().catch(() => {});
-}
-
-export function compareTradingPermissions(expected = {}, expectedVersion = 0, actual = {}, actualVersion = 0) {
-  const diff = [];
-  for (const key of ["newsTrading", "weekendHolding"]) {
-    if (Boolean(actual?.[key]) !== Boolean(expected?.[key])) {
-      diff.push({ field: key, expected: Boolean(expected?.[key]), actual: Boolean(actual?.[key]) });
-    }
-  }
-  if (Number(actualVersion) !== Number(expectedVersion)) {
-    diff.push({ field: "tradingPermissionsVersion", expected: Number(expectedVersion), actual: Number(actualVersion) });
-  }
-  return diff;
 }
 
 function argValue(name) {
