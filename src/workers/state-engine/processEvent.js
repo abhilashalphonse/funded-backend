@@ -591,6 +591,7 @@ function applyExactFinancialSnapshot(account, event) {
         ? Number(p.policyVersions.tradingPermissions)
         : null,
       riskPolicy: p.policyVersions?.riskPolicy == null ? null : String(p.policyVersions.riskPolicy),
+      conversion: p.policyVersions?.conversion == null ? null : String(p.policyVersions.conversion),
     },
   };
 }
