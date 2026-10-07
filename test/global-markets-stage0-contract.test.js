@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { evaluateRules } from "../src/workers/state-engine/rules.js";
 import {
+  isAuthoritativeTraderSnapshot,
   isOlderThanLastAuthoritativeSnapshot,
   snapshotEpoch,
   snapshotFinancialRevision,
@@ -103,4 +104,49 @@ test("GM-003 lower financial revision is rejected at the same timestamp across e
   };
 
   assert.equal(isOlderThanLastAuthoritativeSnapshot(account, event), true);
+});
+
+
+test("GM-003 malformed v1 financial contract is not authoritative", () => {
+  const event = {
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    payload: {
+      financialContractVersion: 1,
+      complete: true,
+      valuationStatus: "LIVE",
+      accountCurrency: "USD",
+      initialBalance: "100000",
+      balance: "95000",
+      equity: "not-a-decimal",
+      dailyStartEquity: "100000",
+      financialRevision: 3,
+      valuationEpoch: "epoch-1",
+      valuationSequence: 7,
+      valuedAtMs: 1791331200000,
+    },
+  };
+
+  assert.equal(isAuthoritativeTraderSnapshot(event), false);
+});
+
+test("GM-003 valid v1 financial contract is authoritative", () => {
+  const event = {
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    payload: {
+      financialContractVersion: 1,
+      complete: true,
+      valuationStatus: "LIVE",
+      accountCurrency: "USD",
+      initialBalance: "100000",
+      balance: "95000.000000000001",
+      equity: "95000.000000000001",
+      dailyStartEquity: "100000",
+      financialRevision: 3,
+      valuationEpoch: "epoch-1",
+      valuationSequence: 7,
+      valuedAtMs: 1791331200000,
+    },
+  };
+
+  assert.equal(isAuthoritativeTraderSnapshot(event), true);
 });
