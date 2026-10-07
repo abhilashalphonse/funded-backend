@@ -1,0 +1,130 @@
+import env from "../../config/env.js";
+import { ACGTraderClient } from "../../connectors/acg-trader/client.js";
+import {
+  normalizeDecimal, subtractDecimal, multiplyDecimal, divideDecimal,
+  addDecimal, compareDecimal,
+} from "../../utils/decimal.js";
+
+const CHECKPOINT_VERSION = "ACG_PAYOUT_SETTLEMENT_CHECKPOINT_V1";
+const MAX_CHECKPOINT_AGE_MS = 10_000;
+
+export function payoutCheckpointError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 409;
+  return error;
+}
+
+export async function fetchTraderPayoutCheckpoint(account, {
+  traderClient = null,
+  now = () => new Date(),
+} = {}) {
+  if (String(account?.platform || "").toLowerCase() !== "acg-trader") return null;
+  const platformAccountId = String(account?.platformAccountId || "").trim();
+  if (!platformAccountId) {
+    throw payoutCheckpointError("PAYOUT_TRADER_BINDING_MISSING", "Trader account binding is unavailable.");
+  }
+
+  const client = traderClient || new ACGTraderClient({
+    baseUrl: env.ACG_TRADER_BASE_URL,
+    clientId: env.ACG_TRADER_CLIENT_ID,
+    apiKey: env.ACG_TRADER_API_KEY,
+    timeoutMs: env.ACG_TRADER_TIMEOUT_MS,
+  });
+  let payload;
+  try {
+    payload = await client.getPayoutSettlementCheckpoint(platformAccountId);
+  } catch (error) {
+    const failure = payoutCheckpointError(
+      "PAYOUT_TRADER_CHECKPOINT_UNAVAILABLE",
+      "A fresh authoritative Trader settlement checkpoint is required.",
+    );
+    failure.cause = error;
+    throw failure;
+  }
+  return assertTraderPayoutCheckpoint({
+    account,
+    checkpoint: payload?.checkpoint,
+    now: now(),
+  });
+}
+
+export function assertTraderPayoutCheckpoint({ account, checkpoint, now = new Date() } = {}) {
+  const c = checkpoint;
+  const financial = account?.platformFinancial;
+  if (!c || c.contractVersion !== CHECKPOINT_VERSION || c.settled !== true
+    || c.productionPayoutAuthorized !== false || (c.blockers || []).length !== 0) {
+    throw payoutCheckpointError("PAYOUT_TRADER_NOT_SETTLED", "Trader has not confirmed a settled financial account.");
+  }
+  if (!/^[a-f0-9]{64}$/.test(String(c.evidenceHash || ""))) {
+    throw payoutCheckpointError("PAYOUT_TRADER_CHECKPOINT_INVALID", "The Trader settlement evidence is missing.");
+  }
+  if (String(c.platformAccountId || "") !== String(account?.platformAccountId || "")
+      || c.accountCurrency !== "USD") {
+    throw payoutCheckpointError("PAYOUT_TRADER_CHECKPOINT_MISMATCH", "Trader account or currency does not match Funded.");
+  }
+  const ageMs = new Date(now).getTime() - Date.parse(c.checkedAt);
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > MAX_CHECKPOINT_AGE_MS) {
+    throw payoutCheckpointError("PAYOUT_TRADER_CHECKPOINT_STALE", "Trader settlement evidence is too old.");
+  }
+  if (!financial || Number(financial.contractVersion) !== 1
+    || String(financial.accountCurrency || "") !== "USD"
+    || !Number.isSafeInteger(Number(financial.financialRevision))
+    || Number(financial.financialRevision) !== Number(c.financialRevision)
+    || financial.balance == null || financial.initialBalance == null
+    || compareDecimal(financial.balance, c.balance) !== 0
+    || compareDecimal(financial.initialBalance, c.initialBalance) !== 0) {
+    throw payoutCheckpointError("PAYOUT_TRADER_REVISION_DRIFT", "Funded must reconcile the latest Trader revision before approval.");
+  }
+  if (c.openPositionCount !== 0 || c.activeOrderCount !== 0
+    || compareDecimal(c.equity, c.balance) !== 0
+    || compareDecimal(c.usedMargin, "0") !== 0
+    || compareDecimal(c.floatingPnl, "0") !== 0
+    || compareDecimal(c.ledgerBalanceAfter, c.balance) !== 0) {
+    throw payoutCheckpointError("PAYOUT_TRADER_FINANCIAL_DRIFT", "Trader financial invariants are not settled.");
+  }
+  const realizedProfitUsd = compareDecimal(c.balance, c.initialBalance) > 0
+    ? subtractDecimal(c.balance, c.initialBalance)
+    : "0";
+  return Object.freeze({
+    platformAccountId: c.platformAccountId,
+    accountCurrency: "USD",
+    financialRevision: c.financialRevision,
+    traderBalanceUsd: normalizeDecimal(c.balance),
+    initialBalanceUsd: normalizeDecimal(c.initialBalance),
+    realizedProfitUsd,
+    ledgerEntryId: c.ledgerEntryId,
+    evidenceHash: c.evidenceHash,
+    checkedAt: new Date(c.checkedAt),
+    contractVersion: CHECKPOINT_VERSION,
+  });
+}
+
+export function computeApprovalAmounts({
+  realizedProfitUsd,
+  profitSplitPercent,
+  paidAmounts = [],
+  requestedAmountUsd,
+} = {}) {
+  const gross = normalizeDecimal(realizedProfitUsd);
+  const split = normalizeDecimal(profitSplitPercent);
+  const requested = normalizeDecimal(requestedAmountUsd);
+  const entitlement = divideDecimal(multiplyDecimal(gross, split), "100", {
+    scale: 2,
+    rounding: "DOWN",
+  });
+  const alreadyPaid = paidAmounts.reduce(
+    (sum, value) => addDecimal(sum, normalizeDecimal(value)),
+    "0",
+  );
+  const remaining = compareDecimal(entitlement, alreadyPaid) > 0
+    ? subtractDecimal(entitlement, alreadyPaid)
+    : "0";
+  return Object.freeze({
+    realizedProfitUsd: gross,
+    entitlementUsd: entitlement,
+    alreadyPaidUsd: alreadyPaid,
+    availableForApprovalUsd: remaining,
+    sufficient: compareDecimal(remaining, requested) >= 0,
+  });
+}
