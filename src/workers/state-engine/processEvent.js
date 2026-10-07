@@ -414,12 +414,24 @@ export function isAuthoritativeTraderSnapshot(event) {
     return String(payload.valuationStatus || "").toUpperCase() === "LIVE";
   }
 
-  const instrumentQuality = String(payload.instrumentValuationQuality || "").toUpperCase();
-  const fxQuality = String(payload.fxValuationQuality || "").toUpperCase();
-  const completeness = String(payload.accountValuationCompleteness || "").toUpperCase();
-  if (!["LIVE", "APPROVED_CLOSE"].includes(instrumentQuality)) return false;
-  if (!["NOT_REQUIRED", "LIVE", "APPROVED_FALLBACK"].includes(fxQuality)) return false;
-  if (completeness !== "COMPLETE") return false;
+  const hasIndependentQualityContract = [
+    payload.instrumentValuationQuality,
+    payload.fxValuationQuality,
+    payload.accountValuationCompleteness,
+  ].some(value => value !== undefined && value !== null && value !== "");
+
+  if (hasIndependentQualityContract) {
+    const instrumentQuality = String(payload.instrumentValuationQuality || "").toUpperCase();
+    const fxQuality = String(payload.fxValuationQuality || "").toUpperCase();
+    const completeness = String(payload.accountValuationCompleteness || "").toUpperCase();
+    if (!["LIVE", "APPROVED_CLOSE"].includes(instrumentQuality)) return false;
+    if (!["NOT_REQUIRED", "LIVE", "APPROVED_FALLBACK"].includes(fxQuality)) return false;
+    if (completeness !== "COMPLETE") return false;
+  } else if (String(payload.valuationStatus || "").toUpperCase() !== "LIVE") {
+    // Rolling-deploy compatibility with the Stage 0 v1 contract. Once Trader
+    // sends any independent quality field, all required qualities are enforced.
+    return false;
+  }
 
   // Once Trader advertises the versioned financial contract, Funded must not
   // silently fall back to binary floating-point rule evaluation because one
