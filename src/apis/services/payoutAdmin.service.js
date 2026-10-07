@@ -2,6 +2,11 @@ import Account from "../../accounts/account.model.js";
 import PayoutRequest from "../../models/payoutRequest.model.js";
 import { decryptPayoutDestination } from "./payoutDestination.service.js";
 import { buildPaidPayoutAccounting } from "./payoutAccounting.service.js";
+import {
+  fetchTraderPayoutCheckpoint,
+  computeApprovalAmounts,
+  payoutCheckpointError,
+} from "./payoutSettlementCheckpoint.service.js";
 
 const ACTIONS = Object.freeze({
   START_REVIEW: { from: ["REQUESTED"], to: "REVIEWING", timestamp: "reviewingAt" },
@@ -178,6 +183,8 @@ export async function assertPayoutApprovalEligible(
   {
     accountModel = Account,
     payoutModel = PayoutRequest,
+    traderClient = null,
+    now = () => new Date(),
   } = {},
 ) {
   const account = await accountModel.findOne({ accountId: String(payout?.accountId || "") });
@@ -213,8 +220,17 @@ export async function assertPayoutApprovalEligible(
     throw error;
   }
 
-  const realizedProfit = Math.max(0, Number(account?.projections?.profit || 0));
-  const entitlement = Math.round((realizedProfit * currentSplit / 100 + Number.EPSILON) * 100) / 100;
+  const traderCheckpoint = await fetchTraderPayoutCheckpoint(account, { traderClient, now });
+  const realizedProfit = traderCheckpoint
+    ? traderCheckpoint.realizedProfitUsd
+    : Math.max(0, Number(account?.projections?.profit || 0));
+  const entitlement = traderCheckpoint
+    ? Number(computeApprovalAmounts({
+      realizedProfitUsd: realizedProfit,
+      profitSplitPercent: currentSplit,
+      requestedAmountUsd: payout?.requestedAmountUsd || 0,
+    }).entitlementUsd)
+    : Math.round((realizedProfit * currentSplit / 100 + Number.EPSILON) * 100) / 100;
 
   let paidQuery = payoutModel.find({
     accountId: String(payout.accountId),
@@ -224,7 +240,15 @@ export async function assertPayoutApprovalEligible(
   const paidRows = await paidQuery;
   const alreadyPaid = (Array.isArray(paidRows) ? paidRows : [])
     .reduce((sum, row) => sum + Math.max(0, Number(row?.requestedAmountUsd || 0)), 0);
-  const remaining = Math.round((Math.max(0, entitlement - alreadyPaid) + Number.EPSILON) * 100) / 100;
+  const exactAmounts = traderCheckpoint ? computeApprovalAmounts({
+    realizedProfitUsd: realizedProfit,
+    profitSplitPercent: currentSplit,
+    paidAmounts: (Array.isArray(paidRows) ? paidRows : []).map(row => String(row?.requestedAmountUsd || 0)),
+    requestedAmountUsd: String(payout?.requestedAmountUsd || 0),
+  }) : null;
+  const remaining = exactAmounts
+    ? Number(exactAmounts.availableForApprovalUsd)
+    : Math.round((Math.max(0, entitlement - alreadyPaid) + Number.EPSILON) * 100) / 100;
   const requested = Math.round((Math.max(0, Number(payout?.requestedAmountUsd || 0)) + Number.EPSILON) * 100) / 100;
 
   if (remaining < requested) {
@@ -236,6 +260,15 @@ export async function assertPayoutApprovalEligible(
     throw error;
   }
 
+  if (traderCheckpoint) {
+    // Reading a settled account is not an atomic payout entitlement hold.
+    // Do not approve cross-currency payouts until Trader supplies a durable,
+    // fenced reservation tied to this payout ID and financial revision.
+    throw payoutCheckpointError(
+      "PAYOUT_TRADER_RESERVATION_REQUIRED",
+      "Trader settlement is reconciled, but the durable payout reservation is not yet available.",
+    );
+  }
   return {
     realizedProfitUsd: Math.round((realizedProfit + Number.EPSILON) * 100) / 100,
     entitlementUsd: entitlement,
