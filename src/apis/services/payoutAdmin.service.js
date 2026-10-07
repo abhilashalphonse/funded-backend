@@ -251,7 +251,7 @@ export async function assertPayoutApprovalEligible(
     : Math.round((Math.max(0, entitlement - alreadyPaid) + Number.EPSILON) * 100) / 100;
   const requested = Math.round((Math.max(0, Number(payout?.requestedAmountUsd || 0)) + Number.EPSILON) * 100) / 100;
 
-  if (remaining < requested) {
+  if (traderCheckpoint ? !exactAmounts.sufficient : remaining < requested) {
     const error = new Error("Realized profit changed and no longer covers this payout request.");
     error.status = 409;
     error.code = "PAYOUT_APPROVAL_FUNDS_CHANGED";
