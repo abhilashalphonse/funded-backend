@@ -150,3 +150,88 @@ test("GM-003 valid v1 financial contract is authoritative", () => {
 
   assert.equal(isAuthoritativeTraderSnapshot(event), true);
 });
+
+
+test("GM-008 v1 APPROVED_CLOSE snapshot remains authoritative when FX and completeness are approved", () => {
+  const event = {
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    payload: {
+      financialContractVersion: 1,
+      complete: true,
+      valuationStatus: "APPROVED_CLOSE",
+      instrumentValuationQuality: "APPROVED_CLOSE",
+      fxValuationQuality: "LIVE",
+      accountValuationQuality: "APPROVED_CLOSE",
+      accountValuationCompleteness: "COMPLETE",
+      accountCurrency: "USD",
+      initialBalance: "100000",
+      balance: "97000",
+      equity: "94999.5",
+      dailyStartEquity: "100000",
+      financialRevision: 8,
+      valuationEpoch: "epoch-mixed-market",
+      valuationSequence: 18,
+      valuedAtMs: 1791331200000,
+    },
+  };
+
+  assert.equal(isAuthoritativeTraderSnapshot(event), true);
+});
+
+test("GM-008 v1 snapshot with stale/missing valuation quality is not authoritative", () => {
+  const base = {
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    payload: {
+      financialContractVersion: 1,
+      complete: true,
+      valuationStatus: "STALE",
+      instrumentValuationQuality: "STALE",
+      fxValuationQuality: "LIVE",
+      accountValuationQuality: "STALE",
+      accountValuationCompleteness: "COMPLETE",
+      accountCurrency: "USD",
+      initialBalance: "100000",
+      balance: "97000",
+      equity: "95000",
+      dailyStartEquity: "100000",
+      financialRevision: 8,
+      valuationEpoch: "epoch-mixed-market",
+      valuationSequence: 19,
+      valuedAtMs: 1791331200001,
+    },
+  };
+
+  assert.equal(isAuthoritativeTraderSnapshot(base), false);
+  assert.equal(isAuthoritativeTraderSnapshot({
+    ...base,
+    payload: {
+      ...base.payload,
+      valuationStatus: "APPROVED_CLOSE",
+      instrumentValuationQuality: "APPROVED_CLOSE",
+      fxValuationQuality: "MISSING",
+      accountValuationQuality: "APPROVED_CLOSE",
+    },
+  }), false);
+  assert.equal(isAuthoritativeTraderSnapshot({
+    ...base,
+    payload: {
+      ...base.payload,
+      valuationStatus: "APPROVED_CLOSE",
+      instrumentValuationQuality: "APPROVED_CLOSE",
+      fxValuationQuality: "LIVE",
+      accountValuationQuality: "APPROVED_CLOSE",
+      accountValuationCompleteness: "INCOMPLETE",
+    },
+  }), false);
+});
+
+test("GM-008 legacy snapshot still requires literal LIVE", () => {
+  assert.equal(isAuthoritativeTraderSnapshot({
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    payload: { complete: true, valuationStatus: "APPROVED_CLOSE" },
+  }), false);
+  assert.equal(isAuthoritativeTraderSnapshot({
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    payload: { complete: true, valuationStatus: "LIVE" },
+  }), true);
+});
