@@ -405,7 +405,30 @@ export function isEventForCurrentPlatformAccount(account, event) {
 export function isAuthoritativeTraderSnapshot(event) {
   if (event?.eventType !== SNAPSHOT_EVENT) return true;
   const payload = event.payload || {};
-  return payload.complete === true && String(payload.valuationStatus || "").toUpperCase() === "LIVE";
+  if (payload.complete !== true || String(payload.valuationStatus || "").toUpperCase() !== "LIVE") {
+    return false;
+  }
+
+  const contractVersion = Number(payload.financialContractVersion || 0);
+  if (contractVersion < 1) return true;
+
+  // Once Trader advertises the versioned financial contract, Funded must not
+  // silently fall back to binary floating-point rule evaluation because one
+  // required exact field was malformed or omitted.
+  const currency = String(payload.accountCurrency || "").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) return false;
+  for (const field of ["initialBalance", "balance", "equity", "dailyStartEquity"]) {
+    try {
+      if (payload[field] === undefined || payload[field] === null || payload[field] === "") return false;
+      normalizeDecimal(payload[field]);
+    } catch {
+      return false;
+    }
+  }
+  return snapshotFinancialRevision(event) !== null
+    && Boolean(snapshotEpoch(event))
+    && snapshotSequence(event) !== null
+    && Number.isFinite(Number(payload.valuedAtMs));
 }
 
 export function snapshotTime(event) {
