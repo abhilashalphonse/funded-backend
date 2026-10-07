@@ -327,3 +327,63 @@ test("admin payout serializer never exposes encrypted destination material", () 
   assert.equal(serialized.destinationIv, undefined);
   assert.equal(serialized.destinationAuthTag, undefined);
 });
+
+
+test("ACG Trader payout approval stays blocked until durable Trader reservation exists", async () => {
+  const record = payout({ status: "REVIEWING", requestedAmountUsd: 400 });
+  const accountModel = {
+    async findOne() {
+      return {
+        accountId: "MASTER-001",
+        platform: "acg-trader",
+        platformAccountId: "507f1f77bcf86cd799439011",
+        status: "FUNDED",
+        enabled: true,
+        customerAccessBlocked: false,
+        commercialTerms: { profitSplit: 80 },
+        platformFinancial: {
+          contractVersion: 1,
+          accountCurrency: "USD",
+          financialRevision: 12,
+          initialBalance: "10000",
+          balance: "10500",
+        },
+      };
+    },
+  };
+  const traderClient = {
+    async getPayoutSettlementCheckpoint(id) {
+      assert.equal(id, "507f1f77bcf86cd799439011");
+      return { checkpoint: {
+        contractVersion: "ACG_PAYOUT_SETTLEMENT_CHECKPOINT_V1",
+        platformAccountId: id,
+        accountCurrency: "USD",
+        financialRevision: 12,
+        balance: "10500",
+        initialBalance: "10000",
+        equity: "10500",
+        floatingPnl: "0",
+        usedMargin: "0",
+        openPositionCount: 0,
+        activeOrderCount: 0,
+        ledgerEntryId: "ledger-1",
+        ledgerBalanceAfter: "10500",
+        checkedAt: "2026-10-08T09:00:00.000Z",
+        blockers: [],
+        settled: true,
+        productionPayoutAuthorized: false,
+        evidenceHash: "b".repeat(64),
+      } };
+    },
+  };
+  const payoutModel = { find: () => ({ lean: async () => [] }) };
+  await assert.rejects(
+    assertPayoutApprovalEligible(record, {
+      accountModel,
+      payoutModel,
+      traderClient,
+      now: () => new Date("2026-10-08T09:00:05.000Z"),
+    }),
+    error => error.code === "PAYOUT_TRADER_RESERVATION_REQUIRED",
+  );
+});
