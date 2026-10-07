@@ -36,6 +36,7 @@ const PlatformFinancialSchema = new mongoose.Schema({
     policyVersions: {
         tradingPermissions: { type: Number, default: null },
         riskPolicy: { type: String, default: null },
+        conversion: { type: String, default: null },
     },
 }, { _id: false });
 
