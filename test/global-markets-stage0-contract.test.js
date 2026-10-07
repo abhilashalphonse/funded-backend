@@ -150,3 +150,31 @@ test("GM-003 valid v1 financial contract is authoritative", () => {
 
   assert.equal(isAuthoritativeTraderSnapshot(event), true);
 });
+
+
+test("GM-003 retains conversion policy identity from Trader v1 contract", () => {
+  const payload = {
+    financialContractVersion: 1,
+    complete: true,
+    valuationStatus: "LIVE",
+    accountCurrency: "USD",
+    initialBalance: "100000",
+    balance: "100000",
+    equity: "100000",
+    dailyStartEquity: "100000",
+    financialRevision: 4,
+    valuationEpoch: "epoch-policy",
+    valuationSequence: 2,
+    valuedAtMs: 1791331200000,
+    policyVersions: {
+      tradingPermissions: 3,
+      riskPolicy: "ACG_FUNDED_V2",
+      conversion: "ACG_FX_PURPOSE_V1",
+    },
+  };
+
+  assert.equal(isAuthoritativeTraderSnapshot({
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    payload,
+  }), true);
+});
