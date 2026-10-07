@@ -28,6 +28,11 @@ const PlatformFinancialSchema = new mongoose.Schema({
     marginLevel: { type: String, default: null },
     realizedPnlToday: { type: String, default: null },
     dailyStartEquity: { type: String, default: null },
+    valuationStatus: { type: String, default: null },
+    instrumentValuationQuality: { type: String, default: null },
+    fxValuationQuality: { type: String, default: null },
+    accountValuationQuality: { type: String, default: null },
+    accountValuationCompleteness: { type: String, default: null },
     policyVersions: {
         tradingPermissions: { type: Number, default: null },
         riskPolicy: { type: String, default: null },
