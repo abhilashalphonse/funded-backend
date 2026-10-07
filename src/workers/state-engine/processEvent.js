@@ -199,7 +199,8 @@ export async function processEvent(event, boss, {
   if (event.eventType === SNAPSHOT_EVENT && !isAuthoritativeTraderSnapshot(event)) {
     // Non-authoritative valuations must never overwrite the Funded dashboard.
     // They may be useful operationally, but risk/account projections only
-    // follow complete LIVE ACG Trader valuations.
+    // follow complete valuations whose instrument/FX quality is explicitly
+    // accepted by the versioned Trader contract.
     account.lastProcessedEventId = event.eventId;
     await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
@@ -405,12 +406,32 @@ export function isEventForCurrentPlatformAccount(account, event) {
 export function isAuthoritativeTraderSnapshot(event) {
   if (event?.eventType !== SNAPSHOT_EVENT) return true;
   const payload = event.payload || {};
-  if (payload.complete !== true || String(payload.valuationStatus || "").toUpperCase() !== "LIVE") {
-    return false;
-  }
+  if (payload.complete !== true) return false;
 
   const contractVersion = Number(payload.financialContractVersion || 0);
-  if (contractVersion < 1) return true;
+  if (contractVersion < 1) {
+    // Legacy snapshots keep their historical literal-LIVE contract.
+    return String(payload.valuationStatus || "").toUpperCase() === "LIVE";
+  }
+
+  const hasIndependentQualityContract = [
+    payload.instrumentValuationQuality,
+    payload.fxValuationQuality,
+    payload.accountValuationCompleteness,
+  ].some(value => value !== undefined && value !== null && value !== "");
+
+  if (hasIndependentQualityContract) {
+    const instrumentQuality = String(payload.instrumentValuationQuality || "").toUpperCase();
+    const fxQuality = String(payload.fxValuationQuality || "").toUpperCase();
+    const completeness = String(payload.accountValuationCompleteness || "").toUpperCase();
+    if (!["LIVE", "APPROVED_CLOSE"].includes(instrumentQuality)) return false;
+    if (!["NOT_REQUIRED", "LIVE", "APPROVED_FALLBACK"].includes(fxQuality)) return false;
+    if (completeness !== "COMPLETE") return false;
+  } else if (String(payload.valuationStatus || "").toUpperCase() !== "LIVE") {
+    // Rolling-deploy compatibility with the Stage 0 v1 contract. Once Trader
+    // sends any independent quality field, all required qualities are enforced.
+    return false;
+  }
 
   // Once Trader advertises the versioned financial contract, Funded must not
   // silently fall back to binary floating-point rule evaluation because one
@@ -586,6 +607,11 @@ function applyExactFinancialSnapshot(account, event) {
     marginLevel: decimal(p.marginLevel),
     realizedPnlToday: decimal(p.realizedPnlToday),
     dailyStartEquity: decimal(p.dailyStartEquity),
+    valuationStatus: p.valuationStatus == null ? null : String(p.valuationStatus),
+    instrumentValuationQuality: p.instrumentValuationQuality == null ? null : String(p.instrumentValuationQuality),
+    fxValuationQuality: p.fxValuationQuality == null ? null : String(p.fxValuationQuality),
+    accountValuationQuality: p.accountValuationQuality == null ? null : String(p.accountValuationQuality),
+    accountValuationCompleteness: p.accountValuationCompleteness == null ? null : String(p.accountValuationCompleteness),
     policyVersions: {
       tradingPermissions: Number.isFinite(Number(p.policyVersions?.tradingPermissions))
         ? Number(p.policyVersions.tradingPermissions)
