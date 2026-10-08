@@ -5,6 +5,12 @@ import { recordAnalyticsEventOnce } from "./analytics.service.js";
 const TRADABLE_STATUSES = new Set(["ACTIVE", "PHASE_2", "FUNDED"]);
 const VIEWABLE_STATUSES = new Set([...TRADABLE_STATUSES, "BREACHED"]);
 
+export function fundedLaunchEmail(customer) {
+  // Customer identity comes from Supabase server-side authentication.
+  const email = String(customer?.email || "").trim().toLowerCase();
+  return email.length <= 254 && /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) ? email : null;
+}
+
 function ownershipQuery(customer) {
   const customerIds = [...new Set([customer.customerId, ...(customer.customerIds || [])].filter(Boolean))];
   const legacyRefs = [...new Set([customer.id, customer.email, ...customerIds].filter(Boolean))];
@@ -127,7 +133,7 @@ export async function createCustomerTradingLaunch(customer, accountId) {
       status: account.status,
       accountCount: platformAccountIds.length,
       // This value originates from authenticated Funded customer identity, not browser input.
-      fundedCustomerEmail: String(customer.email || "").trim().toLowerCase(),
+      ...(fundedLaunchEmail(customer) ? { fundedCustomerEmail: fundedLaunchEmail(customer) } : {}),
     },
   });
 
