@@ -101,7 +101,7 @@ export async function executeApprovedSunpayPayout(
     throw error;
   }
 
-  if (record.requiresTraderSettlement === true
+  if ((record.requiresTraderSettlement === true || Boolean(record?.traderReservation?.checkpointHash))
     && record?.traderReservation?.status !== "RESERVED") {
     const error = new Error("Authoritative Trader payout reservation is required before provider execution.");
     error.status = 409;
@@ -275,10 +275,10 @@ export async function reconcileSunpayPayout(
           verifiedAt: settledAt,
         },
       );
-      const traderSettlement = record.requiresTraderSettlement
+      const traderSettlement = (record.requiresTraderSettlement || Boolean(record?.traderReservation?.checkpointHash))
         ? await settleVerifiedTraderPayout(record, { accountModel, traderClient })
         : null;
-      if (record.requiresTraderSettlement && traderSettlement?.status !== "SETTLED") {
+      if ((record.requiresTraderSettlement || Boolean(record?.traderReservation?.checkpointHash)) && traderSettlement?.status !== "SETTLED") {
         const error = new Error("Trader settlement receipt is required.");
         error.code = "PAYOUT_TRADER_SETTLEMENT_REQUIRED";
         throw error;
@@ -308,12 +308,12 @@ export async function reconcileSunpayPayout(
     }
   } else if (remote.status === "FAILED") {
     try {
-      const released = record.requiresTraderSettlement
+      const released = (record.requiresTraderSettlement || Boolean(record?.traderReservation?.checkpointHash))
         ? await releaseVerifiedTraderPayout(record, {
           accountModel, traderClient, reason: "VERIFIED_SUNPAY_FAILURE",
         })
         : null;
-      if (record.requiresTraderSettlement && released?.status !== "RELEASED") {
+      if ((record.requiresTraderSettlement || Boolean(record?.traderReservation?.checkpointHash)) && released?.status !== "RELEASED") {
         const error = new Error("Trader hold release is required before marking payout failed.");
         error.code = "PAYOUT_TRADER_RELEASE_REQUIRED";
         throw error;
