@@ -100,6 +100,110 @@ export function assertTraderPayoutCheckpoint({ account, checkpoint, now = new Da
   });
 }
 
+export function makeTraderClient(traderClient = null) {
+  return traderClient || new ACGTraderClient({
+    baseUrl: env.ACG_TRADER_BASE_URL,
+    clientId: env.ACG_TRADER_CLIENT_ID,
+    apiKey: env.ACG_TRADER_API_KEY,
+    timeoutMs: env.ACG_TRADER_TIMEOUT_MS,
+  });
+}
+
+export async function reserveVerifiedTraderPayout({ account, checkpoint, payoutId, amountUsd, traderClient = null }) {
+  if (!checkpoint || !payoutId || !account?.platformAccountId) {
+    throw payoutCheckpointError("PAYOUT_RESERVATION_EVIDENCE_REQUIRED", "A fresh verified Trader checkpoint is required.");
+  }
+  const amount = normalizeDecimal(amountUsd);
+  let response;
+  try {
+    response = await makeTraderClient(traderClient).reservePayout(account.platformAccountId, {
+      payoutId, amountUsd: amount,
+      financialRevision: checkpoint.financialRevision,
+      checkpointHash: checkpoint.evidenceHash,
+    });
+  } catch (error) {
+    const failure = payoutCheckpointError("PAYOUT_TRADER_RESERVATION_UNAVAILABLE", "Trader payout reservation was not confirmed.");
+    failure.cause = error;
+    throw failure;
+  }
+  const record = response?.reservation;
+  if (record?.contractVersion !== "ACG_PAYOUT_RESERVATION_V1"
+    || record.payoutId !== payoutId
+    || record.status !== "RESERVED"
+    || String(record.platformAccountId) !== String(account.platformAccountId)
+    || compareDecimal(record.amountUsd, amount) !== 0
+    || record.financialRevision !== checkpoint.financialRevision
+    || record.checkpointHash !== checkpoint.evidenceHash) {
+    throw payoutCheckpointError("PAYOUT_TRADER_RESERVATION_MISMATCH", "Trader payout reservation does not match the approved financial terms.");
+  }
+  return {
+    contractVersion: record.contractVersion,
+    status: "RESERVED",
+    amountUsd: amount,
+    financialRevision: record.financialRevision,
+    checkpointHash: record.checkpointHash,
+    reservedAt: record.reservedAt,
+  };
+}
+
+export async function settleVerifiedTraderPayout(payout, {
+  accountModel,
+  traderClient = null,
+} = {}) {
+  const account = await accountModel.findOne({ accountId: String(payout?.accountId || "") });
+  if (String(account?.platform || "").toLowerCase() !== "acg-trader") return null;
+  if (!account?.platformAccountId || !payout?.traderReservation?.checkpointHash) {
+    throw payoutCheckpointError("PAYOUT_RESERVATION_EVIDENCE_REQUIRED", "Trader payout reservation is missing.");
+  }
+  let response;
+  try {
+    response = await makeTraderClient(traderClient).settlePayout(account.platformAccountId, payout.payoutId);
+  } catch (error) {
+    const failure = payoutCheckpointError("PAYOUT_TRADER_SETTLEMENT_UNAVAILABLE", "Trader payout deduction has not been confirmed.");
+    failure.cause = error;
+    throw failure;
+  }
+  const record = response?.reservation;
+  if (record?.status !== "SETTLED"
+    || record?.payoutId !== payout.payoutId
+    || record?.checkpointHash !== payout.traderReservation.checkpointHash
+    || record?.contractVersion !== "ACG_PAYOUT_RESERVATION_V1"
+    || String(record.platformAccountId) !== String(account.platformAccountId)
+    || !record.settledLedgerEntryId
+    || compareDecimal(record.amountUsd, payout.requestedAmountUsd) !== 0) {
+    throw payoutCheckpointError("PAYOUT_TRADER_SETTLEMENT_MISMATCH", "Trader settlement receipt did not match the reserved payout.");
+  }
+  return {
+    ...payout.traderReservation,
+    status: "SETTLED",
+    settledAt: record.settledAt || new Date(),
+    settledLedgerEntryId: record.settledLedgerEntryId,
+  };
+}
+
+export async function releaseVerifiedTraderPayout(payout, {
+  accountModel,
+  traderClient = null,
+  reason,
+} = {}) {
+  const account = await accountModel.findOne({ accountId: String(payout?.accountId || "") });
+  if (String(account?.platform || "").toLowerCase() !== "acg-trader") return null;
+  if (!account?.platformAccountId || !payout?.traderReservation?.checkpointHash) {
+    throw payoutCheckpointError("PAYOUT_RESERVATION_EVIDENCE_REQUIRED", "Trader payout reservation is missing.");
+  }
+  const response = await makeTraderClient(traderClient)
+    .releasePayout(account.platformAccountId, payout.payoutId, reason);
+  if (response?.reservation?.status !== "RELEASED"
+    || response.reservation.payoutId !== payout.payoutId) {
+    throw payoutCheckpointError("PAYOUT_TRADER_RELEASE_MISMATCH", "Trader has not released the payout reservation.");
+  }
+  return {
+    ...payout.traderReservation,
+    status: "RELEASED",
+    releasedAt: response.reservation.releasedAt || new Date(),
+  };
+}
+
 export function computeApprovalAmounts({
   realizedProfitUsd,
   profitSplitPercent,
