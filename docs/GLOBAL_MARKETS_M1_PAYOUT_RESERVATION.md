@@ -31,6 +31,12 @@ integration and financial-recovery tests pass.
 6. A provider-confirmed FAILED result releases the Trader reservation BEFORE
    Funded clears the active payout slot. If release is unconfirmed, Funded
    remains PROCESSING and alerts/retries rather than allowing another payout.
+   For admin REJECT/CANCEL, Funded claims a non-payable REJECTING/CANCELLING
+   intermediate status first, then asks Trader to RELEASE an existing hold or
+   persist a CANCELLED tombstone when no hold exists, and only then finalizes.
+   An outage leaves Funded in the intermediate state with its activeKey intact.
+   This also prevents an in-flight approval on another process from reserving
+   the same payout ID after it was rejected.
 7. Admin FAIL is not sufficient evidence that an in-flight provider transfer
    never settled. It cannot release an M1 Trader hold without verification.
 8. Trader remains PAUSED after payout. Its risk-day baseline requires explicit
