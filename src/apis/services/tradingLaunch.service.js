@@ -8,7 +8,7 @@ const VIEWABLE_STATUSES = new Set([...TRADABLE_STATUSES, "BREACHED"]);
 export function fundedLaunchEmail(customer) {
   // Customer identity comes from Supabase server-side authentication.
   const email = String(customer?.email || "").trim().toLowerCase();
-  return email.length <= 254 && /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) ? email : null;
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
 }
 
 function ownershipQuery(customer) {
