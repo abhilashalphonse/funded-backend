@@ -745,3 +745,57 @@ test("durable payout-settlement snapshot restores exact revision after crash eve
   // Replayed financial event with identical timestamp and revision is ignored.
   assert.equal(isOlderThanLastAuthoritativeSnapshot(after, settled), true);
 });
+
+
+test("payout snapshot converges Funded exact money after crash even without trading or customer request", async () => {
+  for (const status of ["FUNDED", "CLOSED"]) {
+    const account = {
+      status, enabled: status === "FUNDED",
+      accountId: "MASTER-001", platform: "acg-trader",
+      platformAccountId: "507f1f77bcf86cd799439011",
+      initialDeposit: 10000, accountSize: 10000,
+      balance: 10500, equity: 10500, dailyStartEquity: 10000,
+      lastPlatformSnapshotAt: new Date("2026-10-08T09:00:04.000Z"),
+      lastPlatformFinancialRevision: 5,
+      lastPlatformSnapshotSequence: 20,
+      lastPlatformSnapshotEpoch: "BEFORE_CRASH",
+      platformFinancial: {
+        contractVersion: 1, accountCurrency: "USD",
+        financialRevision: 5, initialBalance: "10000", balance: "10500",
+      },
+      projections: { profit: 500, highestBalance: 10500, highestEquity: 10500 },
+      async save() {},
+    };
+    const accountModel = { async findOne() { return account; } };
+    const event = {
+      eventId: "acg-trader:payout-snapshot-replay",
+      aggregateId: "MASTER-001",
+      eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+      occurredAt: new Date("2026-10-08T09:00:01.000Z"),
+      metadata: { provider: "acg-trader" },
+      payload: {
+        provider: "acg-trader", financialContractVersion: 1,
+        source: "PAYOUT_SETTLEMENT", payoutId: "PAYOUT-001",
+        settlementLedgerEntryId: "ledger-001",
+        platformAccountId: account.platformAccountId,
+        accountCurrency: "USD", financialRevision: 6,
+        valuationEpoch: "PAYOUT_SETTLEMENT:PAYOUT-001",
+        valuationSequence: 6, valuedAtMs: Date.parse("2026-10-08T09:00:01.000Z"),
+        initialBalance: "10000", balance: "10100", equity: "10100",
+        margin: "0", marginFree: "10100", floatingProfit: "0",
+        dailyStartEquity: "10000", realizedPnlToday: "500",
+        instrumentValuationQuality: "APPROVED_CLOSE",
+        fxValuationQuality: "NOT_REQUIRED",
+        accountValuationCompleteness: "COMPLETE", complete: true,
+      },
+    };
+    await processEvent(event, null, { accountModel });
+    assert.equal(account.status, status);
+    assert.equal(account.balance, 10100);
+    assert.equal(account.platformFinancial.financialRevision, 6);
+    assert.equal(account.platformFinancial.balance, "10100");
+    assert.equal(account.lastPlatformFinancialRevision, 6);
+    await processEvent(event, null, { accountModel });
+    assert.equal(account.platformFinancial.balance, "10100");
+  }
+});
