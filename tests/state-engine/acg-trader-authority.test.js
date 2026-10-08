@@ -695,3 +695,53 @@ test("stale snapshot cannot overwrite a concurrent terminal breach or enqueue pr
   assert.equal(observedUpdate.$inc.version, 1);
   assert.equal(boss.sendCalls, 0);
 });
+
+
+test("durable payout-settlement snapshot restores exact revision after crash even with older arrival timestamp", () => {
+  const settled = {
+    eventType: "ACG_TRADER_ACCOUNT_SNAPSHOT",
+    occurredAt: new Date("2026-10-08T09:00:01.000Z"),
+    payload: {
+      financialContractVersion: 1,
+      source: "PAYOUT_SETTLEMENT", payoutId: "PAYOUT-001",
+      settlementLedgerEntryId: "ledger-001",
+      platformAccountId: "507f1f77bcf86cd799439011",
+      accountCurrency: "USD", financialRevision: 6,
+      valuationEpoch: "PAYOUT_SETTLEMENT:PAYOUT-001",
+      valuationSequence: 6, valuedAtMs: Date.parse("2026-10-08T09:00:01.000Z"),
+      initialBalance: "10000", balance: "10100", equity: "10100",
+      margin: "0", marginFree: "10100", floatingProfit: "0",
+      dailyStartEquity: "10000", realizedPnlToday: "500",
+      instrumentValuationQuality: "APPROVED_CLOSE",
+      fxValuationQuality: "NOT_REQUIRED",
+      accountValuationCompleteness: "COMPLETE",
+      complete: true,
+    },
+  };
+  assert.equal(isAuthoritativeTraderSnapshot(settled), true);
+  // A newer wall-clock time with an older revision must not trump a
+  // transactionally committed financial fact.
+  const before = {
+    lastPlatformFinancialRevision: 5,
+    lastPlatformSnapshotAt: new Date("2026-10-08T09:00:04.000Z"),
+    lastPlatformSnapshotSequence: 100,
+    lastPlatformSnapshotEpoch: "PRE_CRASH_EPOCH",
+  };
+  assert.equal(isOlderThanLastAuthoritativeSnapshot(before, settled), false);
+  const after = {
+    ...before,
+    lastPlatformFinancialRevision: 6,
+    lastPlatformSnapshotAt: settled.occurredAt,
+    lastPlatformSnapshotEpoch: settled.payload.valuationEpoch,
+    lastPlatformSnapshotSequence: 6,
+  };
+  const oldPreCrash = {
+    ...settled,
+    occurredAt: new Date("2026-10-08T09:00:06.000Z"),
+    payload: { ...settled.payload, financialRevision: 5,
+      valuationEpoch: "PRE_CRASH_EPOCH", valuationSequence: 101 },
+  };
+  assert.equal(isOlderThanLastAuthoritativeSnapshot(after, oldPreCrash), true);
+  // Replayed financial event with identical timestamp and revision is ignored.
+  assert.equal(isOlderThanLastAuthoritativeSnapshot(after, settled), true);
+});
