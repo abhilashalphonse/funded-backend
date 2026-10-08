@@ -40,6 +40,7 @@ function transitionModel(initial) {
 
   return {
     get record() { return record; },
+    find() { return { lean: async () => [] }; },
     async findOne(query) {
       return query.payoutId === record.payoutId ? { ...record } : null;
     },
@@ -231,7 +232,9 @@ test("rejecting a payout frees the account reservation and records the reason", 
   const result = await transitionAdminPayout("PAYOUT-001", {
     action: "REJECT",
     reason: "Destination name does not match verified account holder",
-  }, { payoutModel: model });
+  }, { payoutModel: model,
+    accountModel: { async findOne() { return { platform: "simulator" }; } },
+  });
 
   assert.equal(result.after.status, "REJECTED");
   assert.equal(model.record.activeKey, null);
@@ -392,7 +395,14 @@ test("ACG Trader payout approval reserves the exact USD entitlement before Funde
       } };
     },
   };
-  const payoutModel = { find: () => ({ lean: async () => [] }) };
+  const payoutModel = {
+    find: () => ({ lean: async () => [] }),
+    async findOneAndUpdate(filter, update) {
+      assert.equal(filter.payoutId, "PAYOUT-001");
+      assert.equal(update.$set.requiresTraderSettlement, true);
+      return { ...record, ...update.$set };
+    },
+  };
   const approved = await assertPayoutApprovalEligible(record, {
     accountModel,
     payoutModel,
