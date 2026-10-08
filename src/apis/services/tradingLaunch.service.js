@@ -126,6 +126,8 @@ export async function createCustomerTradingLaunch(customer, accountId) {
       phase: account.currentPhase,
       status: account.status,
       accountCount: platformAccountIds.length,
+      // This value originates from authenticated Funded customer identity, not browser input.
+      fundedCustomerEmail: String(customer.email || "").trim().toLowerCase(),
     },
   });
 
