@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { currentPlatformAccount } from "../src/apis/services/tradingLaunch.service.js";
+import { currentPlatformAccount, fundedLaunchEmail } from "../src/apis/services/tradingLaunch.service.js";
 
 function lifecycleAccount(id, overrides = {}) {
   return {
@@ -120,4 +120,11 @@ test("superseded, staged, or paused records are never selected", () => {
   });
 
   assert.equal(currentPlatformAccount(account), null);
+});
+
+test("launch identity uses validated authenticated Funded email", () => {
+  assert.equal(fundedLaunchEmail({ email: "  Trader.User@Example.COM " }), "trader.user@example.com");
+  assert.equal(fundedLaunchEmail({ email: "not-an-email" }), null);
+  assert.equal(fundedLaunchEmail({ email: "" }), null);
+  assert.equal(fundedLaunchEmail(null), null);
 });
