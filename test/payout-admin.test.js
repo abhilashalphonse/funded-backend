@@ -403,3 +403,64 @@ test("ACG Trader payout approval reserves the exact USD entitlement before Funde
   assert.equal(approved.traderReservation.amountUsd, "400");
   assert.equal(approved.availableForApprovalUsd, 400);
 });
+
+
+test("rejecting a Trader payout claims a nonpayable state before creating its cancellation tombstone", async () => {
+  const model = transitionModel(payout({
+    status: "REVIEWING", requiresTraderSettlement: true,
+  }));
+  const result = await transitionAdminPayout("PAYOUT-001", {
+    action: "REJECT", reason: "Customer requested cancellation",
+  }, {
+    payoutModel: model,
+    accountModel: { async findOne() {
+      return { platform: "acg-trader", platformAccountId: "507f1f77bcf86cd799439011" };
+    } },
+    traderClient: { async releasePayout(_accountId, id, reason) {
+      assert.equal(model.record.status, "REJECTING");
+      assert.equal(id, "PAYOUT-001");
+      assert.equal(reason, "ADMIN_REJECTED");
+      return { reservation: {
+        contractVersion: "ACG_PAYOUT_RESERVATION_V1",
+        platformAccountId: "507f1f77bcf86cd799439011",
+        payoutId: id, status: "CANCELLED",
+      } };
+    } },
+  });
+  assert.equal(result.after.status, "REJECTED");
+  assert.equal(result.after.traderReservation.status, "CANCELLED");
+  assert.equal(model.record.activeKey, null);
+});
+
+test("Trader cancellation outage keeps Funded REJECTING and reserved until recovery", async () => {
+  const model = transitionModel(payout({
+    status: "REVIEWING", requiresTraderSettlement: true,
+  }));
+  const accountModel = { async findOne() {
+    return { platform: "acg-trader", platformAccountId: "507f1f77bcf86cd799439011" };
+  } };
+  await assert.rejects(
+    () => transitionAdminPayout("PAYOUT-001", {
+      action: "REJECT", reason: "Verified cancellation",
+    }, {
+      payoutModel: model, accountModel,
+      traderClient: { async releasePayout() { throw new Error("network unavailable"); } },
+    }),
+    error => error.code === "PAYOUT_TRADER_CANCELLATION_UNCONFIRMED",
+  );
+  assert.equal(model.record.status, "REJECTING");
+  assert.equal(model.record.activeKey, "MASTER-001");
+  const resumed = await transitionAdminPayout("PAYOUT-001", {
+    action: "REJECT", reason: "Retry verified cancellation",
+  }, {
+    payoutModel: model, accountModel,
+    traderClient: { async releasePayout(id, payoutId) {
+      return { reservation: {
+        platformAccountId: id, payoutId,
+        status: "CANCELLED",
+      } };
+    } },
+  });
+  assert.equal(resumed.after.status, "REJECTED");
+  assert.equal(model.record.activeKey, null);
+});
