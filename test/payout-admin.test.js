@@ -329,7 +329,7 @@ test("admin payout serializer never exposes encrypted destination material", () 
 });
 
 
-test("ACG Trader payout approval stays blocked until durable Trader reservation exists", async () => {
+test("ACG Trader payout approval reserves the exact USD entitlement before Funded status changes", async () => {
   const record = payout({ status: "REVIEWING", requestedAmountUsd: 400 });
   const accountModel = {
     async findOne() {
@@ -352,6 +352,22 @@ test("ACG Trader payout approval stays blocked until durable Trader reservation 
     },
   };
   const traderClient = {
+    async reservePayout(id, command) {
+      assert.equal(id, "507f1f77bcf86cd799439011");
+      assert.equal(command.payoutId, "PAYOUT-001");
+      assert.equal(command.amountUsd, "400");
+      assert.equal(command.financialRevision, 12);
+      return { reservation: {
+        contractVersion: "ACG_PAYOUT_RESERVATION_V1",
+        payoutId: "PAYOUT-001",
+        platformAccountId: id,
+        status: "RESERVED",
+        amountUsd: "400",
+        financialRevision: 12,
+        checkpointHash: "b".repeat(64),
+        reservedAt: "2026-10-08T09:00:05.000Z",
+      } };
+    },
     async getPayoutSettlementCheckpoint(id) {
       assert.equal(id, "507f1f77bcf86cd799439011");
       return { checkpoint: {
@@ -377,13 +393,13 @@ test("ACG Trader payout approval stays blocked until durable Trader reservation 
     },
   };
   const payoutModel = { find: () => ({ lean: async () => [] }) };
-  await assert.rejects(
-    assertPayoutApprovalEligible(record, {
-      accountModel,
-      payoutModel,
-      traderClient,
-      now: () => new Date("2026-10-08T09:00:05.000Z"),
-    }),
-    error => error.code === "PAYOUT_TRADER_RESERVATION_REQUIRED",
-  );
+  const approved = await assertPayoutApprovalEligible(record, {
+    accountModel,
+    payoutModel,
+    traderClient,
+    now: () => new Date("2026-10-08T09:00:05.000Z"),
+  });
+  assert.equal(approved.traderReservation.status, "RESERVED");
+  assert.equal(approved.traderReservation.amountUsd, "400");
+  assert.equal(approved.availableForApprovalUsd, 400);
 });
