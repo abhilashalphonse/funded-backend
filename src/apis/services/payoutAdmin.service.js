@@ -9,6 +9,7 @@ import {
   reserveVerifiedTraderPayout,
   settleVerifiedTraderPayout,
   releaseVerifiedTraderPayout,
+  cancelTraderPayoutRequest,
 } from "./payoutSettlementCheckpoint.service.js";
 
 const ACTIONS = Object.freeze({
@@ -17,9 +18,9 @@ const ACTIONS = Object.freeze({
   MARK_PROCESSING: { from: ["APPROVED"], to: "PROCESSING", timestamp: "processingAt" },
   MARK_SENT: { from: ["PROCESSING"], to: "SENT", timestamp: "sentAt" },
   MARK_PAID: { from: ["SENT"], to: "PAID", timestamp: "paidAt", terminal: true },
-  REJECT: { from: ["REQUESTED", "REVIEWING"], to: "REJECTED", timestamp: "rejectedAt", terminal: true },
+  REJECT: { from: ["REQUESTED", "REVIEWING", "REJECTING"], to: "REJECTED", timestamp: "rejectedAt", terminal: true },
   FAIL: { from: ["APPROVED", "PROCESSING", "SENT"], to: "FAILED", timestamp: "failedAt", terminal: true },
-  CANCEL: { from: ["REQUESTED", "REVIEWING"], to: "CANCELLED", timestamp: "cancelledAt", terminal: true },
+  CANCEL: { from: ["REQUESTED", "REVIEWING", "CANCELLING"], to: "CANCELLED", timestamp: "cancelledAt", terminal: true },
 });
 
 function escapeRegex(value = "") {
@@ -412,7 +413,7 @@ export async function transitionAdminPayout(
 ) {
   const { action, definition, reason } = normalizeTransitionInput(input);
   const id = String(payoutId || "").trim();
-  const current = await payoutModel.findOne({ payoutId: id });
+  let current = await payoutModel.findOne({ payoutId: id });
   if (!current) {
     const error = new Error("Payout not found.");
     error.status = 404;
@@ -428,6 +429,32 @@ export async function transitionAdminPayout(
     error.currentStatus = currentStatus;
     error.allowedStatuses = definition.from;
     throw error;
+  }
+
+  const before = serializeAdminPayout(current);
+  const traderSettlementRequired = current.requiresTraderSettlement === true
+    || Boolean(current?.traderReservation?.checkpointHash);
+  const cancellationAction = ["REJECT", "CANCEL"].includes(action) && traderSettlementRequired;
+  let cancellation = null;
+  let terminalFrom = definition.from;
+  if (cancellationAction) {
+    const intermediateStatus = action === "REJECT" ? "REJECTING" : "CANCELLING";
+    if (currentStatus !== intermediateStatus) {
+      const claimed = await payoutModel.findOneAndUpdate(
+        { payoutId: id, status: { $in: ["REQUESTED", "REVIEWING"] } },
+        { $set: { status: intermediateStatus } },
+        { new: true, runValidators: true },
+      );
+      if (!claimed) {
+        throw payoutCheckpointError("PAYOUT_STATUS_CHANGED", "Payout changed while cancellation was being claimed.");
+      }
+      current = claimed;
+    }
+    terminalFrom = [intermediateStatus];
+    cancellation = await cancelTraderPayoutRequest(current, {
+      accountModel, traderClient,
+      reason: action === "REJECT" ? "ADMIN_REJECTED" : "CUSTOMER_CANCELLED",
+    });
   }
 
   const approval = action === "APPROVE"
@@ -447,8 +474,6 @@ export async function transitionAdminPayout(
     : {};
 
   // Verify beneficiary accounting before debiting the Trader USD ledger.
-  const traderSettlementRequired = current.requiresTraderSettlement === true
-    || Boolean(current?.traderReservation?.checkpointHash);
   const settlement = action === "MARK_PAID" && traderSettlementRequired
     ? await settleVerifiedTraderPayout(current, { accountModel, traderClient })
     : null;
@@ -472,6 +497,7 @@ export async function transitionAdminPayout(
     ...accounting,
     ...(approval?.traderReservation ? { traderReservation: approval.traderReservation } : {}),
     ...(settlement ? { traderReservation: settlement } : {}),
+    ...(cancellation ? { traderReservation: cancellation } : {}),
   };
 
   if (definition.terminal) set.activeKey = null;
@@ -487,7 +513,7 @@ export async function transitionAdminPayout(
   }
 
   const updated = await payoutModel.findOneAndUpdate(
-    { payoutId: id, status: { $in: definition.from } },
+    { payoutId: id, status: { $in: terminalFrom } },
     { $set: set },
     { new: true, runValidators: true },
   );
@@ -502,7 +528,7 @@ export async function transitionAdminPayout(
   return {
     action,
     reason,
-    before: serializeAdminPayout(current),
+    before,
     after: serializeAdminPayout(updated),
   };
 }
