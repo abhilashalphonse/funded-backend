@@ -528,3 +528,97 @@ test("insufficient Sunpay balance leaves approved payout reserved for retry", as
   assert.equal(model.record.provider, "sunpay");
   assert.equal(model.record.providerLastError.code, "SUNPAY_INSUFFICIENT_BALANCE");
 });
+
+
+test("new ACG Sunpay payout marks PAID only after matching Trader USD ledger receipt", async () => {
+  const accountId = "507f1f77bcf86cd799439011";
+  const model = payoutModel({
+    payoutId: "PAYOUT-M1-PAID", accountId: "MASTER-M1",
+    requiresTraderSettlement: true, status: "PROCESSING",
+    activeKey: "MASTER-M1", method: "UPI", provider: "sunpay",
+    settlementCurrency: "INR", settlementAmount: 1000, feePolicy: "ACG_COVERS",
+    requestedAmountUsd: 12.34,
+    traderReservation: {
+      contractVersion: "ACG_PAYOUT_RESERVATION_V1",
+      status: "RESERVED", amountUsd: "12.34",
+      checkpointHash: "c".repeat(64), financialRevision: 7,
+    },
+  });
+  let settlements = 0;
+  const result = await reconcileSunpayPayout("PAYOUT-M1-PAID", {
+    payoutModel: model,
+    accountModel: { async findOne() {
+      return { accountId: "MASTER-M1", platform: "acg-trader", platformAccountId: accountId };
+    } },
+    traderClient: { async settlePayout(id, payoutId) {
+      settlements++;
+      assert.equal(id, accountId);
+      assert.equal(payoutId, "PAYOUT-M1-PAID");
+      return { reservation: {
+        contractVersion: "ACG_PAYOUT_RESERVATION_V1",
+        payoutId, platformAccountId: id, status: "SETTLED", amountUsd: "12.34",
+        checkpointHash: "c".repeat(64), settledLedgerEntryId: "ledger-m1",
+      } };
+    } },
+    statusFetcher: async () => ({
+      payoutId: "PAYOUT-M1-PAID", status: "PAID", providerStatus: "success",
+      amount: 1030, fee: 30, netAmount: 1000,
+    }),
+  });
+  assert.equal(result.status, "PAID");
+  assert.equal(result.traderReservation.status, "SETTLED");
+  assert.equal(result.traderReservation.settledLedgerEntryId, "ledger-m1");
+  assert.equal(settlements, 1);
+  const replay = await reconcileSunpayPayout("PAYOUT-M1-PAID", {
+    payoutModel: model,
+    statusFetcher: () => { throw new Error("no repeat provider call"); },
+  });
+  assert.equal(replay.status, "PAID");
+  assert.equal(settlements, 1);
+});
+
+test("provider success with Trader settlement outage stays PROCESSING with the active hold", async () => {
+  const model = payoutModel({
+    payoutId: "PAYOUT-M1-OFFLINE", accountId: "MASTER-M1",
+    requiresTraderSettlement: true, status: "PROCESSING", activeKey: "MASTER-M1",
+    method: "UPI", provider: "sunpay", settlementCurrency: "INR",
+    settlementAmount: 1000, feePolicy: "ACG_COVERS",
+    requestedAmountUsd: 12.34,
+    traderReservation: { status: "RESERVED", checkpointHash: "c".repeat(64) },
+  });
+  const result = await reconcileSunpayPayout("PAYOUT-M1-OFFLINE", {
+    payoutModel: model,
+    accountModel: { async findOne() {
+      return { platform: "acg-trader", platformAccountId: "507f1f77bcf86cd799439011" };
+    } },
+    traderClient: { async settlePayout() { throw new Error("Trader offline"); } },
+    statusFetcher: async () => ({
+      payoutId: "PAYOUT-M1-OFFLINE", status: "PAID",
+      providerStatus: "success", amount: 1030, fee: 30, netAmount: 1000,
+    }),
+  });
+  assert.equal(result.status, "PROCESSING");
+  assert.equal(result.activeKey, "MASTER-M1");
+  assert.equal(result.providerLastError.code, "PAYOUT_TRADER_SETTLEMENT_UNAVAILABLE");
+});
+
+test("provider failure cannot mark FAILED while Trader release is unconfirmed", async () => {
+  const model = payoutModel({
+    payoutId: "PAYOUT-M1-FAILED", accountId: "MASTER-M1",
+    requiresTraderSettlement: true, status: "PROCESSING", activeKey: "MASTER-M1",
+    provider: "sunpay", settlementCurrency: "INR", settlementAmount: 1000,
+    traderReservation: { status: "RESERVED", checkpointHash: "d".repeat(64) },
+  });
+  const result = await reconcileSunpayPayout("PAYOUT-M1-FAILED", {
+    payoutModel: model,
+    accountModel: { async findOne() {
+      return { platform: "acg-trader", platformAccountId: "507f1f77bcf86cd799439011" };
+    } },
+    traderClient: { async releasePayout() { throw new Error("release unavailable"); } },
+    statusFetcher: async () => ({
+      payoutId: "PAYOUT-M1-FAILED", status: "FAILED", providerStatus: "failed",
+    }),
+  });
+  assert.equal(result.status, "PROCESSING");
+  assert.equal(result.activeKey, "MASTER-M1");
+});
