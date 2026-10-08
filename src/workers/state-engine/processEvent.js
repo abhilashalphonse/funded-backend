@@ -191,6 +191,26 @@ export async function processEvent(event, boss, {
   }
 
   if (["CLOSED", "EXPIRED"].includes(account.status)) {
+    // A provider may finish an already-sent payout after account closure.
+    // Reconcile ONLY the authenticated, versioned settlement financial fact;
+    // never reopen the account or run challenge progression.
+    if (event.eventType === SNAPSHOT_EVENT
+      && event.payload?.source === "PAYOUT_SETTLEMENT"
+      && typeof event.payload?.settlementLedgerEntryId === "string"
+      && event.payload.settlementLedgerEntryId.length > 0
+      && isAuthoritativeTraderSnapshot(event)
+      && !isOlderThanLastAuthoritativeSnapshot(account, event)) {
+      applySnapshotMetrics(account, event);
+      applyExactFinancialSnapshot(account, event);
+      updateLossProjections(account);
+      account.lastPlatformSnapshotAt = snapshotTime(event);
+      const sequence = snapshotSequence(event);
+      if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
+      const epoch = snapshotEpoch(event);
+      if (epoch) account.lastPlatformSnapshotEpoch = epoch;
+      const financialRevision = snapshotFinancialRevision(event);
+      if (financialRevision !== null) account.lastPlatformFinancialRevision = financialRevision;
+    }
     account.lastProcessedEventId = event.eventId;
     await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
