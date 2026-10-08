@@ -437,16 +437,18 @@ export async function transitionAdminPayout(
     : {};
 
   // Verify beneficiary accounting before debiting the Trader USD ledger.
-  const settlement = action === "MARK_PAID" && current.requiresTraderSettlement
+  const traderSettlementRequired = current.requiresTraderSettlement === true
+    || Boolean(current?.traderReservation?.checkpointHash);
+  const settlement = action === "MARK_PAID" && traderSettlementRequired
     ? await settleVerifiedTraderPayout(current, { accountModel, traderClient })
     : null;
-  if (action === "MARK_PAID" && current.requiresTraderSettlement && !settlement) {
+  if (action === "MARK_PAID" && traderSettlementRequired && !settlement) {
     throw payoutCheckpointError("PAYOUT_TRADER_SETTLEMENT_REQUIRED", "Trader settlement receipt is mandatory.");
   }
 
   // A provider in flight may have already sent funds. Admin FAIL must never
   // release that hold on the basis of an unverified manual reason.
-  if (action === "FAIL" && current.requiresTraderSettlement) {
+  if (action === "FAIL" && traderSettlementRequired) {
     throw payoutCheckpointError(
       "PAYOUT_PROVIDER_FAILURE_VERIFICATION_REQUIRED",
       "Use verified provider failure reconciliation before releasing a reserved payout.",
