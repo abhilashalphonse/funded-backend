@@ -339,6 +339,17 @@ export function buildPayoutOverview(account, records = [], now = new Date()) {
   const availableUsd = money2(Math.max(0, entitlement - ledger.paidUsd - ledger.activeReservedUsd));
 
   const blockers = [];
+  if (String(account?.platform || "").toLowerCase() === "acg-trader") {
+    const settledRevisions = records
+      .filter(row => row?.status === "PAID" && row?.traderReservation?.status === "SETTLED")
+      .map(row => Number(row?.traderReservation?.financialRevision))
+      .filter(Number.isSafeInteger);
+    if (settledRevisions.length
+      && (!Number.isSafeInteger(Number(account?.platformFinancial?.financialRevision))
+        || Number(account.platformFinancial.financialRevision) <= Math.max(...settledRevisions))) {
+      blockers.push("PAYOUT_TRADER_SETTLEMENT_RECONCILIATION_PENDING");
+    }
+  }
   if (stage !== "MASTER") blockers.push("MASTER_ACCOUNT_REQUIRED");
   if (split == null) blockers.push("PROFIT_SPLIT_UNAVAILABLE");
   if (realized <= 0) blockers.push("NO_REALIZED_PROFIT");
