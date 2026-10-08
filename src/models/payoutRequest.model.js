@@ -32,6 +32,8 @@ const PayoutRequestSchema = new mongoose.Schema(
     activeKey: { type: String, default: null },
     idempotencyKey: { type: String, default: null, trim: true },
 
+    requiresTraderSettlement: { type: Boolean, default: false },
+
     status: {
       type: String,
       enum: PAYOUT_STATUSES,
