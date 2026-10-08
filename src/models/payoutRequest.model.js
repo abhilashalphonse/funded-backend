@@ -3,6 +3,8 @@ import mongoose from "mongoose";
 export const PAYOUT_STATUSES = Object.freeze([
   "REQUESTED",
   "REVIEWING",
+  "REJECTING",
+  "CANCELLING",
   "APPROVED",
   "PROCESSING",
   "SENT",
@@ -15,6 +17,8 @@ export const PAYOUT_STATUSES = Object.freeze([
 export const ACTIVE_PAYOUT_STATUSES = Object.freeze([
   "REQUESTED",
   "REVIEWING",
+  "REJECTING",
+  "CANCELLING",
   "APPROVED",
   "PROCESSING",
   "SENT",
@@ -60,7 +64,7 @@ const PayoutRequestSchema = new mongoose.Schema(
 
     traderReservation: {
       contractVersion: { type: String, default: null },
-      status: { type: String, enum: ["RESERVED", "SETTLED", "RELEASED", null], default: null },
+      status: { type: String, enum: ["RESERVED", "SETTLED", "RELEASED", "CANCELLED", null], default: null },
       amountUsd: { type: String, default: null },
       financialRevision: { type: Number, default: null },
       checkpointHash: { type: String, default: null },
