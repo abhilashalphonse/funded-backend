@@ -281,6 +281,20 @@ export async function assertPayoutApprovalEligible(
   }
 
   if (traderCheckpoint) {
+    // Persist the settlement contract BEFORE contacting Trader: concurrent
+    // cancellation must see this account's mandatory cancellation fence even
+    // for a historical payout created without the new flag.
+    if (payout?.requiresTraderSettlement !== true) {
+      const migrated = await payoutModel.findOneAndUpdate(
+        { payoutId: String(payout.payoutId), status: { $in: ['REQUESTED', 'REVIEWING'] } },
+        { $set: { requiresTraderSettlement: true } },
+        { new: true, runValidators: true },
+      );
+      if (!migrated) {
+        throw payoutCheckpointError('PAYOUT_STATUS_CHANGED',
+          'Payout was cancelled or changed before its Trader reservation.');
+      }
+    }
     const traderReservation = await reserveVerifiedTraderPayout({
       account, checkpoint: traderCheckpoint,
       payoutId: String(payout.payoutId),
@@ -432,8 +446,19 @@ export async function transitionAdminPayout(
   }
 
   const before = serializeAdminPayout(current);
-  const traderSettlementRequired = current.requiresTraderSettlement === true
+  let traderSettlementRequired = current.requiresTraderSettlement === true
     || Boolean(current?.traderReservation?.checkpointHash);
+  // Old requests may predate requiresTraderSettlement. Resolve the actual
+  // account binding before deciding whether cancellation needs a tombstone.
+  // A missing account is ambiguous, so cancellation stays nonterminal.
+  if (["REJECT", "CANCEL"].includes(action) && !traderSettlementRequired) {
+    const boundAccount = await accountModel.findOne({ accountId: String(current.accountId || "") });
+    if (!boundAccount) {
+      throw payoutCheckpointError('PAYOUT_ACCOUNT_BINDING_UNAVAILABLE',
+        'Payout account binding must be resolved before cancellation.');
+    }
+    traderSettlementRequired = String(boundAccount.platform || '').toLowerCase() === 'acg-trader';
+  }
   const cancellationAction = ["REJECT", "CANCEL"].includes(action) && traderSettlementRequired;
   let cancellation = null;
   let terminalFrom = definition.from;
