@@ -4,6 +4,9 @@ import {
   assertTraderPayoutCheckpoint,
   computeApprovalAmounts,
   fetchTraderPayoutCheckpoint,
+  reserveVerifiedTraderPayout,
+  settleVerifiedTraderPayout,
+  releaseVerifiedTraderPayout,
 } from "../src/apis/services/payoutSettlementCheckpoint.service.js";
 
 const NOW = new Date("2026-10-08T09:00:00.000Z");
@@ -99,4 +102,81 @@ test("non-Trader account does not invoke the Trader dependency", async () => {
   }, {
     traderClient: { async getPayoutSettlementCheckpoint() { throw new Error("must not call"); } },
   }), null);
+});
+
+
+test("Trader payout reservation and settlement are tied to the same immutable payout ID", async () => {
+  const a = account();
+  const c = assertTraderPayoutCheckpoint({ account: a, checkpoint: checkpoint(), now: NOW });
+  const calls = [];
+  const traderClient = {
+    async reservePayout(accountId, command) {
+      calls.push("RESERVE");
+      assert.equal(accountId, a.platformAccountId);
+      assert.equal(command.financialRevision, 12);
+      return { reservation: {
+        contractVersion: "ACG_PAYOUT_RESERVATION_V1",
+        payoutId: command.payoutId, platformAccountId: accountId,
+        status: "RESERVED", amountUsd: command.amountUsd,
+        checkpointHash: command.checkpointHash,
+        financialRevision: command.financialRevision,
+        reservedAt: NOW.toISOString(),
+      } };
+    },
+    async settlePayout(accountId, payoutId) {
+      calls.push("SETTLE");
+      assert.equal(payoutId, "PAYOUT-TEST-1");
+      return { reservation: {
+        contractVersion: "ACG_PAYOUT_RESERVATION_V1",
+        payoutId, platformAccountId: accountId,
+        status: "SETTLED", amountUsd: "400",
+        checkpointHash: "a".repeat(64),
+        settledLedgerEntryId: "ledger-payout-1",
+        settledAt: NOW.toISOString(),
+      } };
+    },
+  };
+  const held = await reserveVerifiedTraderPayout({
+    account: a, checkpoint: c, payoutId: "PAYOUT-TEST-1",
+    amountUsd: "400", traderClient,
+  });
+  const paid = await settleVerifiedTraderPayout({
+    payoutId: "PAYOUT-TEST-1", accountId: a.accountId,
+    requiresTraderSettlement: true, requestedAmountUsd: 400,
+    traderReservation: held,
+  }, {
+    accountModel: { async findOne() { return a; } }, traderClient,
+  });
+  assert.equal(held.status, "RESERVED");
+  assert.equal(paid.status, "SETTLED");
+  assert.equal(paid.settledLedgerEntryId, "ledger-payout-1");
+  assert.deepEqual(calls, ["RESERVE", "SETTLE"]);
+});
+
+test("verified provider failure releases the hold without claiming ledger deduction", async () => {
+  const a = account();
+  const held = {
+    contractVersion: "ACG_PAYOUT_RESERVATION_V1",
+    status: "RESERVED", amountUsd: "400", checkpointHash: "a".repeat(64),
+    financialRevision: 12,
+  };
+  const released = await releaseVerifiedTraderPayout({
+    payoutId: "PAYOUT-TEST-2", accountId: a.accountId,
+    requiresTraderSettlement: true, requestedAmountUsd: 400,
+    traderReservation: held,
+  }, {
+    accountModel: { async findOne() { return a; } },
+    traderClient: {
+      async releasePayout(_id, payoutId, reason) {
+        assert.equal(payoutId, "PAYOUT-TEST-2");
+        assert.equal(reason, "VERIFIED_PROVIDER_FAILURE");
+        return { reservation: {
+          payoutId, status: "RELEASED", releasedAt: NOW.toISOString(),
+        } };
+      },
+    },
+    reason: "VERIFIED_PROVIDER_FAILURE",
+  });
+  assert.equal(released.status, "RELEASED");
+  assert.equal(released.settledLedgerEntryId, undefined);
 });
