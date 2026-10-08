@@ -765,6 +765,7 @@ export async function createCustomerPayoutRequest(
     activeKey: account.accountId,
     idempotencyKey,
     status: "REQUESTED",
+    requiresTraderSettlement: String(account?.platform || "").toLowerCase() === "acg-trader",
     cycle: {
       key: overview.cycle.currentCycleKey,
       frequency: overview.cycle.frequency,
