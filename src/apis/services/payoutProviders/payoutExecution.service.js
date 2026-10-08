@@ -313,6 +313,11 @@ export async function reconcileSunpayPayout(
           accountModel, traderClient, reason: "VERIFIED_SUNPAY_FAILURE",
         })
         : null;
+      if (record.requiresTraderSettlement && released?.status !== "RELEASED") {
+        const error = new Error("Trader hold release is required before marking payout failed.");
+        error.code = "PAYOUT_TRADER_RELEASE_REQUIRED";
+        throw error;
+      }
       if (released) set.traderReservation = released;
       set.status = "FAILED";
       set.activeKey = null;
