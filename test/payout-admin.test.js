@@ -464,3 +464,126 @@ test("Trader cancellation outage keeps Funded REJECTING and reserved until recov
   assert.equal(resumed.after.status, "REJECTED");
   assert.equal(model.record.activeKey, null);
 });
+
+
+function legacyTraderAccount() {
+  return {
+    accountId: 'MASTER-001', platform: 'acg-trader',
+    platformAccountId: '507f1f77bcf86cd799439011',
+    status: 'FUNDED', enabled: true, customerAccessBlocked: false,
+    commercialTerms: { profitSplit: 80 },
+    platformFinancial: {
+      contractVersion: 1, accountCurrency: 'USD', financialRevision: 12,
+      initialBalance: '10000', balance: '10500',
+    },
+  };
+}
+
+function stagingCheckpoint() {
+  return {
+    contractVersion: 'ACG_PAYOUT_SETTLEMENT_CHECKPOINT_V1',
+    platformAccountId: '507f1f77bcf86cd799439011',
+    accountCurrency: 'USD', financialRevision: 12,
+    balance: '10500', initialBalance: '10000', equity: '10500',
+    floatingPnl: '0', usedMargin: '0', openPositionCount: 0, activeOrderCount: 0,
+    ledgerEntryId: 'ledger-12', ledgerBalanceAfter: '10500',
+    checkedAt: '2026-10-08T09:00:00.000Z',
+    blockers: [], settled: true, productionPayoutAuthorized: false,
+    evidenceHash: 'b'.repeat(64),
+  };
+}
+
+test('old and new ACG payout requests cannot be orphaned by cancellation during approval', async () => {
+  for (const initiallyFlagged of [false, true]) {
+    const model = transitionModel(payout({
+      status: 'REVIEWING',
+      requiresTraderSettlement: initiallyFlagged,
+    }));
+    const accountModel = { async findOne() { return legacyTraderAccount(); } };
+    let enteredReserve;
+    const reserving = new Promise(resolve => { enteredReserve = resolve; });
+    let finishReserve;
+    const delayedReserve = new Promise(resolve => { finishReserve = resolve; });
+    let cancelled = false;
+    let releaseCalls = 0;
+    const traderClient = {
+      async getPayoutSettlementCheckpoint() {
+        return { checkpoint: stagingCheckpoint() };
+      },
+      async reservePayout() {
+        enteredReserve();
+        await delayedReserve;
+        if (cancelled) throw new Error('PAYOUT_CANCELLED');
+        return { reservation: {
+          contractVersion: 'ACG_PAYOUT_RESERVATION_V1',
+          status: 'RESERVED', amountUsd: '400',
+          payoutId: 'PAYOUT-001',
+          platformAccountId: legacyTraderAccount().platformAccountId,
+          financialRevision: 12, checkpointHash: 'b'.repeat(64),
+        } };
+      },
+      async releasePayout(_accountId, payoutId) {
+        assert.equal(payoutId, 'PAYOUT-001');
+        releaseCalls++;
+        cancelled = true;
+        return { reservation: {
+          status: 'CANCELLED', payoutId: 'PAYOUT-001',
+          platformAccountId: legacyTraderAccount().platformAccountId,
+        } };
+      },
+    };
+    const deps = {
+      payoutModel: model, accountModel, traderClient,
+      now: () => new Date('2026-10-08T09:00:05.000Z'),
+    };
+    const approval = transitionAdminPayout('PAYOUT-001',
+      { action: 'APPROVE', reason: 'Approve historical payout' }, deps);
+    await reserving;
+    assert.equal(model.record.requiresTraderSettlement, true);
+    const rejected = await transitionAdminPayout('PAYOUT-001',
+      { action: 'CANCEL', reason: 'Cancel before reserve returns' }, deps);
+    assert.equal(rejected.after.status, 'CANCELLED');
+    assert.equal(releaseCalls, 1);
+    finishReserve();
+    await assert.rejects(approval, /Trader payout reservation was not confirmed/);
+    assert.equal(model.record.status, 'CANCELLED');
+    assert.equal(model.record.activeKey, null);
+  }
+});
+
+test('old ACG payout reserve timeout followed by cancellation releases unacknowledged hold', async () => {
+  const model = transitionModel(payout({
+    status: 'REVIEWING', requiresTraderSettlement: false,
+  }));
+  const accountModel = { async findOne() { return legacyTraderAccount(); } };
+  let traderHold = false;
+  const traderClient = {
+    async getPayoutSettlementCheckpoint() { return { checkpoint: stagingCheckpoint() }; },
+    async reservePayout() {
+      traderHold = true;
+      throw new Error('network timeout after reserve committed');
+    },
+    async releasePayout(_accountId, id) {
+      assert.equal(id, 'PAYOUT-001');
+      assert.equal(traderHold, true);
+      traderHold = false;
+      return { reservation: {
+        status: 'RELEASED', payoutId: id,
+        platformAccountId: legacyTraderAccount().platformAccountId,
+      } };
+    },
+  };
+  const deps = { payoutModel: model, accountModel, traderClient,
+    now: () => new Date('2026-10-08T09:00:05.000Z') };
+  await assert.rejects(
+    transitionAdminPayout('PAYOUT-001',
+      { action: 'APPROVE', reason: 'Attempt reserve' }, deps),
+    error => error.code === 'PAYOUT_TRADER_RESERVATION_UNAVAILABLE',
+  );
+  assert.equal(model.record.requiresTraderSettlement, true);
+  assert.equal(model.record.status, 'REVIEWING');
+  const cancelled = await transitionAdminPayout('PAYOUT-001',
+    { action: 'REJECT', reason: 'Cancel after uncertain reserve' }, deps);
+  assert.equal(cancelled.after.status, 'REJECTED');
+  assert.equal(traderHold, false);
+});
