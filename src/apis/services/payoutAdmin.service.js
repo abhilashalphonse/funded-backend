@@ -424,12 +424,6 @@ export async function transitionAdminPayout(
     ? await approvalGuard(current, { accountModel, payoutModel, traderClient, now })
     : null;
 
-  // On PAID, settle the USD Trader ledger before advancing Funded.
-  // Any failure leaves Funded pending, and retries reuse payoutId idempotently.
-  const settlement = action === "MARK_PAID"
-    ? await settleVerifiedTraderPayout(current, { accountModel, traderClient })
-    : null;
-
   const at = now();
   const patch = providerPatch(current, action, input);
   const effectiveRecord = { ...plain(current), ...patch };
@@ -441,6 +435,23 @@ export async function transitionAdminPayout(
         verifiedAt: at,
       })
     : {};
+
+  // Verify beneficiary accounting before debiting the Trader USD ledger.
+  const settlement = action === "MARK_PAID" && current.requiresTraderSettlement
+    ? await settleVerifiedTraderPayout(current, { accountModel, traderClient })
+    : null;
+  if (action === "MARK_PAID" && current.requiresTraderSettlement && !settlement) {
+    throw payoutCheckpointError("PAYOUT_TRADER_SETTLEMENT_REQUIRED", "Trader settlement receipt is mandatory.");
+  }
+
+  // A provider in flight may have already sent funds. Admin FAIL must never
+  // release that hold on the basis of an unverified manual reason.
+  if (action === "FAIL" && current.requiresTraderSettlement) {
+    throw payoutCheckpointError(
+      "PAYOUT_PROVIDER_FAILURE_VERIFICATION_REQUIRED",
+      "Use verified provider failure reconciliation before releasing a reserved payout.",
+    );
+  }
 
   const set = {
     status: definition.to,
