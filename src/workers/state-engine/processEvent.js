@@ -191,6 +191,26 @@ export async function processEvent(event, boss, {
   }
 
   if (["CLOSED", "EXPIRED"].includes(account.status)) {
+    // A provider may finish an already-sent payout after account closure.
+    // Reconcile ONLY the authenticated, versioned settlement financial fact;
+    // never reopen the account or run challenge progression.
+    if (event.eventType === SNAPSHOT_EVENT
+      && event.payload?.source === "PAYOUT_SETTLEMENT"
+      && typeof event.payload?.settlementLedgerEntryId === "string"
+      && event.payload.settlementLedgerEntryId.length > 0
+      && isAuthoritativeTraderSnapshot(event)
+      && !isOlderThanLastAuthoritativeSnapshot(account, event)) {
+      applySnapshotMetrics(account, event);
+      applyExactFinancialSnapshot(account, event);
+      updateLossProjections(account);
+      account.lastPlatformSnapshotAt = snapshotTime(event);
+      const sequence = snapshotSequence(event);
+      if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
+      const epoch = snapshotEpoch(event);
+      if (epoch) account.lastPlatformSnapshotEpoch = epoch;
+      const financialRevision = snapshotFinancialRevision(event);
+      if (financialRevision !== null) account.lastPlatformFinancialRevision = financialRevision;
+    }
     account.lastProcessedEventId = event.eventId;
     await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
     return;
@@ -474,6 +494,18 @@ export function snapshotFinancialRevision(event) {
 }
 
 export function isOlderThanLastAuthoritativeSnapshot(account, event) {
+  // Financial mutations have a global, monotonic revision even when the
+  // valuation epoch changes or delivery is reordered by a crash/restart.
+  // Treat revision as primary when BOTH sides supply a valid revision.
+  const incomingRevision = snapshotFinancialRevision(event);
+  const currentRawRevision = account?.lastPlatformFinancialRevision;
+  const currentRevision = currentRawRevision == null ? null : Number(currentRawRevision);
+  if (incomingRevision !== null && currentRevision !== null
+    && Number.isSafeInteger(currentRevision) && currentRevision >= 0) {
+    if (incomingRevision < currentRevision) return true;
+    if (incomingRevision > currentRevision) return false;
+  }
+
   if (!account?.lastPlatformSnapshotAt) return false;
 
   const incomingTime = snapshotTime(event).getTime();

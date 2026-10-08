@@ -315,7 +315,15 @@ function serializePayoutRecord(raw) {
 export function buildPayoutOverview(account, records = [], now = new Date()) {
   const stage = accountStage(account);
   const mode = payoutMode(stage);
-  const realized = realizedProfitUsd(account);
+  // A successfully paid Trader reservation also deducted USD from Trader's
+  // authoritative balance. Restore only those verified deductions when
+  // projecting lifetime earned profit, otherwise previous payouts are counted
+  // twice and future eligible payouts are incorrectly blocked.
+  const creditedSettlements = String(account?.platform || "").toLowerCase() === "acg-trader"
+    ? records.filter(row => row?.status === "PAID" && row?.traderReservation?.status === "SETTLED")
+      .reduce((sum, row) => sum + Math.max(0, Number(row?.requestedAmountUsd || 0)), 0)
+    : 0;
+  const realized = money2(realizedProfitUsd(account) + creditedSettlements);
   const configuredSplit = profitSplitPercent(account);
   const split = configuredSplit ?? (stage === "TRIAL" ? 80 : null);
   const profitSplitSource = configuredSplit != null
@@ -331,6 +339,17 @@ export function buildPayoutOverview(account, records = [], now = new Date()) {
   const availableUsd = money2(Math.max(0, entitlement - ledger.paidUsd - ledger.activeReservedUsd));
 
   const blockers = [];
+  if (String(account?.platform || "").toLowerCase() === "acg-trader") {
+    const settledRevisions = records
+      .filter(row => row?.status === "PAID" && row?.traderReservation?.status === "SETTLED")
+      .map(row => Number(row?.traderReservation?.financialRevision))
+      .filter(Number.isSafeInteger);
+    if (settledRevisions.length
+      && (!Number.isSafeInteger(Number(account?.platformFinancial?.financialRevision))
+        || Number(account.platformFinancial.financialRevision) <= Math.max(...settledRevisions))) {
+      blockers.push("PAYOUT_TRADER_SETTLEMENT_RECONCILIATION_PENDING");
+    }
+  }
   if (stage !== "MASTER") blockers.push("MASTER_ACCOUNT_REQUIRED");
   if (split == null) blockers.push("PROFIT_SPLIT_UNAVAILABLE");
   if (realized <= 0) blockers.push("NO_REALIZED_PROFIT");
@@ -765,6 +784,7 @@ export async function createCustomerPayoutRequest(
     activeKey: account.accountId,
     idempotencyKey,
     status: "REQUESTED",
+    requiresTraderSettlement: String(account?.platform || "").toLowerCase() === "acg-trader",
     cycle: {
       key: overview.cycle.currentCycleKey,
       frequency: overview.cycle.frequency,

@@ -3,6 +3,8 @@ import mongoose from "mongoose";
 export const PAYOUT_STATUSES = Object.freeze([
   "REQUESTED",
   "REVIEWING",
+  "REJECTING",
+  "CANCELLING",
   "APPROVED",
   "PROCESSING",
   "SENT",
@@ -15,6 +17,8 @@ export const PAYOUT_STATUSES = Object.freeze([
 export const ACTIVE_PAYOUT_STATUSES = Object.freeze([
   "REQUESTED",
   "REVIEWING",
+  "REJECTING",
+  "CANCELLING",
   "APPROVED",
   "PROCESSING",
   "SENT",
@@ -31,6 +35,8 @@ const PayoutRequestSchema = new mongoose.Schema(
     // The unique partial index below enforces one in-flight payout per account.
     activeKey: { type: String, default: null },
     idempotencyKey: { type: String, default: null, trim: true },
+
+    requiresTraderSettlement: { type: Boolean, default: false },
 
     status: {
       type: String,
@@ -54,6 +60,18 @@ const PayoutRequestSchema = new mongoose.Schema(
       previouslyPaidUsd: { type: Number, default: 0 },
       previouslyReservedUsd: { type: Number, default: 0 },
       availableBeforeRequestUsd: { type: Number, required: true },
+    },
+
+    traderReservation: {
+      contractVersion: { type: String, default: null },
+      status: { type: String, enum: ["RESERVED", "SETTLED", "RELEASED", "CANCELLED", null], default: null },
+      amountUsd: { type: String, default: null },
+      financialRevision: { type: Number, default: null },
+      checkpointHash: { type: String, default: null },
+      reservedAt: { type: Date, default: null },
+      settledAt: { type: Date, default: null },
+      settledLedgerEntryId: { type: String, default: null },
+      releasedAt: { type: Date, default: null },
     },
 
     requestedAmountUsd: { type: Number, required: true, min: 0.01 },

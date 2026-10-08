@@ -6,6 +6,10 @@ import {
   fetchTraderPayoutCheckpoint,
   computeApprovalAmounts,
   payoutCheckpointError,
+  reserveVerifiedTraderPayout,
+  settleVerifiedTraderPayout,
+  releaseVerifiedTraderPayout,
+  cancelTraderPayoutRequest,
 } from "./payoutSettlementCheckpoint.service.js";
 
 const ACTIONS = Object.freeze({
@@ -14,9 +18,9 @@ const ACTIONS = Object.freeze({
   MARK_PROCESSING: { from: ["APPROVED"], to: "PROCESSING", timestamp: "processingAt" },
   MARK_SENT: { from: ["PROCESSING"], to: "SENT", timestamp: "sentAt" },
   MARK_PAID: { from: ["SENT"], to: "PAID", timestamp: "paidAt", terminal: true },
-  REJECT: { from: ["REQUESTED", "REVIEWING"], to: "REJECTED", timestamp: "rejectedAt", terminal: true },
+  REJECT: { from: ["REQUESTED", "REVIEWING", "REJECTING"], to: "REJECTED", timestamp: "rejectedAt", terminal: true },
   FAIL: { from: ["APPROVED", "PROCESSING", "SENT"], to: "FAILED", timestamp: "failedAt", terminal: true },
-  CANCEL: { from: ["REQUESTED", "REVIEWING"], to: "CANCELLED", timestamp: "cancelledAt", terminal: true },
+  CANCEL: { from: ["REQUESTED", "REVIEWING", "CANCELLING"], to: "CANCELLED", timestamp: "cancelledAt", terminal: true },
 });
 
 function escapeRegex(value = "") {
@@ -54,6 +58,16 @@ export function serializeAdminPayout(raw) {
     destination: record.destination || null,
     cycle: record.cycle || null,
     snapshot: record.snapshot || null,
+    traderReservation: record.traderReservation?.status ? {
+      contractVersion: record.traderReservation.contractVersion || null,
+      status: record.traderReservation.status,
+      amountUsd: record.traderReservation.amountUsd || null,
+      financialRevision: record.traderReservation.financialRevision ?? null,
+      settledLedgerEntryId: record.traderReservation.settledLedgerEntryId || null,
+      reservedAt: record.traderReservation.reservedAt || null,
+      settledAt: record.traderReservation.settledAt || null,
+      releasedAt: record.traderReservation.releasedAt || null,
+    } : null,
     provider: record.provider || null,
     providerReference: record.providerReference || null,
     providerStatus: record.providerStatus || null,
@@ -224,13 +238,6 @@ export async function assertPayoutApprovalEligible(
   const realizedProfit = traderCheckpoint
     ? traderCheckpoint.realizedProfitUsd
     : Math.max(0, Number(account?.projections?.profit || 0));
-  const entitlement = traderCheckpoint
-    ? Number(computeApprovalAmounts({
-      realizedProfitUsd: realizedProfit,
-      profitSplitPercent: currentSplit,
-      requestedAmountUsd: payout?.requestedAmountUsd || 0,
-    }).entitlementUsd)
-    : Math.round((realizedProfit * currentSplit / 100 + Number.EPSILON) * 100) / 100;
 
   let paidQuery = payoutModel.find({
     accountId: String(payout.accountId),
@@ -240,12 +247,25 @@ export async function assertPayoutApprovalEligible(
   const paidRows = await paidQuery;
   const alreadyPaid = (Array.isArray(paidRows) ? paidRows : [])
     .reduce((sum, row) => sum + Math.max(0, Number(row?.requestedAmountUsd || 0)), 0);
+  // Trader-settled payout debits reduce the current balance. Restore only
+  // ledger-confirmed payouts when calculating lifetime earned entitlement;
+  // legacy payouts were not necessarily deducted from Trader and stay distinct.
+  const settledCredits = (Array.isArray(paidRows) ? paidRows : [])
+    .filter(row => row?.traderReservation?.status === "SETTLED")
+    .map(row => String(row.requestedAmountUsd || 0));
+  const { addDecimal } = await import("../../utils/decimal.js");
+  const totalRealizedProfit = traderCheckpoint
+    ? settledCredits.reduce((sum, amount) => addDecimal(sum, amount), realizedProfit)
+    : realizedProfit;
   const exactAmounts = traderCheckpoint ? computeApprovalAmounts({
-    realizedProfitUsd: realizedProfit,
+    realizedProfitUsd: totalRealizedProfit,
     profitSplitPercent: currentSplit,
     paidAmounts: (Array.isArray(paidRows) ? paidRows : []).map(row => String(row?.requestedAmountUsd || 0)),
     requestedAmountUsd: String(payout?.requestedAmountUsd || 0),
   }) : null;
+  const entitlement = traderCheckpoint
+    ? Number(exactAmounts.entitlementUsd)
+    : Math.round((realizedProfit * currentSplit / 100 + Number.EPSILON) * 100) / 100;
   const remaining = exactAmounts
     ? Number(exactAmounts.availableForApprovalUsd)
     : Math.round((Math.max(0, entitlement - alreadyPaid) + Number.EPSILON) * 100) / 100;
@@ -261,13 +281,33 @@ export async function assertPayoutApprovalEligible(
   }
 
   if (traderCheckpoint) {
-    // Reading a settled account is not an atomic payout entitlement hold.
-    // Do not approve cross-currency payouts until Trader supplies a durable,
-    // fenced reservation tied to this payout ID and financial revision.
-    throw payoutCheckpointError(
-      "PAYOUT_TRADER_RESERVATION_REQUIRED",
-      "Trader settlement is reconciled, but the durable payout reservation is not yet available.",
-    );
+    // Persist the settlement contract BEFORE contacting Trader: concurrent
+    // cancellation must see this account's mandatory cancellation fence even
+    // for a historical payout created without the new flag.
+    if (payout?.requiresTraderSettlement !== true) {
+      const migrated = await payoutModel.findOneAndUpdate(
+        { payoutId: String(payout.payoutId), status: { $in: ['REQUESTED', 'REVIEWING'] } },
+        { $set: { requiresTraderSettlement: true } },
+        { new: true, runValidators: true },
+      );
+      if (!migrated) {
+        throw payoutCheckpointError('PAYOUT_STATUS_CHANGED',
+          'Payout was cancelled or changed before its Trader reservation.');
+      }
+    }
+    const traderReservation = await reserveVerifiedTraderPayout({
+      account, checkpoint: traderCheckpoint,
+      payoutId: String(payout.payoutId),
+      amountUsd: String(payout.requestedAmountUsd),
+      traderClient,
+    });
+    return {
+      realizedProfitUsd: Number(exactAmounts.realizedProfitUsd),
+      entitlementUsd: Number(exactAmounts.entitlementUsd),
+      alreadyPaidUsd: Number(exactAmounts.alreadyPaidUsd),
+      availableForApprovalUsd: Number(exactAmounts.availableForApprovalUsd),
+      traderReservation,
+    };
   }
   return {
     realizedProfitUsd: Math.round((realizedProfit + Number.EPSILON) * 100) / 100,
@@ -381,12 +421,13 @@ export async function transitionAdminPayout(
     payoutModel = PayoutRequest,
     accountModel = Account,
     approvalGuard = assertPayoutApprovalEligible,
+    traderClient = null,
     now = () => new Date(),
   } = {},
 ) {
   const { action, definition, reason } = normalizeTransitionInput(input);
   const id = String(payoutId || "").trim();
-  const current = await payoutModel.findOne({ payoutId: id });
+  let current = await payoutModel.findOne({ payoutId: id });
   if (!current) {
     const error = new Error("Payout not found.");
     error.status = 404;
@@ -404,9 +445,46 @@ export async function transitionAdminPayout(
     throw error;
   }
 
-  if (action === "APPROVE") {
-    await approvalGuard(current, { accountModel, payoutModel });
+  const before = serializeAdminPayout(current);
+  let traderSettlementRequired = current.requiresTraderSettlement === true
+    || Boolean(current?.traderReservation?.checkpointHash);
+  // Old requests may predate requiresTraderSettlement. Resolve the actual
+  // account binding before deciding whether cancellation needs a tombstone.
+  // A missing account is ambiguous, so cancellation stays nonterminal.
+  if (["REJECT", "CANCEL"].includes(action) && !traderSettlementRequired) {
+    const boundAccount = await accountModel.findOne({ accountId: String(current.accountId || "") });
+    if (!boundAccount) {
+      throw payoutCheckpointError('PAYOUT_ACCOUNT_BINDING_UNAVAILABLE',
+        'Payout account binding must be resolved before cancellation.');
+    }
+    traderSettlementRequired = String(boundAccount.platform || '').toLowerCase() === 'acg-trader';
   }
+  const cancellationAction = ["REJECT", "CANCEL"].includes(action) && traderSettlementRequired;
+  let cancellation = null;
+  let terminalFrom = definition.from;
+  if (cancellationAction) {
+    const intermediateStatus = action === "REJECT" ? "REJECTING" : "CANCELLING";
+    if (currentStatus !== intermediateStatus) {
+      const claimed = await payoutModel.findOneAndUpdate(
+        { payoutId: id, status: { $in: ["REQUESTED", "REVIEWING"] } },
+        { $set: { status: intermediateStatus } },
+        { new: true, runValidators: true },
+      );
+      if (!claimed) {
+        throw payoutCheckpointError("PAYOUT_STATUS_CHANGED", "Payout changed while cancellation was being claimed.");
+      }
+      current = claimed;
+    }
+    terminalFrom = [intermediateStatus];
+    cancellation = await cancelTraderPayoutRequest(current, {
+      accountModel, traderClient,
+      reason: action === "REJECT" ? "ADMIN_REJECTED" : "CUSTOMER_CANCELLED",
+    });
+  }
+
+  const approval = action === "APPROVE"
+    ? await approvalGuard(current, { accountModel, payoutModel, traderClient, now })
+    : null;
 
   const at = now();
   const patch = providerPatch(current, action, input);
@@ -420,11 +498,31 @@ export async function transitionAdminPayout(
       })
     : {};
 
+  // Verify beneficiary accounting before debiting the Trader USD ledger.
+  const settlement = action === "MARK_PAID" && traderSettlementRequired
+    ? await settleVerifiedTraderPayout(current, { accountModel, traderClient })
+    : null;
+  if (action === "MARK_PAID" && traderSettlementRequired && !settlement) {
+    throw payoutCheckpointError("PAYOUT_TRADER_SETTLEMENT_REQUIRED", "Trader settlement receipt is mandatory.");
+  }
+
+  // A provider in flight may have already sent funds. Admin FAIL must never
+  // release that hold on the basis of an unverified manual reason.
+  if (action === "FAIL" && traderSettlementRequired) {
+    throw payoutCheckpointError(
+      "PAYOUT_PROVIDER_FAILURE_VERIFICATION_REQUIRED",
+      "Use verified provider failure reconciliation before releasing a reserved payout.",
+    );
+  }
+
   const set = {
     status: definition.to,
     [definition.timestamp]: at,
     ...patch,
     ...accounting,
+    ...(approval?.traderReservation ? { traderReservation: approval.traderReservation } : {}),
+    ...(settlement ? { traderReservation: settlement } : {}),
+    ...(cancellation ? { traderReservation: cancellation } : {}),
   };
 
   if (definition.terminal) set.activeKey = null;
@@ -440,7 +538,7 @@ export async function transitionAdminPayout(
   }
 
   const updated = await payoutModel.findOneAndUpdate(
-    { payoutId: id, status: { $in: definition.from } },
+    { payoutId: id, status: { $in: terminalFrom } },
     { $set: set },
     { new: true, runValidators: true },
   );
@@ -455,7 +553,7 @@ export async function transitionAdminPayout(
   return {
     action,
     reason,
-    before: serializeAdminPayout(current),
+    before,
     after: serializeAdminPayout(updated),
   };
 }

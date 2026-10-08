@@ -17,6 +17,15 @@ export class ACGTraderClient {
   getPayoutSettlementCheckpoint(accountId) {
     return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/payout-settlement-checkpoint`);
   }
+  reservePayout(accountId, command) {
+    return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/payout-reservations`, { method: "POST", body: command });
+  }
+  settlePayout(accountId, payoutId) {
+    return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/payout-reservations/settle`, { method: "POST", body: { payoutId } });
+  }
+  releasePayout(accountId, payoutId, reason) {
+    return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/payout-reservations/release`, { method: "POST", body: { payoutId, reason } });
+  }
   getAdminObservability(accountId, { limit = 100 } = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/admin-observability?limit=${Math.max(1, Math.min(200, Number(limit) || 100))}`); }
   syncChallenge(accountId, patch = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/challenge`, { method: "PATCH", body: patch }); }
   transitionRiskPolicy(accountId, command = {}) { return this.request(`/v1/internal/trading/accounts/${encodeURIComponent(accountId)}/policy-transitions`, { method: "POST", body: command }); }

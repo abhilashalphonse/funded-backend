@@ -1,4 +1,9 @@
 import PayoutRequest from "../../../models/payoutRequest.model.js";
+import Account from "../../../accounts/account.model.js";
+import {
+  settleVerifiedTraderPayout,
+  releaseVerifiedTraderPayout,
+} from "../payoutSettlementCheckpoint.service.js";
 import { decryptPayoutDestination } from "../payoutDestination.service.js";
 import { buildPaidPayoutAccounting } from "../payoutAccounting.service.js";
 import {
@@ -96,6 +101,14 @@ export async function executeApprovedSunpayPayout(
     throw error;
   }
 
+  if ((record.requiresTraderSettlement === true || Boolean(record?.traderReservation?.checkpointHash))
+    && record?.traderReservation?.status !== "RESERVED") {
+    const error = new Error("Authoritative Trader payout reservation is required before provider execution.");
+    error.status = 409;
+    error.code = "PAYOUT_TRADER_RESERVATION_REQUIRED";
+    throw error;
+  }
+
   // Defense in depth: callers cannot bypass provider readiness by invoking this
   // service directly. Reconciliation remains available for already-submitted
   // payouts, but creating a new Sunpay payout requires an explicitly ready
@@ -188,6 +201,8 @@ export async function reconcileSunpayPayout(
     payoutModel = PayoutRequest,
     now = () => new Date(),
     statusFetcher = getSunpayPayoutStatus,
+    accountModel = Account,
+    traderClient = null,
   } = {},
 ) {
   const record = await payoutModel.findOne({ payoutId: String(payoutId || "").trim() });
@@ -260,6 +275,15 @@ export async function reconcileSunpayPayout(
           verifiedAt: settledAt,
         },
       );
+      const traderSettlement = (record.requiresTraderSettlement || Boolean(record?.traderReservation?.checkpointHash))
+        ? await settleVerifiedTraderPayout(record, { accountModel, traderClient })
+        : null;
+      if ((record.requiresTraderSettlement || Boolean(record?.traderReservation?.checkpointHash)) && traderSettlement?.status !== "SETTLED") {
+        const error = new Error("Trader settlement receipt is required.");
+        error.code = "PAYOUT_TRADER_SETTLEMENT_REQUIRED";
+        throw error;
+      }
+      if (traderSettlement) set.traderReservation = traderSettlement;
       set.status = "PAID";
       set.activeKey = null;
       set.sentAt = record.sentAt || settledAt;
@@ -283,13 +307,32 @@ export async function reconcileSunpayPayout(
       };
     }
   } else if (remote.status === "FAILED") {
-    set.status = "FAILED";
-    set.activeKey = null;
-    set.failedAt = record.failedAt || checkedAt;
-    set.failure = {
-      code: "SUNPAY_PROVIDER_FAILED",
-      message: "Sunpay reported this payout as failed.",
-    };
+    try {
+      const released = (record.requiresTraderSettlement || Boolean(record?.traderReservation?.checkpointHash))
+        ? await releaseVerifiedTraderPayout(record, {
+          accountModel, traderClient, reason: "VERIFIED_SUNPAY_FAILURE",
+        })
+        : null;
+      if ((record.requiresTraderSettlement || Boolean(record?.traderReservation?.checkpointHash)) && released?.status !== "RELEASED") {
+        const error = new Error("Trader hold release is required before marking payout failed.");
+        error.code = "PAYOUT_TRADER_RELEASE_REQUIRED";
+        throw error;
+      }
+      if (released) set.traderReservation = released;
+      set.status = "FAILED";
+      set.activeKey = null;
+      set.failedAt = record.failedAt || checkedAt;
+      set.failure = {
+        code: "SUNPAY_PROVIDER_FAILED",
+        message: "Sunpay reported this payout as failed.",
+      };
+    } catch (error) {
+      // A confirmed provider failure is not enough to free Funded's active
+      // reservation unless Trader has released the USD hold.
+      set.status = "PROCESSING";
+      set.processingAt = record.processingAt || checkedAt;
+      set.providerLastError = executionError(error);
+    }
   } else {
     set.status = "PROCESSING";
     set.processingAt = record.processingAt || checkedAt;
