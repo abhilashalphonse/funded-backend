@@ -285,3 +285,30 @@ test("customer payout overview returns not found for an unowned account", async 
     error => error?.status === 404 && error?.code === "PAYOUT_ACCOUNT_NOT_FOUND",
   );
 });
+
+
+test("Trader-paid deductions require Funded revision catch-up before further payouts", () => {
+  const account = masterAccount({
+    accountId: "MASTER-M1",
+    platform: "acg-trader",
+    initialDeposit: 10000,
+    accountSize: 10000,
+    balance: 10100,
+    projections: { profit: 100 },
+    platformFinancial: { financialRevision: 12 },
+    commercialTerms: { profitSplit: 80, payoutFrequency: "On Demand" },
+  });
+  const paid = [{
+    accountId: "MASTER-M1", payoutId: "PAYOUT-M1",
+    status: "PAID", requestedAmountUsd: 400,
+    traderReservation: { status: "SETTLED", financialRevision: 12 },
+  }];
+  const waiting = buildPayoutOverview(account, paid, new Date("2026-10-08T11:00:00Z"));
+  assert.equal(waiting.performance.realizedProfitUsd, 500);
+  assert.ok(waiting.eligibility.blockers.includes("PAYOUT_TRADER_SETTLEMENT_RECONCILIATION_PENDING"));
+  const caughtUp = buildPayoutOverview({
+    ...account, platformFinancial: { financialRevision: 13 },
+  }, paid, new Date("2026-10-08T11:00:00Z"));
+  assert.ok(!caughtUp.eligibility.blockers.includes("PAYOUT_TRADER_SETTLEMENT_RECONCILIATION_PENDING"));
+  assert.equal(caughtUp.ledger.availableUsd, 0);
+});
