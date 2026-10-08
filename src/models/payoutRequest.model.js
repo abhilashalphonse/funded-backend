@@ -56,6 +56,18 @@ const PayoutRequestSchema = new mongoose.Schema(
       availableBeforeRequestUsd: { type: Number, required: true },
     },
 
+    traderReservation: {
+      contractVersion: { type: String, default: null },
+      status: { type: String, enum: ["RESERVED", "SETTLED", "RELEASED", null], default: null },
+      amountUsd: { type: String, default: null },
+      financialRevision: { type: Number, default: null },
+      checkpointHash: { type: String, default: null },
+      reservedAt: { type: Date, default: null },
+      settledAt: { type: Date, default: null },
+      settledLedgerEntryId: { type: String, default: null },
+      releasedAt: { type: Date, default: null },
+    },
+
     requestedAmountUsd: { type: Number, required: true, min: 0.01 },
     feePolicy: {
       type: String,
