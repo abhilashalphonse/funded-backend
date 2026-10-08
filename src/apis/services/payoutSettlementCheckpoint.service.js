@@ -181,6 +181,46 @@ export async function settleVerifiedTraderPayout(payout, {
   };
 }
 
+export async function cancelTraderPayoutRequest(payout, {
+  accountModel,
+  traderClient = null,
+  reason,
+} = {}) {
+  const account = await accountModel.findOne({ accountId: String(payout?.accountId || "") });
+  if (String(account?.platform || "").toLowerCase() !== "acg-trader") {
+    throw payoutCheckpointError("PAYOUT_TRADER_BINDING_MISSING", "Trader account binding is required to cancel this payout.");
+  }
+  if (!account.platformAccountId) {
+    throw payoutCheckpointError("PAYOUT_TRADER_BINDING_MISSING", "Trader platform account ID is missing.");
+  }
+  let result;
+  try {
+    result = await makeTraderClient(traderClient)
+      .releasePayout(account.platformAccountId, payout.payoutId, reason);
+  } catch (error) {
+    const failure = payoutCheckpointError(
+      "PAYOUT_TRADER_CANCELLATION_UNCONFIRMED",
+      "Trader cancellation and reservation release have not been confirmed.",
+    );
+    failure.cause = error;
+    throw failure;
+  }
+  const record = result?.reservation;
+  if (!["CANCELLED", "RELEASED"].includes(record?.status)
+    || record?.payoutId !== payout?.payoutId
+    || String(record.platformAccountId) !== String(account.platformAccountId)) {
+    throw payoutCheckpointError("PAYOUT_TRADER_CANCELLATION_MISMATCH", "Trader cancellation confirmation did not match the payout.");
+  }
+  return {
+    contractVersion: "ACG_PAYOUT_RESERVATION_V1",
+    status: record.status,
+    amountUsd: record.amountUsd || payout?.traderReservation?.amountUsd || null,
+    financialRevision: record.financialRevision ?? payout?.traderReservation?.financialRevision ?? null,
+    checkpointHash: record.checkpointHash || payout?.traderReservation?.checkpointHash || null,
+    releasedAt: record.releasedAt || new Date(),
+  };
+}
+
 export async function releaseVerifiedTraderPayout(payout, {
   accountModel,
   traderClient = null,
