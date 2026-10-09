@@ -59,6 +59,10 @@ const PaymentSchema = new mongoose.Schema(
   { timestamps: true, versionKey: false }
 );
 
+PaymentSchema.index({ createdAt: -1, customerId: 1 });
+PaymentSchema.index({ customerId: 1, status: 1, paidAt: -1 });
+PaymentSchema.index({ status: 1, paidAt: -1 });
+
 PaymentSchema.index(
   { provider: 1, providerPaymentId: 1 },
   {
