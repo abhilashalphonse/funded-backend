@@ -25,8 +25,16 @@ export async function getCustomerJourneyMetrics(from) {
     } },
     { $lookup: {
       from: Payment.collection.name,
-      localField: "_id",
-      foreignField: "customerId",
+      let: { customer: "$_id", started: "$started" },
+      pipeline: [
+        { $match: { status: "PAID" } },
+        { $match: { $expr: { $and: [
+          { $eq: ["$customerId", "$customer"] },
+          { $gte: ["$paidAt", "$started"] },
+        ] } } },
+        { $limit: 1 },
+        { $project: { _id: 1 } },
+      ],
       as: "payments",
     } },
     { $project: {
@@ -36,13 +44,7 @@ export async function getCustomerJourneyMetrics(from) {
       passed: { $cond: [{ $or: [
         { $eq: ["$passed", 1] }, { $in: ["trial_passed", "$outcomes._id"] },
       ] }, 1, 0] },
-      purchased: { $gt: [{ $size: { $filter: {
-        input: "$payments", as: "p",
-        cond: { $and: [
-          { $eq: ["$$p.status", "PAID"] },
-          { $gte: ["$$p.paidAt", "$started"] },
-        ] },
-      } } }, 0] },
+      purchased: { $gt: [{ $size: "$payments" }, 0] },
     } },
     { $group: {
       _id: null, customers: { $sum: 1 },
