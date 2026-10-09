@@ -13,6 +13,7 @@ const ALLOWED_EVENTS = new Set([
   "challenge_selected",
   "signup_started",
   "signup_completed",
+  "customer_identified",
   "trial_created",
   "trial_first_trade",
   "trial_phase_1_passed",
@@ -50,7 +51,7 @@ const CLIENT_EVENTS = new Set([
   "landing_view", "hero_cta_click", "free_trial_click",
   "challenge_builder_view", "challenge_builder_viewed",
   "challenge_configured", "challenge_selected",
-  "signup_started", "signup_completed",
+  "signup_started", "signup_completed", "customer_identified",
   "checkout_started", "checkout_viewed", "checkout_submitted",
   "payment_cancelled", "payment_failed", "trader_launch_failed",
   "post_purchase_signup_started", "post_purchase_signup_completed",
@@ -203,6 +204,12 @@ export async function recordAnalyticsEvent({
   if (!ALLOWED_EVENTS.has(event) || (source === "client" && !CLIENT_EVENTS.has(event))) {
     const error = new Error("Unsupported analytics event.");
     error.status = 400;
+    throw error;
+  }
+
+  if (event === "customer_identified" && !customer?.customerId) {
+    const error = new Error("Authenticated identity required.");
+    error.status = 401;
     throw error;
   }
 
