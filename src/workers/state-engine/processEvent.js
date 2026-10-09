@@ -5,6 +5,7 @@ import { resolveDecision } from "./decisions.js";
 import { CommandQueue } from "./commandQueue.js";
 import { recordAnalyticsEventOnce } from "../../apis/services/analytics.service.js";
 import { trialMetadata } from "../../apis/services/freeTrialPolicy.js";
+import { normalizeDecimal } from "../../utils/decimal.js";
 
 const SNAPSHOT_EVENT = "ACG_TRADER_ACCOUNT_SNAPSHOT";
 const DEAL_EVENT = "ACG_TRADER_DEAL_CREATED";
@@ -174,10 +175,15 @@ export async function processEvent(event, boss, {
       && !isOlderThanLastAuthoritativeSnapshot(account, event)
     ) {
       applySnapshotMetrics(account, event);
+      applyExactFinancialSnapshot(account, event);
       updateLossProjections(account);
       account.lastPlatformSnapshotAt = snapshotTime(event);
       const sequence = snapshotSequence(event);
       if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
+      const epoch = snapshotEpoch(event);
+      if (epoch) account.lastPlatformSnapshotEpoch = epoch;
+      const financialRevision = snapshotFinancialRevision(event);
+      if (financialRevision !== null) account.lastPlatformFinancialRevision = financialRevision;
     }
     account.lastProcessedEventId = event.eventId;
     await saveAccountConditional(account, accountModel, lifecycleWriteGuard);
@@ -210,6 +216,10 @@ export async function processEvent(event, boss, {
     account.lastPlatformSnapshotAt = snapshotTime(event);
     const sequence = snapshotSequence(event);
     if (sequence !== null) account.lastPlatformSnapshotSequence = sequence;
+    const epoch = snapshotEpoch(event);
+    if (epoch) account.lastPlatformSnapshotEpoch = epoch;
+    const financialRevision = snapshotFinancialRevision(event);
+    if (financialRevision !== null) account.lastPlatformFinancialRevision = financialRevision;
   }
 
   if (account.status === "FUNDED") {
@@ -395,7 +405,30 @@ export function isEventForCurrentPlatformAccount(account, event) {
 export function isAuthoritativeTraderSnapshot(event) {
   if (event?.eventType !== SNAPSHOT_EVENT) return true;
   const payload = event.payload || {};
-  return payload.complete === true && String(payload.valuationStatus || "").toUpperCase() === "LIVE";
+  if (payload.complete !== true || String(payload.valuationStatus || "").toUpperCase() !== "LIVE") {
+    return false;
+  }
+
+  const contractVersion = Number(payload.financialContractVersion || 0);
+  if (contractVersion < 1) return true;
+
+  // Once Trader advertises the versioned financial contract, Funded must not
+  // silently fall back to binary floating-point rule evaluation because one
+  // required exact field was malformed or omitted.
+  const currency = String(payload.accountCurrency || "").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) return false;
+  for (const field of ["initialBalance", "balance", "equity", "dailyStartEquity"]) {
+    try {
+      if (payload[field] === undefined || payload[field] === null || payload[field] === "") return false;
+      normalizeDecimal(payload[field]);
+    } catch {
+      return false;
+    }
+  }
+  return snapshotFinancialRevision(event) !== null
+    && Boolean(snapshotEpoch(event))
+    && snapshotSequence(event) !== null
+    && Number.isFinite(Number(payload.valuedAtMs));
 }
 
 export function snapshotTime(event) {
@@ -409,6 +442,16 @@ export function snapshotSequence(event) {
   return Number.isFinite(value) ? value : null;
 }
 
+export function snapshotEpoch(event) {
+  const value = String(event?.payload?.valuationEpoch || "").trim();
+  return value || null;
+}
+
+export function snapshotFinancialRevision(event) {
+  const value = Number(event?.payload?.financialRevision);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 export function isOlderThanLastAuthoritativeSnapshot(account, event) {
   if (!account?.lastPlatformSnapshotAt) return false;
 
@@ -418,9 +461,21 @@ export function isOlderThanLastAuthoritativeSnapshot(account, event) {
   if (incomingTime < currentTime) return true;
   if (incomingTime > currentTime) return false;
 
-  // Same-millisecond valuations can be emitted around one execution.
-  // Use Trader's in-process monotonic valuation sequence only as a tie-breaker.
-  // Timestamp remains primary so a Trader restart (sequence resets) is safe.
+  // Sequence is only comparable inside the same Trader valuation epoch.
+  // Across restart epochs, financial revision can order mutations; otherwise
+  // the shared timestamp remains the primary ordering contract.
+  const incomingEpoch = snapshotEpoch(event);
+  const currentEpoch = String(account?.lastPlatformSnapshotEpoch || "").trim() || null;
+  if (incomingEpoch && currentEpoch && incomingEpoch !== currentEpoch) {
+    const incomingRevision = snapshotFinancialRevision(event);
+    const currentRevision = Number(account?.lastPlatformFinancialRevision);
+    if (incomingRevision !== null && Number.isFinite(currentRevision)) {
+      if (incomingRevision < currentRevision) return true;
+      if (incomingRevision > currentRevision) return false;
+    }
+    return false;
+  }
+
   const incomingSequence = snapshotSequence(event);
   const currentSequence = Number(account.lastPlatformSnapshotSequence);
   if (incomingSequence === null || !Number.isFinite(currentSequence)) return false;
@@ -496,12 +551,58 @@ function updateLossProjections(account) {
   account.projections.totalLoss = Math.max(0, initialBalance - equity);
 }
 
+function applyExactFinancialSnapshot(account, event) {
+  if (event?.eventType !== SNAPSHOT_EVENT) return;
+  const p = event.payload || {};
+  const contractVersion = Number(p.financialContractVersion || 0);
+  if (!Number.isFinite(contractVersion) || contractVersion < 1) return;
+
+  const accountCurrency = String(p.accountCurrency || "").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(accountCurrency)) return;
+
+  const decimal = value => {
+    if (value === undefined || value === null || value === "") return null;
+    try {
+      return normalizeDecimal(value);
+    } catch {
+      return null;
+    }
+  };
+
+  account.platformFinancial = {
+    contractVersion,
+    accountCurrency,
+    financialRevision: snapshotFinancialRevision(event),
+    valuationEpoch: snapshotEpoch(event),
+    valuationSequence: snapshotSequence(event),
+    valuedAtMs: Number.isFinite(Number(p.valuedAtMs)) ? Number(p.valuedAtMs) : null,
+    riskDayKey: p.riskDayKey || null,
+    initialBalance: decimal(p.initialBalance),
+    balance: decimal(p.balance),
+    equity: decimal(p.equity),
+    floatingProfit: decimal(p.floatingProfit),
+    margin: decimal(p.margin),
+    marginFree: decimal(p.marginFree),
+    marginLevel: decimal(p.marginLevel),
+    realizedPnlToday: decimal(p.realizedPnlToday),
+    dailyStartEquity: decimal(p.dailyStartEquity),
+    policyVersions: {
+      tradingPermissions: Number.isFinite(Number(p.policyVersions?.tradingPermissions))
+        ? Number(p.policyVersions.tradingPermissions)
+        : null,
+      riskPolicy: p.policyVersions?.riskPolicy == null ? null : String(p.policyVersions.riskPolicy),
+      conversion: p.policyVersions?.conversion == null ? null : String(p.policyVersions.conversion),
+    },
+  };
+}
+
 function applySnapshotEvent(account, event) {
   const p = event.payload || {};
   const eventDate = new Date(event.occurredAt || event.receivedAt || Date.now());
   account.projections = account.projections || {};
 
   applySnapshotMetrics(account, event);
+  applyExactFinancialSnapshot(account, event);
 
   const initialBalance = Number(account.initialDeposit || account.accountSize || 0);
   const balance = Number(account.balance || 0);

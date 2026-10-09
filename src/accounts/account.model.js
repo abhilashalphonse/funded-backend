@@ -11,6 +11,30 @@ const PlatformAccountSchema = new mongoose.Schema({
     provisionedAt: { type: Date, default: Date.now }
 }, { _id: false });
 
+const PlatformFinancialSchema = new mongoose.Schema({
+    contractVersion: { type: Number, default: null },
+    accountCurrency: { type: String, default: null, uppercase: true, trim: true },
+    financialRevision: { type: Number, default: null },
+    valuationEpoch: { type: String, default: null },
+    valuationSequence: { type: Number, default: null },
+    valuedAtMs: { type: Number, default: null },
+    riskDayKey: { type: String, default: null },
+    initialBalance: { type: String, default: null },
+    balance: { type: String, default: null },
+    equity: { type: String, default: null },
+    floatingProfit: { type: String, default: null },
+    margin: { type: String, default: null },
+    marginFree: { type: String, default: null },
+    marginLevel: { type: String, default: null },
+    realizedPnlToday: { type: String, default: null },
+    dailyStartEquity: { type: String, default: null },
+    policyVersions: {
+        tradingPermissions: { type: Number, default: null },
+        riskPolicy: { type: String, default: null },
+        conversion: { type: String, default: null },
+    },
+}, { _id: false });
+
 const DemoPositionSchema = new mongoose.Schema({
     positionId: { type: String, required: true },
     symbol: { type: String, required: true },
@@ -83,6 +107,9 @@ const AccountSchema = new mongoose.Schema(
         lastProcessedEventId: { type: String },
         lastPlatformSnapshotAt: { type: Date, default: null },
         lastPlatformSnapshotSequence: { type: Number, default: null },
+        lastPlatformSnapshotEpoch: { type: String, default: null },
+        lastPlatformFinancialRevision: { type: Number, default: null },
+        platformFinancial: { type: PlatformFinancialSchema, default: null },
         lastActiveDay: { type: String },
         lastTradingDay: { type: String },
         riskDayKey: { type: String },
