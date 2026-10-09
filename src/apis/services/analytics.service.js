@@ -1,5 +1,6 @@
 import AnalyticsEvent from "../../models/analyticsEvent.model.js";
 import Customer from "../../customers/customer.model.js";
+import Payment from "../../models/payment.model.js";
 
 const ALLOWED_EVENTS = new Set([
   "landing_view",
@@ -225,11 +226,135 @@ export async function recordAnalyticsEvent({
   });
 }
 
+
+const FUNNEL_JOURNEYS = {
+  trial: [
+    { key: "landing_view", label: "Visitors", events: ["landing_view"] },
+    { key: "signup_completed", label: "Registrations", events: ["signup_completed"] },
+    { key: "trial_created", label: "Trials created", events: ["trial_created"] },
+    { key: "trial_first_trade", label: "First trades", events: ["trial_first_trade"] },
+    { key: "trial_passed", label: "Trials passed", events: ["trial_passed"] },
+    { key: "payment_completed", label: "Purchased", events: ["payment_completed"] },
+  ],
+  paid: [
+    { key: "landing_view", label: "Visitors", events: ["landing_view"] },
+    { key: "challenge_builder_viewed", label: "Challenge builder", events: ["challenge_builder_viewed", "challenge_builder_view"] },
+    { key: "checkout_started", label: "Checkout started", events: ["checkout_started"] },
+    { key: "payment_started", label: "Payment initiated", events: ["payment_started"] },
+    { key: "payment_completed", label: "Paid", events: ["payment_completed"] },
+    { key: "account_activated", label: "Account activated", events: ["account_activated", "challenge_activated"] },
+  ],
+};
+
+async function getJourneySummary(from) {
+  const relevantEvents = [...new Set(Object.values(FUNNEL_JOURNEYS).flatMap(stages =>
+    stages.flatMap(stage => stage.events),
+  ))];
+  // Group once per tracked browser/session and event. These are observed,
+  // ordered journeys, not a claim that all paid customers started in this window.
+  const sessions = await AnalyticsEvent.aggregate([
+    { $match: { occurredAt: { $gte: from }, event: { $in: relevantEvents } } },
+    { $group: { _id: { sessionId: "$sessionId", event: "$event" }, firstAt: { $min: "$occurredAt" } } },
+    { $group: { _id: "$_id.sessionId", events: { $push: { event: "$_id.event", at: "$firstAt" } } } },
+  ]).allowDiskUse(true);
+
+  return Object.fromEntries(Object.entries(FUNNEL_JOURNEYS).map(([name, definitions]) => {
+    const counts = definitions.map(() => 0);
+    for (const session of sessions) {
+      const events = new Map(session.events.map(item => [item.event, new Date(item.at).getTime()]));
+      let prior = -Infinity;
+      for (let index = 0; index < definitions.length; index += 1) {
+        const next = definitions[index].events
+          .map(event => events.get(event))
+          .filter(time => Number.isFinite(time) && time >= prior)
+          .sort((a, b) => a - b)[0];
+        if (next === undefined) break;
+        counts[index] += 1;
+        prior = next;
+      }
+    }
+    return [name, {
+      label: name === "trial" ? "Free Trial" : "Paid Checkout",
+      description: "Unique tracked sessions completing each step in order within the selected period.",
+      stages: definitions.map((stage, index) => ({
+        key: stage.key,
+        label: stage.label,
+        count: counts[index],
+        stepRate: index === 0 ? 1 : ratio(counts[index], counts[index - 1]),
+        overallRate: ratio(counts[index], counts[0]),
+      })),
+    }];
+  }));
+}
+
+async function getPaymentRevenueSummary(from) {
+  const [paid, refunds] = await Promise.all([
+    Payment.aggregate([
+      { $match: { status: "PAID", paidAt: { $gte: from } } },
+      { $facet: {
+        total: [{ $group: { _id: null, payments: { $sum: 1 }, salesUsd: { $sum: "$amount" } } }],
+        methods: [
+          { $group: { _id: "$paymentMethod", payments: { $sum: 1 }, salesUsd: { $sum: "$amount" } } },
+          { $sort: { salesUsd: -1 } },
+        ],
+        products: [
+          { $group: { _id: { size: "$challengeDefinition.accountSize", step: "$challengeDefinition.step" }, payments: { $sum: 1 }, salesUsd: { $sum: "$amount" } } },
+          { $sort: { salesUsd: -1 } },
+        ],
+        sources: [
+          { $project: {
+            amount: 1,
+            source: { $ifNull: ["$metadata.attribution.firstTouch.utmSource", "$metadata.attribution.utmSource"] },
+            medium: { $ifNull: ["$metadata.attribution.firstTouch.utmMedium", "$metadata.attribution.utmMedium"] },
+            campaign: { $ifNull: ["$metadata.attribution.firstTouch.utmCampaign", "$metadata.attribution.utmCampaign"] },
+            creatorId: { $ifNull: ["$metadata.attribution.firstTouch.creatorId", "$metadata.attribution.creatorId"] },
+            creativeId: { $ifNull: ["$metadata.attribution.firstTouch.creativeId", "$metadata.attribution.creativeId"] },
+            market: { $ifNull: ["$metadata.attribution.firstTouch.market", "$metadata.attribution.market"] },
+            language: { $ifNull: ["$metadata.attribution.firstTouch.language", "$metadata.attribution.language"] },
+            hook: { $ifNull: ["$metadata.attribution.firstTouch.hook", "$metadata.attribution.hook"] },
+          } },
+          { $group: { _id: { source: "$source", medium: "$medium", campaign: "$campaign", creatorId: "$creatorId", creativeId: "$creativeId", market: "$market", language: "$language", hook: "$hook" }, payments: { $sum: 1 }, salesUsd: { $sum: "$amount" } } },
+        ],
+      } },
+    ]),
+    Payment.aggregate([
+      { $match: { status: "REFUNDED", updatedAt: { $gte: from } } },
+      { $group: { _id: null, payments: { $sum: 1 }, amountUsd: { $sum: "$amount" } } },
+    ]),
+  ]);
+  const groups = paid[0] || {};
+  const total = groups.total?.[0] || {};
+  const sources = (groups.sources || []).map(row => ({
+    source: row._id?.source || "unattributed",
+    medium: row._id?.medium || "",
+    campaign: row._id?.campaign || "",
+    creatorId: row._id?.creatorId || "",
+    creativeId: row._id?.creativeId || "",
+    market: row._id?.market || "",
+    language: row._id?.language || "",
+    hook: row._id?.hook || "",
+    paidConversions: Number(row.payments || 0),
+    revenue: Number(row.salesUsd || 0),
+  }));
+  const attributed = sources.filter(row => row.source !== "unattributed" || row.campaign || row.creatorId || row.creativeId);
+  return {
+    paidPayments: Number(total.payments || 0),
+    confirmedSalesUsd: Number(total.salesUsd || 0),
+    attributedSalesUsd: attributed.reduce((sum, row) => sum + row.revenue, 0),
+    unattributedSalesUsd: sources.filter(row => !attributed.includes(row)).reduce((sum, row) => sum + row.revenue, 0),
+    refundedPayments: Number(refunds[0]?.payments || 0),
+    refundedAmountUsd: Number(refunds[0]?.amountUsd || 0),
+    byMethod: (groups.methods || []).map(row => ({ method: row._id || "Unknown", paidPayments: row.payments, salesUsd: row.salesUsd })),
+    byProduct: (groups.products || []).map(row => ({ accountSize: row._id?.size, step: row._id?.step, paidPayments: row.payments, salesUsd: row.salesUsd })),
+    sources,
+  };
+}
+
 export async function getFunnelSummary({ days = 30 } = {}) {
   const safeDays = Math.min(Math.max(Number(days) || 30, 1), 365);
   const from = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
 
-  const [rows, attributedRows] = await Promise.all([
+  const [rows, attributedRows, journeys, revenueSummary] = await Promise.all([
     AnalyticsEvent.aggregate([
       { $match: { occurredAt: { $gte: from } } },
       {
@@ -316,6 +441,8 @@ export async function getFunnelSummary({ days = 30 } = {}) {
         },
       },
     ]),
+    getJourneySummary(from),
+    getPaymentRevenueSummary(from),
   ]);
 
   const byEvent = Object.fromEntries(rows.map(row => [row.event, row]));
@@ -323,7 +450,7 @@ export async function getFunnelSummary({ days = 30 } = {}) {
 
   for (const row of attributedRows) {
     const dimensions = {
-      source: row._id?.utmSource || "direct",
+      source: row._id?.utmSource || "unattributed",
       medium: row._id?.utmMedium || "",
       campaign: row._id?.utmCampaign || "",
       creatorId: row._id?.creatorId || "",
@@ -356,10 +483,17 @@ export async function getFunnelSummary({ days = 30 } = {}) {
     if (row._id?.event === "trial_passed") item.trialPassed += count;
     if (row._id?.event === "trial_failed") item.trialFailed += count;
     if (row._id?.event === "checkout_started") item.checkoutStarts += count;
-    if (row._id?.event === "payment_completed") {
-      item.paidConversions += count;
-      item.revenue += Number(row.revenue || 0);
+    // Paid conversions/revenue are sourced from Payment below, not event ingestion.
+  }
+
+  for (const source of revenueSummary.sources) {
+    const { paidConversions, revenue, ...dimensions } = source;
+    const key = JSON.stringify(dimensions);
+    if (!acquisitionMap.has(key)) {
+      acquisitionMap.set(key, { ...dimensions, visitors: 0, registrations: 0, trialsCreated: 0, activatedTrials: 0, trialPassed: 0, trialFailed: 0, checkoutStarts: 0, paidConversions: 0, revenue: 0 });
     }
+    acquisitionMap.get(key).paidConversions += paidConversions;
+    acquisitionMap.get(key).revenue += revenue;
   }
 
   const acquisition = [...acquisitionMap.values()]
@@ -369,7 +503,7 @@ export async function getFunnelSummary({ days = 30 } = {}) {
       registrationRate: ratio(item.registrations, item.visitors),
       trialRate: ratio(item.trialsCreated, item.registrations),
       activationRate: ratio(item.activatedTrials, item.trialsCreated),
-      paidRate: ratio(item.paidConversions, item.activatedTrials),
+      paidRate: null, // Paid orders can bypass trials; this is not a valid cohort denominator.
     }))
     .sort((a, b) => (b.paidConversions - a.paidConversions)
       || (b.activatedTrials - a.activatedTrials)
@@ -382,8 +516,8 @@ export async function getFunnelSummary({ days = 30 } = {}) {
   const trialPassed = eventCount(byEvent, "trial_passed");
   const trialFailed = eventCount(byEvent, "trial_failed");
   const checkoutStarts = eventCount(byEvent, "checkout_started");
-  const paidConversions = eventCount(byEvent, "payment_completed");
-  const revenue = Number(byEvent.payment_completed?.revenue || 0);
+  const paidConversions = revenueSummary.paidPayments;
+  const revenue = revenueSummary.confirmedSalesUsd;
 
   const kpis = {
     visitors,
@@ -400,10 +534,10 @@ export async function getFunnelSummary({ days = 30 } = {}) {
     registrationToTrial: ratio(trialsCreated, registrations),
     trialToActivation: ratio(activatedTrials, trialsCreated),
     activatedToCheckout: ratio(checkoutStarts, activatedTrials),
-    checkoutToPaid: ratio(paidConversions, checkoutStarts),
+    checkoutToPaid: null, // Use the ordered paid journey for a meaningful conversion rate.
   };
 
-  return { from, to: new Date(), days: safeDays, byEvent, kpis, acquisition };
+  return { from, to: new Date(), days: safeDays, byEvent, kpis, acquisition, journeys, revenueSummary };
 }
 
 export async function recordAnalyticsEventOnce(args, dedupe = {}) {
