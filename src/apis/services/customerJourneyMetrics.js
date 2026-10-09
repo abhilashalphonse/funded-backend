@@ -1,5 +1,6 @@
 import Account from "../../accounts/account.model.js";
 import Payment from "../../models/payment.model.js";
+import AnalyticsEvent from "../../models/analyticsEvent.model.js";
 
 export async function getCustomerJourneyMetrics(from) {
   const trials = await Account.aggregate([
@@ -7,10 +8,21 @@ export async function getCustomerJourneyMetrics(from) {
     { $group: {
       _id: { $ifNull: ["$customerId", "$ownerExternalRef"] },
       started: { $min: "$createdAt" },
+      accounts: { $addToSet: "$accountId" },
       traded: { $max: { $cond: [{ $gt: ["$totalTrades", 0] }, 1, 0] } },
       passed: { $max: { $cond: [{ $eq: ["$trial.result", "PASSED"] }, 1, 0] } },
     } },
     { $match: { _id: { $nin: [null, ""] } } },
+    { $lookup: {
+      from: AnalyticsEvent.collection.name,
+      localField: "accounts",
+      foreignField: "accountId",
+      pipeline: [
+        { $match: { source: "server", event: { $in: ["trial_first_trade", "trial_passed"] } } },
+        { $group: { _id: "$event" } },
+      ],
+      as: "outcomes",
+    } },
     { $lookup: {
       from: Payment.collection.name,
       localField: "_id",
@@ -18,7 +30,12 @@ export async function getCustomerJourneyMetrics(from) {
       as: "payments",
     } },
     { $project: {
-      traded: 1, passed: 1,
+      traded: { $cond: [{ $or: [
+        { $eq: ["$traded", 1] }, { $in: ["trial_first_trade", "$outcomes._id"] },
+      ] }, 1, 0] },
+      passed: { $cond: [{ $or: [
+        { $eq: ["$passed", 1] }, { $in: ["trial_passed", "$outcomes._id"] },
+      ] }, 1, 0] },
       purchased: { $gt: [{ $size: { $filter: {
         input: "$payments", as: "p",
         cond: { $and: [
