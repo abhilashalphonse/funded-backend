@@ -172,13 +172,16 @@ router.get("/overview", async (_req, res, next) => {
     const recentAccounts = await Account.find({}).sort({ updatedAt: -1 }).limit(8)
       .select("accountId customerId accountMode status accountSize currentPhase updatedAt").lean();
     const recentActivity = await AnalyticsEvent.find({
-      event: { $in: [
-        "signup_completed", "trial_created", "trial_first_trade", "trial_phase_1_passed",
-        "trial_passed", "trial_failed", "trial_expired", "trial_cancelled",
-        "phase_1_passed", "phase_2_started", "evaluation_passed",
-        "checkout_started", "payment_started", "payment_completed",
-        "payment_failed", "payment_expired", "account_activated",
-      ] },
+      $or: [
+        { source: "server", event: { $in: [
+          "trial_created", "trial_first_trade", "trial_phase_1_passed",
+          "trial_passed", "trial_failed", "trial_expired", "trial_cancelled",
+          "phase_1_passed", "phase_2_started", "evaluation_passed",
+          "payment_started", "payment_completed", "payment_failed",
+          "payment_expired", "account_activated",
+        ] } },
+        { source: "client", event: { $in: ["signup_started", "checkout_started"] } },
+      ],
     }).sort({ occurredAt: -1 }).limit(20)
       .select("event email accountId paymentId occurredAt").lean();
 
