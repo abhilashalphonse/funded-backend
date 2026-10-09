@@ -73,3 +73,45 @@ export async function getDirectPurchaseMetrics(from) {
   ]).allowDiskUse(true);
   return rows[0] || { customers: 0, paid: 0, active: 0 };
 }
+
+
+function stage(key, label, count, total, previous = null) {
+  return {
+    key, label, count: Number(count || 0),
+    overallRate: total ? Number(count || 0) / total : 0,
+    stepRate: previous == null ? null : (previous ? Number(count || 0) / previous : 0),
+  };
+}
+
+export async function getCustomerCohortJourneys(from) {
+  const [trial, direct] = await Promise.all([
+    getCustomerJourneyMetrics(from),
+    getDirectPurchaseMetrics(from),
+  ]);
+  const trials = Number(trial.customers || 0);
+  const checkouts = Number(direct.customers || 0);
+  const buyers = Number(direct.paid || 0);
+  return {
+    trial: {
+      identity: "customer",
+      label: "Free Trial — Customer Cohort",
+      description: "Unique customers who started a trial during this period. Passing is optional before buying.",
+      stages: [
+        stage("trial_created", "Customers starting trials", trials, trials, trials),
+        stage("trial_first_trade", "Customers who traded", trial.traded, trials, trials),
+        stage("trial_passed", "Customers who passed", trial.passed, trials),
+        stage("payment_completed", "Customers who purchased", trial.purchased, trials),
+      ],
+    },
+    paid: {
+      identity: "customer",
+      label: "Direct Purchase — Customer Cohort",
+      description: "Unique customers with payment orders started this period and no prior trial.",
+      stages: [
+        stage("payment_started", "Customers starting payment", checkouts, checkouts, checkouts),
+        stage("payment_completed", "Customers who paid", buyers, checkouts, checkouts),
+        stage("account_activated", "Customers activated", direct.active, checkouts, buyers),
+      ],
+    },
+  };
+}
