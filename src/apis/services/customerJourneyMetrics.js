@@ -35,3 +35,41 @@ export async function getCustomerJourneyMetrics(from) {
   ]).allowDiskUse(true);
   return trials[0] || { customers: 0, traded: 0, passed: 0, purchased: 0 };
 }
+
+
+export async function getDirectPurchaseMetrics(from) {
+  const rows = await Payment.aggregate([
+    { $match: { createdAt: { $gte: from } } },
+    { $group: {
+      _id: { $ifNull: ["$customerId", "$ownerExternalRef"] },
+      firstOrderAt: { $min: "$createdAt" },
+      paid: { $max: { $cond: [{ $eq: ["$status", "PAID"] }, 1, 0] } },
+      active: { $max: { $cond: [{
+        $and: [
+          { $eq: ["$status", "PAID"] },
+          { $eq: ["$activation.status", "ACTIVE"] },
+        ],
+      }, 1, 0] } },
+    } },
+    { $match: { _id: { $nin: [null, ""] } } },
+    { $lookup: {
+      from: Account.collection.name,
+      let: { customer: "$_id", before: "$firstOrderAt" },
+      pipeline: [
+        { $match: { accountMode: "DEMO" } },
+        { $match: { $expr: { $and: [
+          { $eq: ["$customerId", "$$customer"] },
+          { $lte: ["$createdAt", "$$before"] },
+        ] } } },
+        { $limit: 1 },
+      ],
+      as: "priorTrials",
+    } },
+    { $match: { priorTrials: { $size: 0 } } },
+    { $group: {
+      _id: null, customers: { $sum: 1 },
+      paid: { $sum: "$paid" }, active: { $sum: "$active" },
+    } },
+  ]).allowDiskUse(true);
+  return rows[0] || { customers: 0, paid: 0, active: 0 };
+}
