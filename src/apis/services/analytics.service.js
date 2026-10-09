@@ -288,7 +288,7 @@ async function getJourneySummary(from) {
 }
 
 async function getPaymentRevenueSummary(from) {
-  const [paid, refunds] = await Promise.all([
+  const [paid, refunds, failures] = await Promise.all([
     Payment.aggregate([
       { $match: { status: "PAID", paidAt: { $gte: from } } },
       { $facet: {
@@ -321,6 +321,11 @@ async function getPaymentRevenueSummary(from) {
       { $match: { status: "REFUNDED", updatedAt: { $gte: from } } },
       { $group: { _id: null, payments: { $sum: 1 }, amountUsd: { $sum: "$amount" } } },
     ]),
+    Payment.aggregate([
+      { $match: { status: { $in: ["FAILED", "EXPIRED", "UNDERPAID"] }, updatedAt: { $gte: from } } },
+      { $group: { _id: { provider: "$provider", status: "$status" }, payments: { $sum: 1 } } },
+      { $sort: { payments: -1 } },
+    ]),
   ]);
   const groups = paid[0] || {};
   const total = groups.total?.[0] || {};
@@ -344,6 +349,7 @@ async function getPaymentRevenueSummary(from) {
     unattributedSalesUsd: sources.filter(row => !attributed.includes(row)).reduce((sum, row) => sum + row.revenue, 0),
     refundedPayments: Number(refunds[0]?.payments || 0),
     refundedAmountUsd: Number(refunds[0]?.amountUsd || 0),
+    failedPaymentOutcomes: failures.map(row => ({ provider: row._id?.provider || "Unknown", status: row._id?.status || "Unknown", payments: row.payments })),
     byMethod: (groups.methods || []).map(row => ({ method: row._id || "Unknown", paidPayments: row.payments, salesUsd: row.salesUsd })),
     byProduct: (groups.products || []).map(row => ({ accountSize: row._id?.size, step: row._id?.step, paidPayments: row.payments, salesUsd: row.salesUsd })),
     sources,
