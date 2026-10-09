@@ -45,6 +45,7 @@ import {
   getAcceptanceRun,
   listAcceptanceRuns,
   preflightAcceptanceRun,
+  issueStage6AcceptanceTicket,
 } from "../../maintenance/adminLaunchReadiness.js";
 
 const router = Router();
@@ -1002,6 +1003,27 @@ router.post("/launch-readiness/fixtures", async (req, res, next) => {
     });
 
     res.status(201).json({ success: true, data: run });
+  } catch (error) { next(error); }
+});
+
+// One-use ticket access for the dedicated staging RELIANCE financial acceptance.
+router.post("/launch-readiness/:runId/stage6-ticket", async (req, res, next) => {
+  try {
+    const result = await issueStage6AcceptanceTicket(req.params.runId, {
+      operatorEmail: req.admin.email,
+      confirmation: req.body?.confirmation,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    await writeAudit(req, {
+      action: "ACCEPTANCE_STAGE6_TICKET_ISSUED",
+      entityType: "ACCEPTANCE_RUN",
+      entityId: result.runId,
+      reason: "One-use federated acceptance ticket issued for RELIANCE staging",
+      before: null,
+      // Deliberately exclude federation ticket, bearer and trading launch URL.
+      after: { challengeId: result.challengeId, accountId: result.accountId },
+    });
+    res.json({ success: true, data: result });
   } catch (error) { next(error); }
 });
 
