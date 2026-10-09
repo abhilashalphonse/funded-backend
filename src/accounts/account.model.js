@@ -195,6 +195,7 @@ AccountSchema.index(
         partialFilterExpression: { platformAccountId: { $type: "string" } }
     }
 );
+AccountSchema.index({ accountMode: 1, createdAt: -1 });
 AccountSchema.index({ status: 1 });
 AccountSchema.index({ commandPending: 1 });
 AccountSchema.index({ ownerExternalRef: 1, accountMode: 1, createdAt: -1 });
