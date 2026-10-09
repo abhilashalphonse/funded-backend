@@ -7,6 +7,7 @@ import { calculatePrice } from "../../pricing/pricingEngine.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
+import { paymentAttribution } from "./paymentAttribution.js";
 import { getOrCreateGuestCustomer, normalizeCustomerEmail } from "../../customers/customer.service.js";
 import boss from "../../config/boss.js";
 import { enqueuePaymentActivation } from "../../workers/payment-activation.queue.js";
@@ -216,6 +217,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   }
 
   const stableCustomerId = String(fundedCustomer.customerId);
+  const customerAttribution = await paymentAttribution(stableCustomerId, attribution).catch(() => attribution);
   if (!allowedMethods[paymentMethod]) throw new Error("Unsupported crypto payment method.");
   if (!process.env.NOWPAYMENTS_IPN_URL) throw new Error("NOWPAYMENTS_IPN_URL is not configured.");
   if (!process.env.FRONTEND_URL) throw new Error("FRONTEND_URL is not configured.");
@@ -238,7 +240,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     status: "CREATED",
     metadata: {
       analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
-      attribution,
+      attribution: customerAttribution,
     },
   });
 
@@ -269,7 +271,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
       email: normalizedEmail,
       paymentId: String(payment._id),
       source: "server",
-      attribution,
+      attribution: customerAttribution,
       properties: {
         amount: pricing.finalPrice,
         currency: "USD",
@@ -318,6 +320,7 @@ export async function createUpiPayment({
     throw error;
   }
   const stableCustomerId = String(fundedCustomer.customerId);
+  const customerAttribution = await paymentAttribution(stableCustomerId, attribution).catch(() => attribution);
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
   const quote = verifyUpiQuoteToken(quoteToken, challengeDefinition, commercialConfig);
   const gateway = getUpiGateway(quote.gatewayId || DEFAULT_UPI_GATEWAY_ID);
@@ -380,7 +383,7 @@ export async function createUpiPayment({
     status: "CREATED",
     metadata: {
       analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
-      attribution,
+      attribution: customerAttribution,
       pricing,
       fx: {
         source: "daily-fx",
@@ -419,7 +422,7 @@ export async function createUpiPayment({
       email: normalizedEmail,
       paymentId: String(payment._id),
       source: "server",
-      attribution,
+      attribution: customerAttribution,
       properties: {
         amount: pricing.finalPrice,
         currency: "USD",
