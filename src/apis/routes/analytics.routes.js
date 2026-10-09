@@ -8,9 +8,13 @@ router.post("/events", optionalCustomer, async (req, res, next) => {
   try {
     const body = req.body || {};
     const event = await recordAnalyticsEvent({
-      ...body,
-      customer: req.customer,
+      event: body.event,
+      sessionId: body.sessionId,
+      customer: req.customer || null,
       source: "client",
+      attribution: body.attribution,
+      context: body.context,
+      properties: body.properties,
     });
     res.status(201).json({ success: true, data: { id: event._id } });
   } catch (error) { next(error); }
