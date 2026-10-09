@@ -259,66 +259,6 @@ export async function recordAnalyticsEvent({
 }
 
 
-const FUNNEL_JOURNEYS = {
-  trial: [
-    { key: "landing_view", label: "Visitors", events: ["landing_view"] },
-    { key: "signup_completed", label: "Registrations", events: ["signup_completed"] },
-    { key: "trial_created", label: "Trials created", events: ["trial_created"] },
-    { key: "trial_first_trade", label: "First trades", events: ["trial_first_trade"] },
-    { key: "trial_passed", label: "Trials passed", events: ["trial_passed"] },
-    { key: "payment_completed", label: "Purchased", events: ["payment_completed"] },
-  ],
-  paid: [
-    { key: "landing_view", label: "Visitors", events: ["landing_view"] },
-    { key: "challenge_builder_viewed", label: "Challenge builder", events: ["challenge_builder_viewed", "challenge_builder_view"] },
-    { key: "checkout_started", label: "Checkout started", events: ["checkout_started"] },
-    { key: "payment_started", label: "Payment initiated", events: ["payment_started"] },
-    { key: "payment_completed", label: "Paid", events: ["payment_completed"] },
-    { key: "account_activated", label: "Account activated", events: ["account_activated", "challenge_activated"] },
-  ],
-};
-
-async function getJourneySummary(from) {
-  const relevantEvents = [...new Set(Object.values(FUNNEL_JOURNEYS).flatMap(stages =>
-    stages.flatMap(stage => stage.events),
-  ))];
-  // Group once per tracked browser/session and event. These are observed,
-  // ordered journeys, not a claim that all paid customers started in this window.
-  const sessions = await AnalyticsEvent.aggregate([
-    { $match: { occurredAt: { $gte: from }, event: { $in: relevantEvents } } },
-    { $group: { _id: { sessionId: "$sessionId", event: "$event" }, firstAt: { $min: "$occurredAt" } } },
-    { $group: { _id: "$_id.sessionId", events: { $push: { event: "$_id.event", at: "$firstAt" } } } },
-  ]).allowDiskUse(true);
-
-  return Object.fromEntries(Object.entries(FUNNEL_JOURNEYS).map(([name, definitions]) => {
-    const counts = definitions.map(() => 0);
-    for (const session of sessions) {
-      const events = new Map(session.events.map(item => [item.event, new Date(item.at).getTime()]));
-      let prior = -Infinity;
-      for (let index = 0; index < definitions.length; index += 1) {
-        const next = definitions[index].events
-          .map(event => events.get(event))
-          .filter(time => Number.isFinite(time) && time >= prior)
-          .sort((a, b) => a - b)[0];
-        if (next === undefined) break;
-        counts[index] += 1;
-        prior = next;
-      }
-    }
-    return [name, {
-      label: name === "trial" ? "Free Trial" : "Paid Checkout",
-      description: "Unique tracked sessions completing each step in order within the selected period.",
-      stages: definitions.map((stage, index) => ({
-        key: stage.key,
-        label: stage.label,
-        count: counts[index],
-        stepRate: index === 0 ? 1 : ratio(counts[index], counts[index - 1]),
-        overallRate: ratio(counts[index], counts[0]),
-      })),
-    }];
-  }));
-}
-
 async function getPaymentRevenueSummary(from) {
   const [paid, refunds, failures] = await Promise.all([
     Payment.aggregate([
