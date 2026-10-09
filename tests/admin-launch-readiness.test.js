@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   acceptanceChallengeSpec,
   validateAcceptanceConfirmation,
+  assertStage6StagingGate,
 } from "../src/maintenance/adminLaunchReadiness.js";
 
 test("acceptance confirmation requires exact destructive phrase and reason", () => {
@@ -41,4 +42,24 @@ test("acceptance challenge fixture is deterministic two-step with zero minimum d
     { phase: 2, profitTarget: 1 },
   ]);
   assert.equal(spec.leverage, 100);
+});
+
+test("Stage 6 ticket route requires Railway STAGING, approved Trader host and operator confirmation", () => {
+  const valid={
+    railwayEnvironment:"STAGING",
+    traderUrl:"https://discerning-presence-staging.up.railway.app",
+    confirmation:"RELIANCE-STAGING-ONLY",
+  };
+  assert.equal(assertStage6StagingGate(valid),true);
+  const rejected=[
+    {...valid,railwayEnvironment:"production"},
+    {...valid,railwayEnvironment:null},
+    {...valid,traderUrl:"https://acg-trader-backend-production.up.railway.app"},
+    {...valid,traderUrl:"https://attacker-staging.example.org"},
+    {...valid,confirmation:""},
+    {...valid,confirmation:"RUN ACCEPTANCE"},
+  ];
+  for(const candidate of rejected){
+    assert.throws(()=>assertStage6StagingGate(candidate),/Stage 6|Explicit/);
+  }
 });

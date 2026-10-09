@@ -1066,6 +1066,67 @@ export async function listAcceptanceRuns({ limit = 20 } = {}) {
   return AcceptanceRun.find({}).sort({ createdAt: -1 }).limit(safeLimit).lean();
 }
 
+// Stage 6 admission is independent of the destructive lifecycle acceptance runner.
+export function assertStage6StagingGate({
+  railwayEnvironment = process.env.RAILWAY_ENVIRONMENT_NAME,
+  traderUrl = process.env.ACG_TRADER_BASE_URL,
+  confirmation,
+} = {}) {
+  if (String(railwayEnvironment || "").trim().toLowerCase() !== "staging"
+    || String(traderUrl || "").replace(/\/+$/, "") !== "https://discerning-presence-staging.up.railway.app") {
+    throw acceptanceError("Stage 6 tickets are only available in the approved Railway STAGING environment.",
+      "STAGE6_STAGING_REQUIRED", 403);
+  }
+  if (confirmation !== "RELIANCE-STAGING-ONLY") {
+    throw acceptanceError("Explicit Stage 6 RELIANCE confirmation is required.",
+      "STAGE6_CONFIRMATION_REQUIRED", 409);
+  }
+  return true;
+}
+
+// Return a single-use, short-lived federation ticket, not a customer/admin password
+// or a persistent Trader API key. Only the authenticated fixture creator may request it.
+export async function issueStage6AcceptanceTicket(runIdValue, {
+  operatorEmail,
+  confirmation,
+} = {}) {
+  assertStage6StagingGate({ confirmation });
+  const run = await loadRun(runIdValue);
+  const creator = String(run.createdBy || "").trim().toLowerCase();
+  if (!operatorEmail || creator !== String(operatorEmail).trim().toLowerCase()) {
+    throw acceptanceError("Only the operator who created this acceptance fixture can issue a Stage 6 ticket.",
+      "STAGE6_OPERATOR_FORBIDDEN", 403);
+  }
+  const fixture = run.fixture || {};
+  const customer = await loadCustomerForRun(run);
+  const challenge = await loadChallenge(fixture.challengeAId);
+  if (run.status !== "READY"
+    || run.symbol !== "RELIANCE"
+    || !/^acceptance\+.*@acgfunded\.test$/i.test(String(customer.primaryEmail || ""))
+    || String(challenge?.customerId || "") !== String(fixture.customerId)
+    || String(challenge?.accountId || "") !== String(fixture.challengeAId)
+    || String(challenge?.platformAccountId || "") !== String(fixture.challengeAPlatformAccountId)
+    || !/^[0-9a-f]{24}$/i.test(String(fixture.challengeAPlatformAccountId || ""))
+    || challenge?.platform !== "acg-trader"
+    || challenge?.enabled !== true
+    || challenge?.status !== "ACTIVE"
+    || Number(challenge?.currentPhase) !== 1) {
+    throw acceptanceError("Stage 6 requires a fresh, active dedicated RELIANCE acceptance fixture.",
+      "STAGE6_FIXTURE_NOT_READY", 409);
+  }
+  const launch = await createCustomerTradingLaunch(customerContext(customer), challenge.accountId);
+  const ticket = new URL(launch.launchUrl).searchParams.get("ticket");
+  if (!ticket) throw acceptanceError("Staging trading launch did not return a federation ticket.",
+    "STAGE6_TICKET_UNAVAILABLE", 502);
+  return {
+    runId: run.runId,
+    customerId: fixture.customerId,
+    challengeId: challenge.accountId,
+    accountId: fixture.challengeAPlatformAccountId,
+    ticket,
+  };
+}
+
 export async function getAcceptanceRun(runIdValue) {
   const run = await AcceptanceRun.findOne({ runId: String(runIdValue) }).lean();
   if (!run) throw acceptanceError("Acceptance run not found.", "ACCEPTANCE_RUN_NOT_FOUND", 404);
