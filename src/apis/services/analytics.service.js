@@ -39,7 +39,35 @@ const ALLOWED_EVENTS = new Set([
   "payment_expired",
   "account_activated",
   "challenge_activated",
+  "post_purchase_signup_started",
+  "post_purchase_signup_completed",
+  "dashboard_opened_after_purchase",
 ]);
+
+// Browser telemetry is observational; lifecycle changes come from Funded services.
+const CLIENT_EVENTS = new Set([
+  "landing_view", "hero_cta_click", "free_trial_click",
+  "challenge_builder_view", "challenge_builder_viewed",
+  "challenge_configured", "challenge_selected",
+  "signup_started", "signup_completed",
+  "checkout_started", "checkout_viewed", "checkout_submitted",
+  "payment_cancelled", "payment_failed", "trader_launch_failed",
+  "post_purchase_signup_started", "post_purchase_signup_completed",
+  "dashboard_opened_after_purchase",
+]);
+
+function cleanClientProperties(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result = {};
+  for (const [key, field] of Object.entries(value).slice(0, 24)) {
+    if (!/^[a-zA-Z][a-zA-Z0-9_]{0,64}$/.test(key)
+      || /customer|owner|email|accountid|paymentid|token|secret|password|session|attribution/i.test(key)) continue;
+    if (typeof field === "string") result[key] = field.slice(0, 256);
+    else if (typeof field === "number" && Number.isFinite(field)) result[key] = field;
+    else if (typeof field === "boolean") result[key] = field;
+  }
+  return result;
+}
 
 const TOUCH_FIELDS = [
   "utmSource",
@@ -123,7 +151,7 @@ function mergeAttribution(stored = {}, incoming = {}) {
   });
 }
 
-async function resolveCustomerAttribution({ customerId, email, incoming }) {
+async function resolveCustomerAttribution({ customerId, email, incoming, allowWrite = false }) {
   const normalizedEmail = cleanString(email, 320)?.toLowerCase();
   let record = null;
   if (customerId) {
@@ -138,7 +166,7 @@ async function resolveCustomerAttribution({ customerId, email, incoming }) {
   const hasIncoming = hasTouch(normalizeAttribution(incoming).firstTouch)
     || hasTouch(normalizeAttribution(incoming).lastTouch);
 
-  if (hasIncoming) {
+  if (hasIncoming && allowWrite && customerId) {
     await Customer.updateOne(
       { customerId: record.customerId },
       { $set: { marketingAttribution: merged } },
@@ -171,7 +199,7 @@ export async function recordAnalyticsEvent({
   properties = {},
   occurredAt,
 }) {
-  if (!ALLOWED_EVENTS.has(event)) {
+  if (!ALLOWED_EVENTS.has(event) || (source === "client" && !CLIENT_EVENTS.has(event))) {
     const error = new Error("Unsupported analytics event.");
     error.status = 400;
     throw error;
@@ -184,16 +212,19 @@ export async function recordAnalyticsEvent({
     throw error;
   }
 
-  const customerId = cleanString(customer?.customerId || properties?.customerId, 128);
-  const normalizedEmail = cleanString(customer?.email || email, 320)?.toLowerCase();
+  const fromClient = source === "client";
+  const safeProperties = fromClient ? cleanClientProperties(properties) : properties;
+  const customerId = cleanString(customer?.customerId || (!fromClient && properties?.customerId), 128);
+  const normalizedEmail = cleanString(customer?.email || (!fromClient && email), 320)?.toLowerCase();
   let normalizedAttribution = normalizeAttribution(attribution);
 
-  if (customerId || normalizedEmail) {
+  if (customerId || (!fromClient && normalizedEmail)) {
     try {
       normalizedAttribution = await resolveCustomerAttribution({
         customerId,
         email: normalizedEmail,
         incoming: normalizedAttribution,
+        allowWrite: Boolean(customer?.customerId),
       });
     } catch (error) {
       console.warn("[analytics] customer attribution persistence failed", {
@@ -206,12 +237,12 @@ export async function recordAnalyticsEvent({
 
   return AnalyticsEvent.create({
     event,
-    eventKey: cleanString(eventKey, 384),
+    eventKey: fromClient ? undefined : cleanString(eventKey, 384),
     sessionId: normalizedSessionId,
-    ownerExternalRef: customerId || cleanString(customer?.id || properties?.ownerExternalRef, 128),
+    ownerExternalRef: customerId || (!fromClient && cleanString(customer?.id || properties?.ownerExternalRef, 128)),
     email: normalizedEmail,
-    accountId: cleanString(accountId, 128),
-    paymentId: cleanString(paymentId, 128),
+    accountId: fromClient ? undefined : cleanString(accountId, 128),
+    paymentId: fromClient ? undefined : cleanString(paymentId, 128),
     source,
     attribution: normalizedAttribution,
     context: {
@@ -221,8 +252,8 @@ export async function recordAnalyticsEvent({
       country: cleanString(context.country, 64),
       entryIntent: cleanString(context.entryIntent, 32),
     },
-    properties: properties && typeof properties === "object" ? properties : {},
-    occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
+    properties: safeProperties && typeof safeProperties === "object" ? safeProperties : {},
+    occurredAt: fromClient ? new Date() : (occurredAt ? new Date(occurredAt) : new Date()),
   });
 }
 
