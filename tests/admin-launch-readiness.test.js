@@ -53,7 +53,7 @@ test("Stage 6 ticket route requires Railway STAGING, approved Trader host and op
   assert.equal(assertStage6StagingGate(valid),true);
   const rejected=[
     {...valid,railwayEnvironment:"production"},
-    {...valid,railwayEnvironment:undefined},
+    {...valid,railwayEnvironment:null},
     {...valid,traderUrl:"https://acg-trader-backend-production.up.railway.app"},
     {...valid,traderUrl:"https://attacker-staging.example.org"},
     {...valid,confirmation:""},
