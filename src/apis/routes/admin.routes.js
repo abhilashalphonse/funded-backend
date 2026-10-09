@@ -5,6 +5,7 @@ import Account from "../../accounts/account.model.js";
 import Payment from "../../models/payment.model.js";
 import SupportConversation from "../../support/supportConversation.model.js";
 import AdminAuditEvent from "../../models/adminAuditEvent.model.js";
+import AnalyticsEvent from "../../models/analyticsEvent.model.js";
 import { requireAdmin } from "../../auth/supabaseAuth.js";
 import { getFunnelSummary } from "../services/analytics.service.js";
 import env from "../../config/env.js";
@@ -170,6 +171,16 @@ router.get("/overview", async (_req, res, next) => {
       .select(PAYMENT_ADMIN_FIELDS).lean();
     const recentAccounts = await Account.find({}).sort({ updatedAt: -1 }).limit(8)
       .select("accountId customerId accountMode status accountSize currentPhase updatedAt").lean();
+    const recentActivity = await AnalyticsEvent.find({
+      event: { $in: [
+        "signup_completed", "trial_created", "trial_first_trade", "trial_phase_1_passed",
+        "trial_passed", "trial_failed", "trial_expired", "trial_cancelled",
+        "phase_1_passed", "phase_2_started", "evaluation_passed",
+        "checkout_started", "payment_started", "payment_completed",
+        "payment_failed", "payment_expired", "account_activated",
+      ] },
+    }).sort({ occurredAt: -1 }).limit(20)
+      .select("event email accountId paymentId occurredAt").lean();
 
     res.json({
       success: true,
@@ -192,6 +203,7 @@ router.get("/overview", async (_req, res, next) => {
         funnel,
         recentPayments,
         recentAccounts,
+        recentActivity,
       },
     });
   } catch (error) { next(error); }
