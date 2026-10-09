@@ -1,6 +1,7 @@
 import AnalyticsEvent from "../../models/analyticsEvent.model.js";
 import Customer from "../../customers/customer.model.js";
 import Payment from "../../models/payment.model.js";
+import { getCustomerCohortJourneys } from "./customerJourneyMetrics.js";
 
 const ALLOWED_EVENTS = new Set([
   "landing_view",
@@ -478,7 +479,7 @@ export async function getFunnelSummary({ days = 30 } = {}) {
         },
       },
     ]),
-    getJourneySummary(from),
+    getCustomerCohortJourneys(from),
     getPaymentRevenueSummary(from),
   ]);
 
