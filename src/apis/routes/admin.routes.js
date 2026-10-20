@@ -7,6 +7,7 @@ import SupportConversation from "../../support/supportConversation.model.js";
 import AdminAuditEvent from "../../models/adminAuditEvent.model.js";
 import AnalyticsEvent from "../../models/analyticsEvent.model.js";
 import { requireAdmin } from "../../auth/supabaseAuth.js";
+import { adminCan } from "../../auth/adminPolicy.js";
 import { getFunnelSummary } from "../services/analytics.service.js";
 import env from "../../config/env.js";
 import boss from "../../config/boss.js";
@@ -50,6 +51,32 @@ import {
 
 const router = Router();
 router.use(requireAdmin);
+
+// Every privileged mutation requires an explicit capability. The optional
+// ADMIN_REQUIRE_MFA switch requires a Supabase-verified AAL2 access token.
+function adminMutationCapability(path) {
+  if (path.startsWith("/support/")) return "SUPPORT_WRITE";
+  if (path.startsWith("/users/")) return "CUSTOMERS_WRITE";
+  if (path.startsWith("/challenges/")) return "RISK_WRITE";
+  if (path.startsWith("/payouts/") || path.startsWith("/payments/") || path.startsWith("/upi-gateways/")) return "FINANCE_WRITE";
+  return "SYSTEM_WRITE";
+}
+router.use((req, res, next) => {
+  const role = req.admin?.role;
+  if (req.method === "GET" || req.method === "HEAD") {
+    if (/^\/payouts\/[^/]+$/.test(req.path) && !adminCan(role, "FINANCE_WRITE")) {
+      return res.status(403).json({ success: false, code: "ADMIN_PERMISSION_DENIED", message: "Finance access is required to view payout destinations." });
+    }
+    return next();
+  }
+  if (!adminCan(role, adminMutationCapability(req.path))) {
+    return res.status(403).json({ success: false, code: "ADMIN_PERMISSION_DENIED", message: "Your admin role does not permit this operation." });
+  }
+  if (env.ADMIN_REQUIRE_MFA && req.admin?.aal !== "aal2") {
+    return res.status(403).json({ success: false, code: "ADMIN_MFA_REQUIRED", message: "An MFA-verified admin session is required for this operation." });
+  }
+  return next();
+});
 
 function escapeRegex(value = "") {
   return String(value).replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
@@ -116,7 +143,7 @@ router.get("/me", (req, res) => {
 router.get("/overview", async (_req, res, next) => {
   try {
     const day = new Date();
-    day.setHours(0, 0, 0, 0);
+    day.setUTCHours(0, 0, 0, 0);
     const month = new Date(day.getFullYear(), day.getMonth(), 1);
 
     const [
@@ -634,7 +661,7 @@ async function listPayments(req, res, next) {
       });
     } else if (attention === "failed-today") {
       const day = new Date();
-      day.setHours(0, 0, 0, 0);
+      day.setUTCHours(0, 0, 0, 0);
       filter.status = { $in: ["FAILED", "EXPIRED", "UNDERPAID"] };
       filter.updatedAt = { $gte: day };
     }
@@ -1100,15 +1127,34 @@ router.get("/trades", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.get("/risk", async (_req, res, next) => {
+router.get("/risk", async (req, res, next) => {
   try {
-    const [breached, locked, fundedReview, failedProvisioning] = await Promise.all([
-      Account.find({ status: "BREACHED" }).sort({ updatedAt: -1 }).limit(100).lean(),
-      Account.find({ status: "LOCKED" }).sort({ updatedAt: -1 }).limit(100).lean(),
-      Account.find({ status: "FUNDED_REVIEW" }).sort({ updatedAt: -1 }).limit(100).lean(),
-      Account.find({ "provisioning.status": "FAILED" }).sort({ updatedAt: -1 }).limit(100).lean(),
+    const utcDay = new Date();
+    utcDay.setUTCHours(0, 0, 0, 0);
+    const breachFilter = req.query.breached === "today"
+      ? { status: "BREACHED", "projections.breachedAt": { $gte: utcDay } }
+      : { status: "BREACHED" };
+    const lockedFilter = { status: "LOCKED" };
+    const reviewFilter = { status: "FUNDED_REVIEW" };
+    const provisioningFilter = { "provisioning.status": "FAILED" };
+    const [breached, locked, fundedReview, failedProvisioning, breachedCount, lockedCount, fundedReviewCount, failedProvisioningCount, breachedTodayCount] = await Promise.all([
+      Account.find(breachFilter).sort({ updatedAt: -1 }).limit(100).lean(),
+      Account.find(lockedFilter).sort({ updatedAt: -1 }).limit(100).lean(),
+      Account.find(reviewFilter).sort({ updatedAt: -1 }).limit(100).lean(),
+      Account.find(provisioningFilter).sort({ updatedAt: -1 }).limit(100).lean(),
+      Account.countDocuments(breachFilter),
+      Account.countDocuments(lockedFilter),
+      Account.countDocuments(reviewFilter),
+      Account.countDocuments(provisioningFilter),
+      Account.countDocuments({ status: "BREACHED", "projections.breachedAt": { $gte: utcDay } }),
     ]);
-    res.json({ success: true, data: { breached, locked, fundedReview, failedProvisioning } });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, data: {
+      breached, locked, fundedReview, failedProvisioning,
+      counts: { breached: breachedCount, locked: lockedCount, fundedReview: fundedReviewCount, failedProvisioning: failedProvisioningCount, breachedToday: breachedTodayCount },
+      limitPerCategory: 100,
+      breachWindow: req.query.breached === "today" ? "today" : "all",
+    } });
   } catch (error) { next(error); }
 });
 
@@ -1147,8 +1193,8 @@ router.get("/system", async (_req, res, next) => {
       success: true,
       data: {
         services: [
-          { name: "ACG Funded API", status: "HEALTHY" },
-          { name: "Customer authentication", status: env.SUPABASE_URL && env.SUPABASE_ANON_KEY ? "HEALTHY" : "NOT_CONFIGURED" },
+          { name: "ACG Funded API", status: "RESPONDING" },
+          { name: "Customer authentication", status: env.SUPABASE_URL && env.SUPABASE_ANON_KEY ? "CONFIGURED" : "NOT_CONFIGURED" },
           { name: "ACG Trader", status: env.TRADING_PROVIDER === "acg-trader" && env.ACG_TRADER_BASE_URL ? "CONFIGURED" : "DEVELOPMENT" },
           { name: "Crypto payments", status: env.NOWPAYMENTS_API_KEY && env.NOWPAYMENTS_IPN_SECRET && env.NOWPAYMENTS_IPN_URL ? "CONFIGURED" : "NOT_CONFIGURED" },
           { name: "Rupex", status: upiGateways.find(item => item.id === "rupex")?.status || "NOT_CONFIGURED" },
