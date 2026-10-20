@@ -64,8 +64,14 @@ function adminMutationCapability(path) {
 router.use((req, res, next) => {
   const role = req.admin?.role;
   if (req.method === "GET" || req.method === "HEAD") {
-    if (/^\/payouts\/[^/]+$/.test(req.path) && !adminCan(role, "FINANCE_WRITE")) {
-      return res.status(403).json({ success: false, code: "ADMIN_PERMISSION_DENIED", message: "Finance access is required to view payout destinations." });
+    if (req.path.startsWith("/payouts") && !adminCan(role, "FINANCE_WRITE")) {
+      return res.status(403).json({ success: false, code: "ADMIN_PERMISSION_DENIED", message: "Finance access is required to view payout records." });
+    }
+    if (["/system", "/admin-users", "/audit"].includes(req.path) && role !== "SUPER_ADMIN") {
+      return res.status(403).json({ success: false, code: "ADMIN_PERMISSION_DENIED", message: "Owner-level admin access is required for this view." });
+    }
+    if (req.path.startsWith("/launch-readiness") && role !== "SUPER_ADMIN") {
+      return res.status(403).json({ success: false, code: "ADMIN_PERMISSION_DENIED", message: "Owner-level admin access is required for acceptance fixtures." });
     }
     return next();
   }
@@ -319,6 +325,9 @@ router.post("/users/:customerId/status", async (req, res, next) => {
     if (!reason) return res.status(400).json({ success: false, message: "A reason is required." });
     const customer = await Customer.findOne({ customerId: req.params.customerId });
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found." });
+    if (status === "BLOCKED" && String(customer.primaryEmail || "").toLowerCase() === req.admin.email) {
+      return res.status(409).json({ success: false, code: "ADMIN_SELF_BLOCK_PREVENTED", message: "An admin cannot block their own account." });
+    }
     if (customer.status === "MERGED") return res.status(409).json({ success: false, message: "Merged customer records cannot be modified." });
 
     const before = { status: customer.status };
