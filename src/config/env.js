@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { parseAdminRoleAssignments } from "../auth/adminPolicy.js";
 
 const nodeEnv = process.env.NODE_ENV || "development";
 const isProduction = nodeEnv === "production";
@@ -111,6 +112,10 @@ const env = Object.freeze({
 
   CORS_ORIGINS: csv("CORS_ORIGINS", "http://localhost:5173"),
   ADMIN_EMAILS: csv("ADMIN_EMAILS").map(value => value.toLowerCase()),
+  // Assignments only narrow access for allowlisted administrators. Defaults preserve the current owner admin.
+  ADMIN_ROLE_ASSIGNMENTS: parseAdminRoleAssignments(process.env.ADMIN_ROLE_ASSIGNMENTS),
+  // Enable only after every admin has enrolled Supabase MFA; AAL2 is enforced on all admin mutations.
+  ADMIN_REQUIRE_MFA: bool("ADMIN_REQUIRE_MFA", false),
   FRONTEND_URL: validUrl("FRONTEND_URL", required("FRONTEND_URL")),
   SUPABASE_URL: validUrl("SUPABASE_URL", required("SUPABASE_URL")),
   SUPABASE_ANON_KEY: required("SUPABASE_ANON_KEY"),
