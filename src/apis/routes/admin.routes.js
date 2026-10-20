@@ -105,6 +105,7 @@ async function writeAudit(req, event) {
 
 const TRADABLE_ACCOUNT_STATUSES = new Set(["ACTIVE", "PHASE_2", "FUNDED"]);
 const PAYMENT_ADMIN_FIELDS = [
+  "status",
   "orderId",
   "customerId",
   "email",
