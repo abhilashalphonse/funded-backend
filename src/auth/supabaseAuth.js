@@ -1,4 +1,5 @@
 import env from "../config/env.js";
+import { verifiedAdminAal } from "./adminPolicy.js";
 import { getCustomerOwnershipIds, resolveAuthenticatedCustomer } from "../customers/customer.service.js";
 
 function bearerToken(req) {
@@ -122,6 +123,9 @@ export async function requireAdmin(req, res, next) {
     if (!customer) return res.status(401).json({ success: false, message: "Invalid or expired session.", code: "AUTH_SESSION_INVALID" });
 
     const email = String(customer.email || "").trim().toLowerCase();
+    if (String(customer.status || "").toUpperCase() === "BLOCKED") {
+      return res.status(403).json({ success: false, message: "This admin identity is blocked.", code: "ADMIN_CUSTOMER_BLOCKED" });
+    }
     if (!email || !env.ADMIN_EMAILS.includes(email)) {
       return res.status(403).json({ success: false, message: "Admin access is not enabled for this account." });
     }
@@ -131,7 +135,8 @@ export async function requireAdmin(req, res, next) {
       email,
       customerId: customer.customerId,
       authUserId: customer.id,
-      role: "SUPER_ADMIN",
+      role: env.ADMIN_ROLE_ASSIGNMENTS[email] || "SUPER_ADMIN",
+      aal: verifiedAdminAal(token, customer.id),
     };
     next();
   } catch (error) {
