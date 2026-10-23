@@ -119,6 +119,48 @@ function* twoStepRules() {
             yield { phase1ProfitTarget, phase2ProfitTarget, dailyLoss, maxLoss, minTradingDays };
 }
 
+test("2-Step discount reductions never change 1-Step commercial pricing", () => {
+  const low = { ...commercial, profitSplit: 60, payoutFrequency: "Monthly" };
+  const first = calculatePrice(definition("1step"), low);
+  assert.equal(first.finalPrice, 223);
+  assert.equal(first.adjustmentItems.profitSplit, -0.12);
+  assert.equal(first.adjustmentItems.payoutFrequency, -0.05);
+
+  const second = calculatePrice(definition("2step"), low);
+  assert.equal(second.finalPrice, 174);
+  assert.equal(second.adjustmentItems.profitSplit, -0.06);
+  assert.equal(second.adjustmentItems.payoutFrequency, -0.02);
+  assert.equal(calculatePrice(definition("2step", { phase1ProfitTarget: 12, phase2ProfitTarget: 12 }), low).finalPrice, 136);
+
+  for (const step of ["1step", "2step"]) {
+    assert.equal(calculatePrice(definition(step), commercial).finalPrice, step === "1step" ? 269 : 189);
+  }
+});
+
+test("V3 floor clustering is below 4% across all commercial options", () => {
+  let evaluated = 0;
+  let atFloor = 0;
+  let worstSegmentFloor = 0;
+  for (const rules of twoStepRules()) {
+    const d = definition("2step", rules);
+    for (const profitSplit of [60, 80, 90])
+      for (const payoutFrequency of ["Monthly", "Biweekly", "Weekly", "On Demand"])
+        for (const newsTrading of [false, true])
+          for (const weekendHolding of [false, true]) {
+            const quote = calculatePrice(d, { profitSplit, payoutFrequency, newsTrading, weekendHolding });
+            const floored = quote.multiplier <= PRICE_MULTIPLIER_FLOOR + 1e-10;
+            if (floored) {
+              atFloor++;
+              if (profitSplit === 60 && payoutFrequency === "Monthly" && !newsTrading && !weekendHolding) worstSegmentFloor++;
+            }
+            evaluated++;
+          }
+  }
+  assert.equal(evaluated, 161280);
+  assert.equal(atFloor, 5399);
+  assert.equal(worstSegmentFloor, 1223);
+});
+
 test("fewer than 10% of standard 2-step combinations reach the multiplier floor", () => {
   let checked = 0;
   let atFloor = 0;
