@@ -7,6 +7,8 @@ import {
   ADJUSTMENT_TABLES,
   PROFIT_SPLIT_ADJUSTMENTS,
   PAYOUT_ADJUSTMENTS,
+  TWO_STEP_PROFIT_SPLIT_ADJUSTMENTS,
+  TWO_STEP_PAYOUT_ADJUSTMENTS,
   NEWS_TRADING_ADJUSTMENT,
   WEEKEND_HOLDING_ADJUSTMENT,
   PROFIT_SPLIT_OPTIONS,
@@ -110,8 +112,10 @@ export function calculatePrice(challengeDefinition, commercialConfig) {
   items.dailyLoss = adjustment(tables.dailyLoss, "dailyLoss", rules.dailyLoss);
   items.maxLoss = adjustment(tables.maxLoss, "maxLoss", rules.maxLoss);
   items.minTradingDays = adjustment(tables.minTradingDays, "minTradingDays", rules.minTradingDays);
-  items.profitSplit = adjustment(PROFIT_SPLIT_ADJUSTMENTS, "profitSplit", commercialConfig.profitSplit);
-  items.payoutFrequency = adjustment(PAYOUT_ADJUSTMENTS, "payoutFrequency", commercialConfig.payoutFrequency);
+  const profitSplitTable = step === STEP_TYPES.TWO_STEP ? TWO_STEP_PROFIT_SPLIT_ADJUSTMENTS : PROFIT_SPLIT_ADJUSTMENTS;
+  const payoutTable = step === STEP_TYPES.TWO_STEP ? TWO_STEP_PAYOUT_ADJUSTMENTS : PAYOUT_ADJUSTMENTS;
+  items.profitSplit = adjustment(profitSplitTable, "profitSplit", commercialConfig.profitSplit);
+  items.payoutFrequency = adjustment(payoutTable, "payoutFrequency", commercialConfig.payoutFrequency);
   items.newsTrading = commercialConfig.newsTrading ? NEWS_TRADING_ADJUSTMENT : 0;
   items.weekendHolding = commercialConfig.weekendHolding ? WEEKEND_HOLDING_ADJUSTMENT : 0;
 
