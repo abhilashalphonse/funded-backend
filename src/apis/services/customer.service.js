@@ -260,7 +260,7 @@ export function normalizeTrialChallenge(definition = {}) {
   const defaults = step === STEP_TYPES.ONE_STEP
     ? { profitTarget: 10, dailyLoss: 3, maxLoss: 6, minTradingDays: 3 }
     : { phase1ProfitTarget: 8, phase2ProfitTarget: 6, dailyLoss: 5, maxLoss: 10, minTradingDays: 3 };
-  const inputRules = definition.rules ?? {};
+  const inputRules = definition.rules === undefined ? {} : definition.rules;
   const accountSize = definition.accountSize ?? 100000;
   const rules = inputRules && typeof inputRules === "object" && !Array.isArray(inputRules)
     ? { ...defaults, ...inputRules }
