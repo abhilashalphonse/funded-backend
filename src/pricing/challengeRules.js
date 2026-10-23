@@ -1,5 +1,5 @@
 // New purchases use these bounds and commercial adjustments. Existing paid orders retain their saved terms.
-export const PRICING_VERSION = "2026-10-challenge-v2";
+export const PRICING_VERSION = "2026-10-challenge-v3";
 
 export const STEP_TYPES = {
   ONE_STEP: "1step",
@@ -45,16 +45,19 @@ export const ADJUSTMENT_TABLES = {
     minTradingDays: { 3: 0, 4: -.05, 5: -.08 },
   },
   [STEP_TYPES.TWO_STEP]: {
-    phase1ProfitTarget: { 8: 0, 9: -.05, 10: -.09, 11: -.12, 12: -.15 },
-    phase2ProfitTarget: { 6: 0, 7: -.06, 8: -.11, 9: -.16, 10: -.20, 11: -.24, 12: -.28 },
-    dailyLoss: { 2: -.12, 3: -.06, 4: -.03, 5: 0 },
-    maxLoss: { 5: -.20, 6: -.15, 7: -.10, 8: -.06, 9: -.03, 10: 0, 11: .10, 12: .20 },
+    phase1ProfitTarget: { 8: 0, 9: -0.02, 10: -0.04, 11: -0.06, 12: -0.08 },
+    phase2ProfitTarget: { 6: 0, 7: -0.02, 8: -0.04, 9: -0.06, 10: -0.08, 11: -0.1, 12: -0.12 },
+    dailyLoss: { 2: -0.06, 3: -0.03, 4: -0.015, 5: 0 },
+    maxLoss: { 5: -0.1, 6: -0.075, 7: -0.05, 8: -0.03, 9: -0.015, 10: 0, 11: 0.1, 12: 0.2 },
     minTradingDays: { 3: 0, 4: -.05, 5: -.08 },
   },
 };
 
 export const PROFIT_SPLIT_ADJUSTMENTS = { 60: -.12, 80: 0, 90: .12 };
 export const PAYOUT_ADJUSTMENTS = { Monthly: -.05, Biweekly: 0, Weekly: .10, "On Demand": .22 };
+// Only 2-Step receives reduced discount stacking. 1-Step retains its existing commercial prices.
+export const TWO_STEP_PROFIT_SPLIT_ADJUSTMENTS = { 60: -.06, 80: 0, 90: .12 };
+export const TWO_STEP_PAYOUT_ADJUSTMENTS = { Monthly: -.02, Biweekly: 0, Weekly: .10, "On Demand": .22 };
 export const NEWS_TRADING_ADJUSTMENT = .07;
 export const WEEKEND_HOLDING_ADJUSTMENT = .05;
 export const PRICE_MULTIPLIER_FLOOR = .70;
