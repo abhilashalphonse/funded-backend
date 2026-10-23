@@ -55,6 +55,9 @@ export const ADJUSTMENT_TABLES = {
 
 export const PROFIT_SPLIT_ADJUSTMENTS = { 60: -.12, 80: 0, 90: .12 };
 export const PAYOUT_ADJUSTMENTS = { Monthly: -.05, Biweekly: 0, Weekly: .10, "On Demand": .22 };
+// Only 2-Step receives reduced discount stacking. 1-Step retains its existing commercial prices.
+export const TWO_STEP_PROFIT_SPLIT_ADJUSTMENTS = { 60: -.06, 80: 0, 90: .12 };
+export const TWO_STEP_PAYOUT_ADJUSTMENTS = { Monthly: -.02, Biweekly: 0, Weekly: .10, "On Demand": .22 };
 export const NEWS_TRADING_ADJUSTMENT = .07;
 export const WEEKEND_HOLDING_ADJUSTMENT = .05;
 export const PRICE_MULTIPLIER_FLOOR = .70;
