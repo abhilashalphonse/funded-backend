@@ -1,4 +1,4 @@
-import { createCryptoPayment, createUpiPayment, getPaymentStatus, getUpiQuote, processIpn, processUpiCallback } from "../services/payment.service.js";
+import { createCryptoPayment, createUpiPayment, getPaymentStatus, getUpiQuote, getChallengeQuote, processIpn, processUpiCallback } from "../services/payment.service.js";
 
 export async function createCrypto(req, res, next) {
   try {
@@ -40,6 +40,13 @@ export async function createUpi(req, res, next) {
     delete payload.ownerExternalRef;
     delete payload.customerId;
     res.status(201).json({ success: true, data: await createUpiPayment(payload) });
+  } catch (error) { next(error); }
+}
+
+export async function challengeQuote(req, res, next) {
+  try {
+    res.set("Cache-Control", "no-store");
+    res.json({ success: true, data: getChallengeQuote(req.body || {}) });
   } catch (error) { next(error); }
 }
 

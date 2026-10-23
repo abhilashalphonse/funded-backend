@@ -214,7 +214,27 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   };
 }
 
-export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, paymentMethod, customer = null, analyticsSessionId, attribution = {} }) {
+export function assertConfirmedCheckoutPrice(pricing, { confirmedPrice, confirmedPricingVersion } = {}) {
+  if (!Number.isFinite(confirmedPrice) || !confirmedPricingVersion) {
+    const error = new Error("Confirm the current challenge price before paying.");
+    error.status = 409;
+    error.code = "CHECKOUT_PRICE_CONFIRMATION_REQUIRED";
+    throw error;
+  }
+  if (confirmedPricingVersion !== pricing.pricingVersion || Math.abs(confirmedPrice - pricing.finalPrice) > 0.001) {
+    const error = new Error("Challenge price changed. Review the updated price before paying.");
+    error.status = 409;
+    error.code = "CHECKOUT_PRICE_CHANGED";
+    throw error;
+  }
+}
+
+export function getChallengeQuote({ challengeDefinition, commercialConfig } = {}) {
+  const pricing = calculatePrice(challengeDefinition, commercialConfig);
+  return { amount: pricing.finalPrice, currency: pricing.currency, pricingVersion: pricing.pricingVersion };
+}
+
+export async function createCryptoPayment({ email, challengeDefinition, commercialConfig, confirmedPrice, confirmedPricingVersion, paymentMethod, customer = null, analyticsSessionId, attribution = {} }) {
   const normalizedEmail = normalizeCustomerEmail(email);
   const fundedCustomer = customer?.customerId
     ? { customerId: customer.customerId, status: customer.status }
@@ -233,6 +253,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
   if (!process.env.FRONTEND_URL) throw new Error("FRONTEND_URL is not configured.");
 
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
+  assertConfirmedCheckoutPrice(pricing, { confirmedPrice, confirmedPricingVersion });
   const orderId = `ACG-${randomUUID()}`;
   const statusAccess = createStatusToken();
   const payment = await Payment.create({
@@ -318,6 +339,8 @@ export async function createUpiPayment({
   attribution = {},
   customerMobile,
   quoteToken,
+  confirmedPrice,
+  confirmedPricingVersion,
 }) {
   const normalizedEmail = normalizeCustomerEmail(email);
   const fundedCustomer = customer?.customerId
@@ -333,6 +356,7 @@ export async function createUpiPayment({
   const stableCustomerId = String(fundedCustomer.customerId);
   const customerAttribution = await paymentAttribution(stableCustomerId, attribution).catch(() => attribution);
   const pricing = calculatePrice(challengeDefinition, commercialConfig);
+  assertConfirmedCheckoutPrice(pricing, { confirmedPrice, confirmedPricingVersion });
   const quote = verifyUpiQuoteToken(quoteToken, challengeDefinition, commercialConfig);
   const gateway = getUpiGateway(quote.gatewayId || DEFAULT_UPI_GATEWAY_ID);
   const callbackUrl = gateway.callbackUrl?.();

@@ -53,6 +53,7 @@ export function validateChallengeConfiguration({ step, accountSize, rules, comme
   const errors = [];
   if (!Object.values(STEP_TYPES).includes(step)) errors.push({ field: "step", message: "Unknown challenge type." });
 
+  if (!ACCOUNT_SIZE_CONFIG[step]) return { valid: false, errors };
   const size = ACCOUNT_SIZE_CONFIG[step];
   if (!Number.isFinite(accountSize)) errors.push({ field: "accountSize", message: "Account size must be a finite number." });
   else if (accountSize < size.min || accountSize > size.max) errors.push({ field: "accountSize", message: "Account size is outside the allowed range." });
@@ -93,6 +94,7 @@ export function calculatePrice(challengeDefinition, commercialConfig) {
   if (!validation.valid) {
     const error = new Error("Invalid challenge configuration.");
     error.code = "INVALID_CHALLENGE_CONFIGURATION";
+    error.status = 400;
     error.details = validation.errors;
     throw error;
   }

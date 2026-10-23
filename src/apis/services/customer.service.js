@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { validateChallengeConfiguration } from "../../pricing/pricingEngine.js";
+import { STEP_TYPES } from "../../pricing/challengeRules.js";
 import Account from "../../accounts/account.model.js";
 import simulatorEngine from "../../simulator/engine.js";
 import { configuredTradingProvider, getTradingConnector } from "../../connectors/trading/registry.js";
@@ -245,6 +247,38 @@ export async function getCustomerWorkspace(customer) {
   };
 }
 
+// Trial defaults are intentional, but any explicitly supplied values must pass
+// the same authoritative bounds as new paid challenges.
+export function normalizeTrialChallenge(definition = {}) {
+  if (definition == null || typeof definition !== "object" || Array.isArray(definition)) {
+    const error = new Error("A valid trial challenge configuration is required.");
+    error.status = 400;
+    error.code = "INVALID_TRIAL_CHALLENGE_CONFIGURATION";
+    throw error;
+  }
+  const step = definition.step ?? STEP_TYPES.TWO_STEP;
+  const defaults = step === STEP_TYPES.ONE_STEP
+    ? { profitTarget: 10, dailyLoss: 3, maxLoss: 6, minTradingDays: 3 }
+    : { phase1ProfitTarget: 8, phase2ProfitTarget: 6, dailyLoss: 5, maxLoss: 10, minTradingDays: 3 };
+  const inputRules = definition.rules === undefined ? {} : definition.rules;
+  const accountSize = definition.accountSize ?? 100000;
+  const rules = inputRules && typeof inputRules === "object" && !Array.isArray(inputRules)
+    ? { ...defaults, ...inputRules }
+    : inputRules;
+  const validation = validateChallengeConfiguration({
+    step, accountSize, rules,
+    commercial: { profitSplit: 80, payoutFrequency: "Biweekly", newsTrading: false, weekendHolding: false },
+  });
+  if (!validation.valid) {
+    const error = new Error("Invalid trial challenge configuration.");
+    error.status = 400;
+    error.code = "INVALID_TRIAL_CHALLENGE_CONFIGURATION";
+    error.details = validation.errors;
+    throw error;
+  }
+  return { step, accountSize, rules };
+}
+
 export async function ensureDemoAccount(customer, input = {}, { queueCredentialEmail = true } = {}) {
   const active = await Account.findOne(activeDemoAccountQuery(ownerQuery(customer))).sort({ createdAt: -1 });
 
@@ -254,23 +288,14 @@ export async function ensureDemoAccount(customer, input = {}, { queueCredentialE
     throw error;
   }
 
-  const definition = input?.challengeDefinition || {};
-  const rulesInput = definition.rules || {};
-  const step = definition.step === "1step" ? "1step" : "2step";
-  const accountSize = Number(definition.accountSize || 100000);
+  const { step, accountSize, rules: rulesInput } = normalizeTrialChallenge(input?.challengeDefinition);
 
-  if (!Number.isFinite(accountSize) || accountSize <= 0) {
-    const error = new Error("A valid trial account size is required.");
-    error.status = 400;
-    throw error;
-  }
-
-  const phases = step === "2step"
+  const phases = step === STEP_TYPES.TWO_STEP
     ? [
-        { phase: 1, profitTarget: Number(rulesInput.phase1ProfitTarget ?? 8) },
-        { phase: 2, profitTarget: Number(rulesInput.phase2ProfitTarget ?? 5) },
+        { phase: 1, profitTarget: rulesInput.phase1ProfitTarget },
+        { phase: 2, profitTarget: rulesInput.phase2ProfitTarget },
       ]
-    : [{ phase: 1, profitTarget: Number(rulesInput.profitTarget ?? 10) }];
+    : [{ phase: 1, profitTarget: rulesInput.profitTarget }];
 
   const accountId = `TRIAL-${randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`;
   const platform = configuredTradingProvider();
@@ -296,9 +321,9 @@ export async function ensureDemoAccount(customer, input = {}, { queueCredentialE
     initialDeposit: accountSize,
     currentPhase: 1,
     rules: {
-      dailyDrawdown: Number(rulesInput.dailyLoss ?? 5),
-      maxDrawdown: Number(rulesInput.maxLoss ?? 10),
-      minimumTradingDays: Number(rulesInput.minTradingDays ?? 0),
+      dailyDrawdown: rulesInput.dailyLoss,
+      maxDrawdown: rulesInput.maxLoss,
+      minimumTradingDays: rulesInput.minTradingDays,
       phases,
     },
     leverage: 100,
