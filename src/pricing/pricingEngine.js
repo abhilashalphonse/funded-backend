@@ -1,5 +1,6 @@
 import {
   STEP_TYPES,
+  PRICING_VERSION,
   ACCOUNT_SIZE_CONFIG,
   RULE_BOUNDS,
   BASE_PRICE_CURVES,
@@ -119,6 +120,7 @@ export function calculatePrice(challengeDefinition, commercialConfig) {
 
   return {
     currency: "USD",
+    pricingVersion: PRICING_VERSION,
     basePrice: base,
     adjustmentTotal,
     multiplier,
