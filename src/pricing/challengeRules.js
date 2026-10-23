@@ -39,14 +39,14 @@ export const BASE_PRICE_CURVES = {
 
 export const ADJUSTMENT_TABLES = {
   [STEP_TYPES.ONE_STEP]: {
-    profitTarget: { 5: .35, 6: .27, 7: .20, 8: .13, 9: .06, 10: 0, 11: -.04, 12: -.08 },
+    profitTarget: { 10: 0, 11: -.04, 12: -.08 },
     dailyLoss: { 2: -.06, 3: 0, 4: .10, 5: .21 },
     maxLoss: { 5: -.05, 6: 0, 7: .08, 8: .16, 9: .25, 10: .35, 11: .45, 12: .55 },
     minTradingDays: { 3: 0, 4: -.05, 5: -.08 },
   },
   [STEP_TYPES.TWO_STEP]: {
-    phase1ProfitTarget: { 5: .22, 6: .15, 7: .08, 8: 0, 9: -.05, 10: -.09, 11: -.12, 12: -.15 },
-    phase2ProfitTarget: { 5: .20, 6: 0, 7: -.06, 8: -.11, 9: -.16, 10: -.20, 11: -.24, 12: -.28 },
+    phase1ProfitTarget: { 8: 0, 9: -.05, 10: -.09, 11: -.12, 12: -.15 },
+    phase2ProfitTarget: { 6: 0, 7: -.06, 8: -.11, 9: -.16, 10: -.20, 11: -.24, 12: -.28 },
     dailyLoss: { 2: -.12, 3: -.06, 4: -.03, 5: 0 },
     maxLoss: { 5: -.20, 6: -.15, 7: -.10, 8: -.06, 9: -.03, 10: 0, 11: .10, 12: .20 },
     minTradingDays: { 3: 0, 4: -.05, 5: -.08 },
