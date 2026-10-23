@@ -4,6 +4,7 @@ import Payment from "../../models/payment.model.js";
 import Account from "../../accounts/account.model.js";
 import Customer from "../../customers/customer.model.js";
 import { calculatePrice } from "../../pricing/pricingEngine.js";
+import { PRICING_VERSION } from "../../pricing/challengeRules.js";
 import { configuredTradingProvider } from "../../connectors/trading/registry.js";
 import { activateTradingAccount, provisionTradingAccount, stageTradingAccount } from "../../connectors/trading/account-provisioning.js";
 import { recordAnalyticsEventOnce } from "./analytics.service.js";
@@ -122,6 +123,13 @@ function verifyUpiQuoteToken(token, challengeDefinition, commercialConfig) {
     throw error;
   }
 
+  if (payload?.pricingVersion !== PRICING_VERSION) {
+    const error = new Error("Challenge pricing was updated. Refresh the checkout quote and try again.");
+    error.status = 409;
+    error.code = "UPI_QUOTE_EXPIRED";
+    throw error;
+  }
+
   const expectedFingerprint = pricingFingerprint(challengeDefinition, commercialConfig);
   if (!safeStringEqual(payload?.fingerprint, expectedFingerprint)) {
     const error = new Error("UPI quote does not match this challenge configuration.");
@@ -162,6 +170,7 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   const availability = getUpiPayinAvailability(gateway, providerAmount);
 
   const common = {
+    pricingVersion: pricing.pricingVersion,
     amount: pricing.finalPrice,
     currency: "USD",
     providerAmount,
@@ -187,6 +196,7 @@ export async function getUpiQuote({ challengeDefinition, commercialConfig }) {
   const expiresAt = Date.now() + UPI_QUOTE_TTL_MS;
   const quoteToken = signUpiQuote({
     gatewayId: gateway.id,
+    pricingVersion: pricing.pricingVersion,
     fingerprint: pricingFingerprint(challengeDefinition, commercialConfig),
     amount: pricing.finalPrice,
     currency: "USD",
