@@ -239,6 +239,7 @@ export async function createCryptoPayment({ email, challengeDefinition, commerci
     statusTokenHash: statusAccess.hash,
     status: "CREATED",
     metadata: {
+      pricingVersion: pricing.pricingVersion,
       analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
       attribution: customerAttribution,
     },
@@ -382,6 +383,7 @@ export async function createUpiPayment({
     statusTokenHash: statusAccess.hash,
     status: "CREATED",
     metadata: {
+      pricingVersion: pricing.pricingVersion,
       analyticsSessionId: analyticsSessionId ? String(analyticsSessionId) : undefined,
       attribution: customerAttribution,
       pricing,
