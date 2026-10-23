@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { normalizeTrialChallenge } from "../src/apis/services/customer.service.js";
 import { assertConfirmedCheckoutPrice, getChallengeQuote } from "../src/apis/services/payment.service.js";
 import { calculatePrice } from "../src/pricing/pricingEngine.js";
+import { PRICING_VERSION } from "../src/pricing/challengeRules.js";
 
 const definition = {
   step: "2step", accountSize: 50000,
@@ -12,7 +13,7 @@ const commercial = { profitSplit: 80, payoutFrequency: "Biweekly", newsTrading: 
 
 test("USD quote is priced by backend without needing a UPI provider", () => {
   const quote = getChallengeQuote({ challengeDefinition: definition, commercialConfig: commercial });
-  assert.deepEqual(quote, { amount: 189, currency: "USD", pricingVersion: "2026-10-challenge-v2" });
+  assert.deepEqual(quote, { amount: 189, currency: "USD", pricingVersion: PRICING_VERSION });
   assert.equal(calculatePrice(definition, commercial).finalPrice, quote.amount);
 });
 
