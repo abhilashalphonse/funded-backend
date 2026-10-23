@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import Payment from "../src/models/payment.model.js";
 import Account from "../src/accounts/account.model.js";
+import Customer from "../src/customers/customer.model.js";
+import AnalyticsEvent from "../src/models/analyticsEvent.model.js";
 import boss from "../src/config/boss.js";
 import { processIpn, activatePaidPayment, assertConfirmedCheckoutPrice } from "../src/apis/services/payment.service.js";
 import { calculatePrice } from "../src/pricing/pricingEngine.js";
@@ -46,6 +48,16 @@ async function withSandbox(t, step) {
     async save() { return this; },
   };
   const calls = { queued: [], provisioned: [], created: [], updates: [] };
+  // Keep analytics observational and deterministic; no Mongo connection wait.
+  t.mock.method(Customer, "findOne", () => ({
+    select: () => ({ lean: async () => null }),
+  }));
+  t.mock.method(AnalyticsEvent, "findOne", () => ({
+    select: () => ({ lean: async () => null }),
+    lean: async () => null,
+  }));
+  t.mock.method(AnalyticsEvent, "create", async data => data);
+
   let account = null;
 
   t.mock.method(Payment, "findOne", async ({ orderId }) => orderId === payment.orderId ? payment : null);
