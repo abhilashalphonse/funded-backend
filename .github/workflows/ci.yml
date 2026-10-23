@@ -2,6 +2,10 @@ name: Funded Backend CI
 
 on:
   push:
+    # Explicit main branch is required for Railway Wait for CI integration.
+    branches:
+      - main
+      - "**"
   pull_request:
 
 jobs:
